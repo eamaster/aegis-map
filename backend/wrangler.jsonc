@@ -1,0 +1,32 @@
+/**
+ * For more details on how to configure Wrangler, refer to:
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ */
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "aegis-map-backend",
+	"main": "src/index.ts",
+	"compatibility_date": "2025-11-21",
+	"compatibility_flags": [
+		"global_fetch_strictly_public"
+	],
+	"observability": {
+		"enabled": true
+	},
+	/**
+	 * KV Namespace for caching
+	 */
+	"kv_namespaces": [
+		{
+			"binding": "AEGIS_CACHE",
+			"id": "placeholder",
+			"preview_id": "placeholder"
+		}
+	]
+	/**
+	 * Environment Variables
+	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
+	 */
+	// Note: Use .dev.vars for local development secrets
+	// Use secrets for production: wrangler secret put GEMINI_API_KEY
+}
