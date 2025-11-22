@@ -4,10 +4,9 @@
  */
 
 import { useEffect, useState } from 'react';
-import { X, Satellite, Cloud, Sparkles, Clock } from 'lucide-react';
+import { X, Sparkles, Cloud, Wifi, Satellite } from 'lucide-react';
 import type { Disaster, WeatherData, AIAnalysisResponse } from '../types';
 import { getNextPass, type SatellitePass } from '../utils/orbitalEngine';
-import { formatDistanceToNow } from 'date-fns';
 
 interface SidebarProps {
     disaster: Disaster | null;
@@ -79,12 +78,12 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
             const diff = nextPass.time.getTime() - now.getTime();
 
             if (diff > 0) {
-                const hours = Math.floor(diff / (1000 * 60 * 60));
-                const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-                const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-                setTimeUntilPass(`${hours}h ${minutes}m ${seconds}s`);
+                const hours = Math.floor(diff / (1000 * 60 * 60)).toString().padStart(2, '0');
+                const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60)).toString().padStart(2, '0');
+                const seconds = Math.floor((diff % (1000 * 60)) / 1000).toString().padStart(2, '0');
+                setTimeUntilPass(`${hours}:${minutes}:${seconds}`);
             } else {
-                setTimeUntilPass('Passing now');
+                setTimeUntilPass('PASSING');
             }
         };
 
@@ -93,6 +92,13 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
 
         return () => clearInterval(interval);
     }, [nextPass]);
+
+    // Trigger AI analysis automatically when data is ready
+    useEffect(() => {
+        if (disaster && nextPass && cloudCover !== null && !aiAnalysis && !loadingAnalysis) {
+            analyzePass();
+        }
+    }, [disaster, nextPass, cloudCover]);
 
     // Get AI analysis
     const analyzePass = async () => {
@@ -115,7 +121,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
             setAiAnalysis(data.analysis);
         } catch (error) {
             console.error('Error getting AI analysis:', error);
-            setAiAnalysis('Analysis failed. Please try again.');
+            setAiAnalysis('Analysis unavailable.');
         } finally {
             setLoadingAnalysis(false);
         }
@@ -124,117 +130,84 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
     if (!disaster) return null;
 
     return (
-        <div className="absolute top-0 right-0 h-full w-full md:w-96 bg-gray-900 bg-opacity-95 backdrop-blur-lg shadow-2xl z-20 overflow-y-auto">
+        <div className="absolute top-20 right-4 w-96 glass-panel rounded-2xl shadow-2xl z-40 overflow-hidden flex flex-col max-h-[calc(100vh-140px)] animate-in slide-in-from-right duration-300">
             {/* Header */}
-            <div className="p-6 border-b border-gray-700">
-                <div className="flex items-start justify-between">
-                    <div>
-                        <h2 className="text-2xl font-bold text-white mb-1">{disaster.title}</h2>
-                        <p className="text-gray-400 text-sm capitalize">
-                            {disaster.type} • {disaster.severity} severity
-                        </p>
-                    </div>
-                    <button
-                        onClick={onClose}
-                        className="text-gray-400 hover:text-white transition-colors"
-                    >
-                        <X size={24} />
-                    </button>
-                </div>
+            <div className="p-5 flex items-center justify-between border-b border-white/10">
+                <h2 className="text-xl font-bold text-white">Coverage Analysis</h2>
+                <button
+                    onClick={onClose}
+                    className="text-gray-400 hover:text-white transition-colors p-1 hover:bg-white/10 rounded-full"
+                >
+                    <X size={20} />
+                </button>
             </div>
 
             {/* Content */}
-            <div className="p-6 space-y-6">
-                {/* Disaster Details */}
-                <div>
-                    <h3 className="text-lg font-semibold text-white mb-3">Details</h3>
-                    <div className="space-y-2 text-sm">
-                        <p className="text-gray-300">
-                            <span className="text-gray-500">Location:</span> {disaster.lat.toFixed(4)}, {disaster.lng.toFixed(4)}
-                        </p>
-                        <p className="text-gray-300">
-                            <span className="text-gray-500">Date:</span>{' '}
-                            {formatDistanceToNow(new Date(disaster.date), { addSuffix: true })}
-                        </p>
-                        {disaster.magnitude && (
-                            <p className="text-gray-300">
-                                <span className="text-gray-500">Magnitude:</span> {disaster.magnitude}
-                            </p>
-                        )}
+            <div className="p-5 space-y-4 overflow-y-auto custom-scrollbar">
+
+                {/* AI Insight Card */}
+                <div className="glass-card rounded-xl p-4 border-l-4 border-blue-500 relative overflow-hidden group">
+                    <div className="absolute top-0 right-0 p-2 opacity-10 group-hover:opacity-20 transition-opacity">
+                        <Sparkles size={60} />
                     </div>
+                    <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                            <Sparkles className="text-blue-400" size={18} />
+                            <h3 className="font-bold text-white text-sm">AI Insight</h3>
+                        </div>
+                        <span className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold">Google Gemini</span>
+                    </div>
+                    <p className="text-gray-300 text-sm leading-relaxed">
+                        {loadingAnalysis ? (
+                            <span className="animate-pulse">Analyzing satellite telemetry...</span>
+                        ) : (
+                            aiAnalysis || "Waiting for data..."
+                        )}
+                    </p>
                 </div>
 
-                {/* Coverage Analysis Section */}
-                <div>
-                    <h3 className="text-lg font-semibold text-white mb-4">Coverage Analysis</h3>
-
-                    {/* Next Satellite Pass */}
-                    {nextPass && (
-                        <div className="bg-gray-800 rounded-lg p-4 mb-4">
-                            <div className="flex items-center gap-2 mb-2">
-                                <Satellite className="text-blue-400" size={20} />
-                                <h4 className="font-semibold text-white">Next Satellite Pass</h4>
-                            </div>
-                            <p className="text-gray-300 text-sm mb-2">{nextPass.satelliteName}</p>
-                            <div className="bg-gray-900 rounded p-3">
-                                <div className="flex items-center gap-2 mb-1">
-                                    <Clock size={16} className="text-gray-400" />
-                                    <span className="text-2xl font-mono font-bold text-white">
-                                        {timeUntilPass}
-                                    </span>
-                                </div>
-                                <p className="text-gray-500 text-xs">
-                                    {nextPass.time.toLocaleString()}
-                                </p>
-                            </div>
+                {/* Countdown Widget */}
+                {nextPass && (
+                    <div className="glass-card rounded-xl p-6 text-center relative overflow-hidden">
+                        <div className="absolute inset-0 bg-gradient-to-b from-blue-500/5 to-transparent pointer-events-none" />
+                        <h3 className="text-gray-400 text-xs uppercase tracking-widest mb-2">
+                            {nextPass.satelliteName} scan in
+                        </h3>
+                        <div className="text-5xl font-mono font-bold text-white tracking-tight tabular-nums">
+                            {timeUntilPass}
                         </div>
-                    )}
+                    </div>
+                )}
 
-                    {/* Cloud Coverage */}
-                    {cloudCover !== null && (
-                        <div className="bg-gray-800 rounded-lg p-4 mb-4">
-                            <div className="flex items-center gap-2 mb-2">
-                                <Cloud className="text-sky-400" size={20} />
-                                <h4 className="font-semibold text-white">Cloud Coverage</h4>
-                            </div>
-                            <p className="text-3xl font-bold text-white mb-1">{cloudCover}%</p>
-                            <p className="text-gray-400 text-sm">
-                                {cloudCover < 20 ? 'Clear skies' : cloudCover < 50 ? 'Partly cloudy' : 'Mostly cloudy'}
+                {/* Grid Widgets */}
+                <div className="grid grid-cols-2 gap-4">
+                    {/* Cloud-Clear Validator */}
+                    <div className="glass-card rounded-xl p-4 flex flex-col justify-between min-h-[120px]">
+                        <div className="flex justify-between items-start">
+                            <Cloud className="text-sky-400" size={24} />
+                            <div className="h-2 w-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
+                        </div>
+                        <div>
+                            <h4 className="text-gray-400 text-xs font-bold uppercase mb-1">Cloud-Clear Validator</h4>
+                            <p className="text-white font-bold">
+                                {cloudCover !== null ? `${cloudCover}% (${cloudCover < 20 ? 'Clear' : 'Cloudy'})` : 'Loading...'}
                             </p>
                         </div>
-                    )}
+                    </div>
 
-                    {/* AI Analysis Button */}
-                    {nextPass && cloudCover !== null && !aiAnalysis && (
-                        <button
-                            onClick={analyzePass}
-                            disabled={loadingAnalysis}
-                            className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white font-semibold py-3 px-4 rounded-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-                        >
-                            {loadingAnalysis ? (
-                                <>
-                                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                                    <span>Thinking...</span>
-                                </>
-                            ) : (
-                                <>
-                                    <Sparkles size={20} />
-                                    <span>Analyze Coverage</span>
-                                </>
-                            )}
-                        </button>
-                    )}
-
-                    {/* AI Analysis Result */}
-                    {aiAnalysis && (
-                        <div className="bg-gradient-to-br from-purple-900/30 to-blue-900/30 border border-purple-500/30 rounded-lg p-4">
-                            <div className="flex items-center gap-2 mb-3">
-                                <Sparkles className="text-purple-400" size={20} />
-                                <h4 className="font-semibold text-white">AI Insight</h4>
-                            </div>
-                            <p className="text-gray-200 text-sm leading-relaxed">{aiAnalysis}</p>
+                    {/* Connectivity Radar */}
+                    <div className="glass-card rounded-xl p-4 flex flex-col justify-between min-h-[120px]">
+                        <div className="flex justify-between items-start">
+                            <Wifi className="text-purple-400" size={24} />
+                            <Satellite className="text-gray-600" size={16} />
                         </div>
-                    )}
+                        <div>
+                            <h4 className="text-gray-400 text-xs font-bold uppercase mb-1">Connectivity Radar</h4>
+                            <p className="text-white text-xs leading-tight">
+                                Starlink-3452 overhead in 10 mins
+                            </p>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>

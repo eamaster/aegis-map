@@ -299,10 +299,7 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
                 </div>
             )}
 
-            {/* Brand header */}
-            <div className="absolute top-4 left-4 z-10">
-                <h1 className="text-2xl font-bold text-white drop-shadow-lg">AegisMap</h1>
-            </div>
+
 
             {/* Statistics */}
             {!loading && !mapError && (
