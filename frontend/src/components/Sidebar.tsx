@@ -130,7 +130,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
     if (!disaster) return null;
 
     return (
-        <div className="absolute top-20 right-4 w-96 glass-panel rounded-2xl shadow-2xl z-40 overflow-hidden flex flex-col max-h-[calc(100vh-140px)] animate-in slide-in-from-right duration-300">
+        <div className="fixed bottom-20 left-4 right-4 z-40 flex flex-col max-h-[60vh] md:absolute md:top-20 md:right-4 md:w-96 md:max-h-[calc(100vh-140px)] glass-panel rounded-2xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom md:slide-in-from-right duration-300">
             {/* Header */}
             <div className="p-5 flex items-center justify-between border-b border-white/10">
                 <h2 className="text-xl font-bold text-white">Coverage Analysis</h2>
@@ -159,7 +159,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                     </div>
                     <p className="text-gray-300 text-sm leading-relaxed">
                         {loadingAnalysis ? (
-                            <span className="animate-pulse">Analyzing satellite telemetry...</span>
+                            <span className="animate-pulse text-blue-300 font-medium">Analyzing satellite telemetry...</span>
                         ) : (
                             aiAnalysis || "Waiting for data..."
                         )}

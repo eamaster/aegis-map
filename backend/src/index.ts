@@ -53,7 +53,7 @@ app.get('/api/disasters', async (c) => {
 			.map((event: any) => {
 				const categoryId = event.categories[0]?.id;
 				const type = categoryId === 8 ? 'fire' : 'volcano';
-				
+
 				// Get first coordinate
 				const coords = event.geometry?.[0]?.coordinates;
 				if (!coords) return null;
@@ -161,8 +161,8 @@ app.post('/api/analyze', async (c) => {
 		}
 
 		// Call Gemini API
-		const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${c.env.GEMINI_API_KEY}`;
-		
+		const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.0-pro-preview:generateContent?key=${c.env.GEMINI_API_KEY}`;
+
 		const prompt = `You are an expert satellite imagery analyst. A disaster "${disasterTitle}" will be overpassed by satellite "${satelliteName}" at ${passTime}. Local cloud cover is ${cloudCover}%. 
 
 Reason step-by-step:
@@ -194,7 +194,7 @@ Provide a concise 2-sentence summary for a first responder. Be direct and action
 		});
 
 		const geminiData = await geminiResponse.json();
-		
+
 		if (!geminiResponse.ok) {
 			console.error('Gemini API error:', geminiData);
 			return c.json({ error: 'AI analysis failed', details: geminiData }, 500);
