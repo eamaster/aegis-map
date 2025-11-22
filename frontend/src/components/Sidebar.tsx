@@ -15,7 +15,6 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ disaster, onClose }: SidebarProps) {
-    const [tleData, setTleData] = useState<string>('');
     const [nextPass, setNextPass] = useState<SatellitePass | null>(null);
     const [cloudCover, setCloudCover] = useState<number | null>(null);
     const [aiAnalysis, setAiAnalysis] = useState<string>('');
@@ -33,7 +32,6 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                 // Fetch TLEs
                 const tleResponse = await fetch(`${API_BASE}/api/tles`);
                 const tles = await tleResponse.text();
-                setTleData(tles);
 
                 // Calculate next pass
                 const pass = getNextPass(tles, disaster.lat, disaster.lng);

@@ -80,7 +80,7 @@ export function predictPasses(
                 // Propagate satellite to current time
                 const positionAndVelocity = satellite.propagate(satrec, currentTime);
 
-                if (positionAndVelocity.position && typeof positionAndVelocity.position !== 'boolean') {
+                if (positionAndVelocity && positionAndVelocity.position && typeof positionAndVelocity.position !== 'boolean') {
                     // Convert ECI to geodetic
                     const gmst = satellite.gstime(currentTime);
                     const positionEcf = satellite.eciToEcf(positionAndVelocity.position, gmst);
