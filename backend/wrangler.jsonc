@@ -19,10 +19,9 @@
 	"kv_namespaces": [
 		{
 			"binding": "AEGIS_CACHE",
-			"id": "placeholder",
-			"preview_id": "placeholder"
+			"id": "7f6c89c7faa84c288f31941bef51b14c"
 		}
-	]
+	],
 	/**
 	 * Environment Variables
 	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
