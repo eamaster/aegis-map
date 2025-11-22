@@ -47,9 +47,9 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
             map.current = new mapboxgl.Map({
                 container: mapContainer.current,
                 style: 'mapbox://styles/mapbox/dark-v11',
-                center: [0, 20],
-                zoom: 2,
-                projection: { name: 'globe' } as any,
+                center: [-100, 40], // US West Coast focus
+                zoom: 3.5,
+                projection: { name: 'mercator' } as any, // Flat map
             });
 
             console.log('Map instance created');
