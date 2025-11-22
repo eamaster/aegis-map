@@ -40,7 +40,7 @@ function App() {
       </main>
 
       {/* Mobile Bottom Navigation */}
-      <nav className="md:hidden flex items-center justify-around px-6 py-4 bg-gray-900/90 backdrop-blur-lg border-t border-white/10 z-50">
+      <nav className="md:hidden flex items-center justify-around px-6 py-4 bg-gray-900/90 backdrop-blur-md border-t border-white/10 z-50 fixed bottom-0 w-full">
         <button
           onClick={() => setActiveTab('map')}
           className={`flex flex-col items-center gap-1 ${activeTab === 'map' ? 'text-blue-400' : 'text-gray-500'}`}

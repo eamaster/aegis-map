@@ -55,7 +55,7 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
             console.log('Map instance created');
 
             // Add navigation controls
-            map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
+            map.current.addControl(new mapboxgl.NavigationControl(), 'bottom-right');
 
             // Add geolocate control
             map.current.addControl(
@@ -65,7 +65,7 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
                     },
                     trackUserLocation: true,
                 }),
-                'top-right'
+                'bottom-right'
             );
 
             // Handle map errors
