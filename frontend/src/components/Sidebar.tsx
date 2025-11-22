@@ -36,12 +36,16 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                 const pass = getNextPass(tles, disaster.lat, disaster.lng);
                 setNextPass(pass);
 
-                // Fetch weather data
-                if (pass) {
-                    fetchWeather(disaster.lat, disaster.lng, pass.time);
+                if (!pass) {
+                    setAiAnalysis("No satellite passes detected in the next 24 hours. Coverage unavailable.");
+                    return;
                 }
+
+                // Fetch weather data
+                fetchWeather(disaster.lat, disaster.lng, pass.time);
             } catch (error) {
                 console.error('Error fetching data:', error);
+                setAiAnalysis("Unable to retrieve satellite data.");
             }
         };
 

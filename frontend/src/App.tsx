@@ -10,16 +10,16 @@ function App() {
 
   return (
     <div className="w-screen h-screen relative overflow-hidden bg-black flex flex-col">
-      {/* Desktop Header */}
-      <header className="hidden md:flex items-center justify-between px-6 py-4 bg-gray-900/80 backdrop-blur-md border-b border-white/10 z-50 absolute top-0 w-full">
+      {/* Header */}
+      <header className="flex items-center justify-between px-4 py-3 md:px-6 md:py-4 bg-gray-900/80 backdrop-blur-md border-b border-white/10 z-50 absolute top-0 w-full">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-purple-600 flex items-center justify-center">
             <Globe size={20} className="text-white" />
           </div>
-          <h1 className="text-xl font-bold text-white tracking-tight">AegisMap</h1>
+          <h1 className="text-lg md:text-xl font-bold text-white tracking-tight">AegisMap</h1>
         </div>
 
-        <nav className="flex items-center gap-6">
+        <nav className="hidden md:flex items-center gap-6">
           <button className="px-4 py-2 rounded-full bg-white/10 text-white text-sm font-medium hover:bg-white/20 transition-all">Map</button>
           <button className="text-gray-400 hover:text-white text-sm font-medium transition-colors">Disasters</button>
           <button className="text-gray-400 hover:text-white text-sm font-medium transition-colors">Satellites</button>
