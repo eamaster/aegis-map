@@ -264,7 +264,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
     if (!disaster) return null;
 
     return (
-        <div className="fixed bottom-4 left-4 right-4 z-50 flex flex-col max-h-[60vh] rounded-2xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom duration-500 md:absolute md:top-24 md:right-6 md:w-[400px] md:bottom-auto md:left-auto md:max-h-[calc(100vh-160px)] glass-panel">
+        <div className="fixed bottom-4 left-4 right-4 z-[100] flex flex-col max-h-[60vh] rounded-2xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom duration-500 md:absolute md:top-24 md:right-6 md:w-[400px] md:bottom-auto md:left-auto md:max-h-[calc(100vh-160px)] glass-panel border border-white/10 backdrop-blur-xl bg-gray-900/85">
             {/* Header */}
             <div className="p-5 flex items-center justify-between border-b border-white/10">
                 <h2 className="text-xl font-bold text-white">Coverage Analysis</h2>

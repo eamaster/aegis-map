@@ -107,6 +107,24 @@ body {
   animation-duration: 300ms;
 }
 
+.duration-500 {
+  animation-duration: 500ms;
+}
+
+@keyframes slide-in-from-bottom {
+  from {
+    transform: translateY(100%);
+  }
+
+  to {
+    transform: translateY(0);
+  }
+}
+
+.slide-in-from-bottom {
+  animation-name: slide-in-from-bottom;
+}
+
 /* Responsive Navigation Control */
 @media (max-width: 767px) {
   .desktop-nav {
