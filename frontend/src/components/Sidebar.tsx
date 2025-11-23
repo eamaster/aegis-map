@@ -26,6 +26,13 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
     useEffect(() => {
         if (!disaster) return;
 
+        // Reset state when disaster changes
+        setNextPass(null);
+        setCloudCover(null);
+        setAiAnalysis(''); // Reset analysis when disaster changes
+        setLoadingAnalysis(false);
+        setTimeUntilPass('');
+
         const fetchData = async () => {
             try {
                 console.log('🚀 Starting data fetch for disaster:', disaster.title);
@@ -489,6 +496,11 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
             );
             
             setAiAnalysis(trimmedAnalysis);
+            console.log('✅ AI analysis state updated:', { 
+                trimmedAnalysis,
+                length: trimmedAnalysis.length,
+                firstChars: trimmedAnalysis.substring(0, 100)
+            });
         } catch (error) {
             console.error('❌ Error getting AI analysis:', error);
             const errorMessage = error instanceof Error ? error.message : String(error);
