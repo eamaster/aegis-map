@@ -58,14 +58,29 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                     { satellites: satelliteCount, lines: tleLines.length }
                 );
 
+                // Handle both uppercase and lowercase coordinates - normalize to lowercase
+                const disasterAny = disaster as any;
+                const lat = disasterAny.lat || disasterAny.Lat || disaster.lat || 0;
+                const lng = disasterAny.lng || disasterAny.Lng || disaster.lng || 0;
+                const latNum = parseFloat(String(lat));
+                const lngNum = parseFloat(String(lng));
+
+                console.log('🌐 Sidebar processing coordinates:', { lat, lng, latNum, lngNum, disaster: disasterAny });
+
+                if (isNaN(latNum) || isNaN(lngNum) || latNum === 0 || lngNum === 0) {
+                    console.error('❌ Invalid coordinates in sidebar:', { lat, lng, latNum, lngNum, disaster: disasterAny });
+                    setAiAnalysis("Invalid coordinates. Unable to calculate satellite passes.");
+                    return;
+                }
+
                 // Calculate next pass
                 (window as any).aegisDebug?.log(
                     'orbital',
-                    `Calculating satellite passes for disaster at (${disaster.lat}, ${disaster.lng})`,
+                    `Calculating satellite passes for disaster at (${latNum}, ${lngNum})`,
                     'info'
                 );
 
-                const pass = getNextPass(tles, disaster.lat, disaster.lng);
+                const pass = getNextPass(tles, latNum, lngNum);
 
                 if (!pass) {
                     (window as any).aegisDebug?.log(
@@ -91,7 +106,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                 }
 
                 // Fetch weather data
-                fetchWeather(disaster.lat, disaster.lng, pass.time);
+                fetchWeather(latNum, lngNum, pass.time);
             } catch (error) {
                 console.error('Error fetching data:', error);
                 (window as any).aegisDebug?.log(
@@ -273,16 +288,25 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
     console.log('✅ Sidebar: Rendering with disaster:', disaster.title);
 
     return (
-        <div className="fixed right-0 top-[73px] bottom-0 z-[100] w-full max-w-[420px] flex flex-col shadow-2xl overflow-hidden glass-panel border-l border-white/10 backdrop-blur-xl bg-gray-900/85 md:top-[73px] md:bottom-0 md:right-0 md:w-[420px] md:h-[calc(100vh-73px)]" style={{ display: 'flex' }}>
+        <div 
+            className="fixed right-0 top-[73px] bottom-0 z-[100] w-[420px] flex flex-col shadow-2xl overflow-hidden border-l-2 border-white/20 backdrop-blur-xl bg-gray-900/95"
+            style={{ 
+                display: 'flex', 
+                height: 'calc(100vh - 73px)', 
+                boxShadow: '-4px 0 20px rgba(0, 0, 0, 0.5)',
+                right: '0',
+                left: 'auto'
+            }}
+        >
             {/* Header */}
-            <div className="p-5 flex items-center justify-between border-b border-white/10 flex-shrink-0">
-                <h2 className="text-xl font-bold text-white">Coverage Analysis</h2>
+            <div className="p-5 flex items-center justify-between border-b border-white/20 flex-shrink-0 bg-gray-800/50">
+                <h2 className="text-xl font-bold text-white tracking-tight">Coverage Analysis</h2>
                 <button
                     onClick={onClose}
-                    className="text-gray-400 hover:text-white transition-colors p-1 hover:bg-white/10 rounded-full"
+                    className="text-gray-400 hover:text-white transition-colors p-1.5 hover:bg-white/10 rounded-lg"
                     aria-label="Close sidebar"
                 >
-                    <X size={20} />
+                    <X size={18} />
                 </button>
             </div>
 
@@ -290,7 +314,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
             <div className="p-5 space-y-4 overflow-y-auto custom-scrollbar flex-1">
 
                 {/* AI Insight Card */}
-                <div className="glass-card rounded-xl p-4 border-l-4 border-blue-500 relative overflow-hidden group">
+                <div className="glass-card rounded-xl p-4 border-l-4 border-blue-500 relative overflow-hidden group bg-gray-800/60">
                     <div className="absolute top-0 right-0 p-2 opacity-10 group-hover:opacity-20 transition-opacity">
                         <Sparkles size={60} />
                     </div>
@@ -312,7 +336,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
 
                 {/* Countdown Widget */}
                 {nextPass && (
-                    <div className="glass-card rounded-xl p-6 text-center relative overflow-hidden">
+                    <div className="glass-card rounded-xl p-6 text-center relative overflow-hidden bg-gray-800/60">
                         <div className="absolute inset-0 bg-gradient-to-b from-blue-500/5 to-transparent pointer-events-none" />
                         <h3 className="text-gray-400 text-xs uppercase tracking-widest mb-2">
                             {nextPass.satelliteName} scan in
@@ -326,7 +350,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                 {/* Grid Widgets */}
                 <div className="grid grid-cols-2 gap-4">
                     {/* Cloud-Clear Validator */}
-                    <div className="glass-card rounded-xl p-4 flex flex-col justify-between min-h-[120px]">
+                    <div className="glass-card rounded-xl p-4 flex flex-col justify-between min-h-[120px] bg-gray-800/60">
                         <div className="flex justify-between items-start">
                             <Cloud className="text-sky-400" size={24} />
                             <div className="h-2 w-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
@@ -340,7 +364,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                     </div>
 
                     {/* Connectivity Radar */}
-                    <div className="glass-card rounded-xl p-4 flex flex-col justify-between min-h-[120px]">
+                    <div className="glass-card rounded-xl p-4 flex flex-col justify-between min-h-[120px] bg-gray-800/60">
                         <div className="flex justify-between items-start">
                             <Wifi className="text-purple-400" size={24} />
                             <Satellite className="text-gray-600" size={16} />

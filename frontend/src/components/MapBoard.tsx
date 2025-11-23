@@ -283,12 +283,13 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
                         return;
                     }
 
+                    // Ensure lowercase lat/lng for consistency
                     const disaster = {
                         id: props.id || `earthquake_${Date.now()}`,
                         type: props.type || 'earthquake',
                         title: props.title || props.name || 'Earthquake Event',
-                        lat: latNum,
-                        lng: lngNum,
+                        lat: latNum, // lowercase
+                        lng: lngNum, // lowercase
                         date: props.date || props.start || new Date().toISOString(),
                         severity: props.severity || 'medium',
                         magnitude: props.magnitude ? parseFloat(props.magnitude) : undefined,
