@@ -107,6 +107,7 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
                 return;
             }
 
+
             const fireCount = data.filter(d => d.type === 'fire').length;
             const volcanoCount = data.filter(d => d.type === 'volcano').length;
             const earthquakeCount = data.filter(d => d.type === 'earthquake').length;
@@ -118,6 +119,9 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
                 'success',
                 { count: data.length, types: { fires: fireCount, volcanoes: volcanoCount, earthquakes: earthquakeCount } }
             );
+
+            // DEBUG: Confirm backend is online
+            (window as any).aegisDebug?.log('backend', 'Backend connection successful', 'success');
 
             // Validate coordinates
             const invalid = data.filter(d =>
@@ -135,7 +139,6 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
             setDisasters(data);
             setLoading(false);
 
-            // Add disaster markers to map
             if (map.current) {
                 addDisasterLayers(data);
             }

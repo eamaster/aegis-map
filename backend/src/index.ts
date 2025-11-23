@@ -174,7 +174,7 @@ app.post('/api/analyze', async (c) => {
 		}
 
 		// Call Gemini API
-		const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.0-pro-preview:generateContent?key=${c.env.GEMINI_API_KEY}`;
+		const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${c.env.GEMINI_API_KEY}`;
 
 		const prompt = `You are an expert satellite imagery analyst. A disaster "${disasterTitle}" will be overpassed by satellite "${satelliteName}" at ${passTime}. Local cloud cover is ${cloudCover}%. 
 
