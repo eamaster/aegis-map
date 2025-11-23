@@ -85,13 +85,14 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
 
                 setNextPass(pass);
 
+                // Fetch weather data regardless of pass
+                // If pass exists, use pass time, otherwise use current time
+                const targetTime = pass ? pass.time : new Date();
+                fetchWeather(disaster.lat, disaster.lng, targetTime);
+
                 if (!pass) {
                     setAiAnalysis("No satellite passes detected in the next 24 hours. Coverage unavailable.");
-                    return;
                 }
-
-                // Fetch weather data
-                fetchWeather(disaster.lat, disaster.lng, pass.time);
             } catch (error) {
                 console.error('Error fetching data:', error);
                 (window as any).aegisDebug?.log(
@@ -273,7 +274,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
     console.log('✅ Sidebar: Rendering with disaster:', disaster.title);
 
     return (
-        <div className="fixed right-0 top-[73px] bottom-0 z-[100] w-full max-w-[420px] flex flex-col shadow-2xl overflow-hidden glass-panel border-l border-white/10 backdrop-blur-xl bg-gray-900/85 md:top-[73px] md:bottom-0 md:right-0 md:w-[420px] md:h-[calc(100vh-73px)]" style={{ display: 'flex' }}>
+        <div className="absolute right-0 top-0 bottom-0 z-[100] w-full max-w-[420px] flex flex-col shadow-2xl overflow-hidden glass-panel border-l border-white/10 backdrop-blur-xl bg-gray-900/85 md:w-[420px]" style={{ display: 'flex' }}>
             {/* Header */}
             <div className="p-5 flex items-center justify-between border-b border-white/10 flex-shrink-0">
                 <h2 className="text-xl font-bold text-white">Coverage Analysis</h2>
@@ -348,7 +349,9 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                         <div>
                             <h4 className="text-gray-400 text-xs font-bold uppercase mb-1">Connectivity Radar</h4>
                             <p className="text-white text-xs leading-tight">
-                                Starlink-3452 overhead in 10 mins
+                                {nextPass
+                                    ? `${nextPass.satelliteName} overhead in ${timeUntilPass.includes(':') ? Math.round(parseInt(timeUntilPass.split(':')[1])) + ' mins' : 'now'}`
+                                    : 'No satellites overhead'}
                             </p>
                         </div>
                     </div>
