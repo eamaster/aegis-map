@@ -49,10 +49,12 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
                 style: 'mapbox://styles/mapbox/dark-v11',
                 center: [-100, 40], // US West Coast focus
                 zoom: 3.5,
-                projection: { name: 'mercator' } as any, // Flat map
+                projection: { name: 'globe' } as any, // 3D globe
             });
 
-            console.log('Map instance created');
+            // DEBUG: Expose map for console debugging
+            (window as any).mapDebug = map.current;
+            console.log('Map instance created. Access via window.mapDebug');
 
             // Add navigation controls
             map.current.addControl(new mapboxgl.NavigationControl(), 'bottom-right');
@@ -147,8 +149,10 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
 
             // Add click handler
             map.current.on('click', 'fires-layer', (e) => {
+                console.log('🔥 Fire marker clicked!', e.features);
                 if (e.features && e.features[0]) {
                     const disaster = e.features[0].properties as any;
+                    console.log('Fire disaster data:', disaster);
                     onDisasterSelect({
                         ...disaster,
                         lat: parseFloat(disaster.lat),
@@ -199,8 +203,10 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
 
             // Add click handler
             map.current.on('click', 'earthquakes-layer', (e) => {
+                console.log('🌍 Earthquake marker clicked!', e.features);
                 if (e.features && e.features[0]) {
                     const disaster = e.features[0].properties as any;
+                    console.log('Earthquake disaster data:', disaster);
                     onDisasterSelect({
                         ...disaster,
                         lat: parseFloat(disaster.lat),
@@ -252,8 +258,10 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
 
             // Add click handler
             map.current.on('click', 'volcanoes-layer', (e) => {
+                console.log('🌋 Volcano marker clicked!', e.features);
                 if (e.features && e.features[0]) {
                     const disaster = e.features[0].properties as any;
+                    console.log('Volcano disaster data:', disaster);
                     onDisasterSelect({
                         ...disaster,
                         lat: parseFloat(disaster.lat),
