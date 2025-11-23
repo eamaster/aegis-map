@@ -194,7 +194,8 @@ useEffect(() => {
 3. **Set production secret:**
    ```bash
    wrangler secret put GEMINI_API_KEY
-   # Paste: AIzaSyDdEzVyS9VirgrWrV5Y91Dj-4Hr1yPRiCA
+   # Paste your Gemini API key when prompted
+   # Get your key from: https://aistudio.google.com/app/apikey
    ```
 
 4. **Deploy:**
