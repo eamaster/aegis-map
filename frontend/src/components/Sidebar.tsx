@@ -21,8 +21,6 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
     const [timeUntilPass, setTimeUntilPass] = useState<string>('');
 
     const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787';
-    
-    console.log('🔗 API_BASE configured:', API_BASE);
 
     // Fetch TLE data and calculate next pass
     useEffect(() => {
@@ -494,7 +492,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
         return null;
     }
 
-    console.log('✅ Sidebar: Rendering with disaster:', disaster.title);
+    // Removed excessive logging on every render - only log on mount or disaster change
 
     return (
         <div 

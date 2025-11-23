@@ -195,9 +195,19 @@ app.post('/api/analyze', async (c) => {
 			return c.json({ error: 'Missing required fields' }, 400);
 		}
 
-		// Call Gemini API
-		const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-001:generateContent?key=${c.env.GEMINI_API_KEY}`;
-
+		// Call Gemini API - Try multiple model names for compatibility
+		// Try Gemini 3 Preview Pro models first, then fallback to stable models
+		const models = [
+			'gemini-3.0-pro-preview',      // Gemini 3 Preview Pro (if available)
+			'gemini-3-pro-preview',        // Alternative naming
+			'gemini-pro-3.0-preview',      // Alternative naming
+			'gemini-exp-1206',             // Experimental/preview naming
+			'gemini-1.5-pro-latest',       // Latest stable 1.5 Pro
+			'gemini-1.5-pro',              // Stable 1.5 Pro
+			'gemini-pro',                  // Latest Pro model
+		];
+		const apiVersions = ['v1', 'v1beta'];
+		
 		const prompt = `You are an expert satellite imagery analyst. A disaster "${disasterTitle}" will be overpassed by satellite "${satelliteName}" at ${passTime}. Local cloud cover is ${cloudCover}%. 
 
 Reason step-by-step:
@@ -206,38 +216,74 @@ Reason step-by-step:
 
 Provide a concise 2-sentence summary for a first responder. Be direct and actionable.`;
 
-		const geminiResponse = await fetch(geminiUrl, {
-			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json',
-			},
-			body: JSON.stringify({
-				contents: [
-					{
-						parts: [
-							{
-								text: prompt,
-							},
-						],
-					},
-				],
-				generationConfig: {
-					temperature: 0.7,
-					maxOutputTokens: 200,
+		const requestBody = {
+			contents: [
+				{
+					parts: [
+						{
+							text: prompt,
+						},
+					],
 				},
-			}),
-		});
+			],
+			generationConfig: {
+				temperature: 0.7,
+				maxOutputTokens: 200,
+			},
+		};
 
-		const geminiData = await geminiResponse.json();
+		let lastError: any = null;
+		
+		// Try different model/version combinations
+		for (const apiVersion of apiVersions) {
+			for (const model of models) {
+				try {
+					const geminiUrl = `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:generateContent?key=${c.env.GEMINI_API_KEY}`;
+					
+					console.log(`Trying Gemini API: ${apiVersion}/${model}`);
+					
+					const geminiResponse = await fetch(geminiUrl, {
+						method: 'POST',
+						headers: {
+							'Content-Type': 'application/json',
+						},
+						body: JSON.stringify(requestBody),
+					});
 
-		if (!geminiResponse.ok) {
-			console.error('Gemini API error:', geminiData);
-			return c.json({ error: 'AI analysis failed', details: geminiData }, 500);
+					const geminiData = await geminiResponse.json();
+
+					if (geminiResponse.ok) {
+						const analysis = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || 'Analysis unavailable';
+						console.log(`✅ Successfully used Gemini model: ${apiVersion}/${model}`);
+						return c.json({ analysis });
+					}
+					
+					// If 404, try next model
+					if (geminiResponse.status === 404) {
+						console.warn(`Model ${apiVersion}/${model} not found, trying next...`);
+						lastError = geminiData;
+						continue;
+					}
+					
+					// For other errors, log and try next
+					console.error(`Gemini API error (${apiVersion}/${model}):`, geminiData);
+					lastError = geminiData;
+					
+				} catch (error) {
+					console.error(`Error calling Gemini API (${apiVersion}/${model}):`, error);
+					lastError = error;
+					continue;
+				}
+			}
 		}
 
-		const analysis = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || 'Analysis unavailable';
-
-		return c.json({ analysis });
+		// If all models failed, return error
+		console.error('All Gemini model attempts failed. Last error:', lastError);
+		return c.json({ 
+			error: 'AI analysis failed', 
+			details: lastError,
+			message: 'Unable to connect to any available Gemini model. Please check API key and model availability.'
+		}, 500);
 	} catch (error) {
 		console.error('Error in AI analysis:', error);
 		return c.json({ error: 'Failed to analyze coverage' }, 500);
