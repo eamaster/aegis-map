@@ -135,18 +135,40 @@ app.get('/api/tles', async (c) => {
 		console.log(`Fetching TLEs for ${satellites.length} satellites...`);
 
 		const tlePromises = satellites.map(async (catNr) => {
-			const response = await fetch(
-				`https://celestrak.org/NORAD/elements/gp.php?CATNR=${catNr}&FORMAT=tle`
-			);
-			if (!response.ok) {
-				console.error(`Failed to fetch TLE for ${catNr}: ${response.statusText}`);
-				return '';
+			try {
+				const response = await fetch(
+					`https://celestrak.org/NORAD/elements/gp.php?CATNR=${catNr}&FORMAT=tle`
+				);
+				if (!response.ok) {
+					console.error(`Failed to fetch TLE for ${catNr}: ${response.status} ${response.statusText}`);
+					return null;
+				}
+				const text = await response.text();
+				// Validate that we got actual TLE data (should have 3 lines minimum)
+				if (!text || text.trim().length === 0 || text.trim().split('\n').filter(l => l.trim()).length < 3) {
+					console.warn(`Invalid TLE data for ${catNr}: received ${text?.length || 0} chars, ${text?.split('\n').length || 0} lines`);
+					return null;
+				}
+				console.log(`✅ Fetched valid TLE for ${catNr}: ${text.trim().split('\n').length} lines`);
+				return text.trim(); // Remove trailing whitespace
+			} catch (error) {
+				console.error(`Error fetching TLE for ${catNr}:`, error);
+				return null;
 			}
-			return await response.text();
 		});
 
 		const results = await Promise.all(tlePromises);
-		const tleData = results.join(''); // Combine all TLEs into one string
+		// Filter out null/empty strings and join with newlines to separate TLEs
+		const validTLEs = results.filter(tle => tle !== null && tle !== undefined && tle.trim().length > 0);
+		
+		if (validTLEs.length === 0) {
+			console.error('No valid TLEs fetched from CelesTrak');
+			return c.json({ error: 'No TLE data available' }, 500);
+		}
+		
+		const tleData = validTLEs.join('\n'); // Combine all TLEs with newlines between them
+		
+		console.log(`Fetched ${validTLEs.length} valid TLE sets, total length: ${tleData.length}`);
 
 		// Cache the TLE data
 		if (c.env.AEGIS_CACHE) {

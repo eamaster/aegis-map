@@ -42,28 +42,66 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                 console.log('📡 Fetching TLEs from:', `${API_BASE}/api/tles`);
                 const tleResponse = await fetch(`${API_BASE}/api/tles`);
                 
+                // Check content type to determine if it's JSON (error) or text (TLE data)
+                const contentType = tleResponse.headers.get('content-type') || '';
+                const isJson = contentType.includes('application/json');
+                
                 if (!tleResponse.ok) {
-                    const errorText = await tleResponse.text();
+                    const errorText = isJson ? JSON.stringify(await tleResponse.json()) : await tleResponse.text();
                     throw new Error(`TLE API error: ${tleResponse.status} ${tleResponse.statusText} - ${errorText}`);
                 }
                 
-                const tles = await tleResponse.text();
-                const tleLines = tles.trim().split('\n');
-                const satelliteCount = Math.floor(tleLines.length / 3);
-                console.log('✅ TLEs received:', { 
-                    length: tles.length, 
-                    lines: tleLines.length,
-                    satelliteCount: satelliteCount,
-                    firstSatellite: tleLines[0] || 'N/A',
-                    firstLine1: tleLines[1]?.substring(0, 50) || 'N/A'
+                // Get response text (it could be TLE data or JSON error)
+                const responseText = await tleResponse.text();
+                
+                // If response looks like JSON (starts with { or [), it's likely an error message
+                if (isJson || (responseText.trim().startsWith('{') || responseText.trim().startsWith('['))) {
+                    try {
+                        const errorData = JSON.parse(responseText);
+                        console.error('❌ TLE API returned JSON (error):', errorData);
+                        throw new Error(`TLE API error: ${errorData.error || JSON.stringify(errorData)}`);
+                    } catch (parseError) {
+                        // If it's not valid JSON, treat it as text and continue
+                        console.warn('⚠️ Response looked like JSON but parse failed, treating as text');
+                    }
+                }
+                
+                const tles = responseText;
+                
+                // Log raw response for debugging
+                console.log('📥 Raw TLE response:', {
+                    length: tles.length,
+                    firstChars: tles.substring(0, 200),
+                    lastChars: tles.substring(Math.max(0, tles.length - 200)),
+                    hasNewlines: tles.includes('\n'),
+                    lineCount: tles.split('\n').length
                 });
                 
                 if (!tles || tles.trim().length === 0) {
-                    throw new Error('TLE data is empty');
+                    throw new Error('TLE data is empty - no data received from API');
                 }
                 
+                const tleLines = tles.trim().split('\n').filter(line => line.trim().length > 0);
+                const satelliteCount = Math.floor(tleLines.length / 3);
+                
+                console.log('✅ TLEs parsed:', { 
+                    rawLength: tles.length, 
+                    lines: tleLines.length,
+                    satelliteCount: satelliteCount,
+                    firstSatellite: tleLines[0]?.substring(0, 80) || 'N/A',
+                    firstLine1: tleLines[1]?.substring(0, 80) || 'N/A',
+                    firstLine2: tleLines[2]?.substring(0, 80) || 'N/A'
+                });
+                
                 if (tleLines.length < 3) {
-                    throw new Error(`Invalid TLE data: expected at least 3 lines, got ${tleLines.length}`);
+                    console.error('❌ Invalid TLE data details:', {
+                        receivedLength: tles.length,
+                        lineCount: tleLines.length,
+                        first100Chars: tles.substring(0, 100),
+                        isJson: tles.trim().startsWith('{'),
+                        responseText: tles.substring(0, 500)
+                    });
+                    throw new Error(`Invalid TLE data: expected at least 3 lines, got ${tleLines.length}. Raw response: ${tles.substring(0, 200)}`);
                 }
 
                 // DEBUG: Validate TLE format
