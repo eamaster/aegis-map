@@ -264,7 +264,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
     if (!disaster) return null;
 
     return (
-        <div className="fixed bottom-4 left-4 right-4 z-[100] flex flex-col max-h-[60vh] rounded-2xl shadow-2xl overflow-hidden md:absolute md:top-24 md:right-6 md:w-[400px] md:bottom-auto md:left-auto md:max-h-[calc(100vh-160px)] glass-panel border border-white/10 backdrop-blur-xl bg-gray-900/85">
+        <div className="fixed bottom-4 left-4 right-4 z-[100] flex flex-col max-h-[60vh] rounded-2xl shadow-2xl overflow-hidden md:fixed md:top-24 md:right-6 md:w-[400px] md:bottom-auto md:left-auto md:max-h-[calc(100vh-160px)] glass-panel border border-white/10 backdrop-blur-xl bg-gray-900/85">
             {/* Header */}
             <div className="p-5 flex items-center justify-between border-b border-white/10">
                 <h2 className="text-xl font-bold text-white">Coverage Analysis</h2>
@@ -323,8 +323,8 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                         </div>
                         <div>
                             <h4 className="text-gray-400 text-xs font-bold uppercase mb-1">Cloud-Clear Validator</h4>
-                            <p className="text-white font-bold">
-                                {cloudCover !== null ? `${cloudCover}% (${cloudCover < 20 ? 'Clear' : 'Cloudy'})` : 'Loading...'}
+                            <p className="text-white text-sm leading-tight">
+                                {cloudCover !== null ? `Current Cloud Cover: ${cloudCover}% (${cloudCover < 20 ? 'Clear' : 'Cloudy'})` : 'Loading...'}
                             </p>
                         </div>
                     </div>

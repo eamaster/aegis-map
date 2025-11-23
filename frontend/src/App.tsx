@@ -12,7 +12,7 @@ function App() {
   return (
     <div className="w-screen h-screen relative overflow-hidden bg-black flex flex-col">
       {/* Header */}
-      <header className="flex items-center justify-between px-6 py-4 bg-gray-900/70 backdrop-blur-md border-b border-white/5 z-50 absolute top-0 w-full">
+      <header className="flex items-center justify-between px-6 py-4 bg-gray-900/70 backdrop-blur-md border-b border-white/5 z-50 relative">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-purple-600 flex items-center justify-center">
             <Globe size={20} className="text-white" />
@@ -22,8 +22,8 @@ function App() {
 
         {/* Desktop Navigation - simple text links */}
         <nav className="desktop-nav flex items-center gap-8">
-          <button className="text-white text-sm font-medium hover:text-blue-400 transition-colors">Map</button>
-          <button className="text-gray-300 text-sm font-medium hover:text-white transition-colors">Disasters</button>
+          <button className="text-gray-300 text-sm font-medium hover:text-white transition-colors">Map</button>
+          <button className="text-white text-sm font-medium hover:text-blue-400 transition-colors">Disasters</button>
           <button className="text-gray-300 text-sm font-medium hover:text-white transition-colors">Satellites</button>
           <button className="text-gray-300 text-sm font-medium hover:text-white transition-colors">About</button>
         </nav>
@@ -65,13 +65,13 @@ function App() {
               <div className="flex-1 px-4 py-6 space-y-2">
                 <button
                   onClick={() => setMobileMenuOpen(false)}
-                  className="w-full px-4 py-3 text-left text-white bg-white/10 rounded-lg font-medium hover:bg-white/20 transition-all"
+                  className="w-full px-4 py-3 text-left text-gray-300 hover:text-white hover:bg-white/10 rounded-lg font-medium transition-all"
                 >
                   Map
                 </button>
                 <button
                   onClick={() => setMobileMenuOpen(false)}
-                  className="w-full px-4 py-3 text-left text-gray-300 hover:text-white hover:bg-white/10 rounded-lg font-medium transition-all"
+                  className="w-full px-4 py-3 text-left text-white bg-white/10 rounded-lg font-medium hover:bg-white/20 transition-all"
                 >
                   Disasters
                 </button>
