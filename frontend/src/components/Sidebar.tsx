@@ -261,10 +261,19 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
         }
     };
 
-    if (!disaster) return null;
+    useEffect(() => {
+        console.log('📋 Sidebar rendered with disaster:', disaster);
+    }, [disaster]);
+
+    if (!disaster) {
+        console.log('❌ Sidebar: No disaster provided, returning null');
+        return null;
+    }
+
+    console.log('✅ Sidebar: Rendering with disaster:', disaster.title);
 
     return (
-        <div className="fixed right-0 top-0 bottom-0 z-[100] w-full max-w-[420px] flex flex-col shadow-2xl overflow-hidden glass-panel border-l border-white/10 backdrop-blur-xl bg-gray-900/85 md:top-[73px] md:bottom-0 md:right-0 md:w-[420px] md:h-[calc(100vh-73px)] md:flex">
+        <div className="fixed right-0 top-[73px] bottom-0 z-[100] w-full max-w-[420px] flex flex-col shadow-2xl overflow-hidden glass-panel border-l border-white/10 backdrop-blur-xl bg-gray-900/85 md:top-[73px] md:bottom-0 md:right-0 md:w-[420px] md:h-[calc(100vh-73px)]" style={{ display: 'flex' }}>
             {/* Header */}
             <div className="p-5 flex items-center justify-between border-b border-white/10 flex-shrink-0">
                 <h2 className="text-xl font-bold text-white">Coverage Analysis</h2>

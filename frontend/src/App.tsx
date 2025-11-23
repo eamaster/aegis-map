@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Globe, Menu, X } from 'lucide-react';
 import MapBoard from './components/MapBoard';
 import Sidebar from './components/Sidebar';
@@ -9,23 +9,28 @@ function App() {
   const [selectedDisaster, setSelectedDisaster] = useState<Disaster | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
+  // Debug: Log state changes
+  useEffect(() => {
+    console.log('🔍 selectedDisaster state changed:', selectedDisaster);
+  }, [selectedDisaster]);
+
   return (
     <div className="w-screen h-screen relative overflow-hidden bg-black flex flex-col">
       {/* Header */}
-      <header className="flex items-center justify-between px-6 py-4 bg-gray-900/70 backdrop-blur-md border-b border-white/5 z-50 relative">
+      <header className="flex items-center justify-between px-6 py-4 bg-gray-900/90 backdrop-blur-md border-b border-white/10 z-50 relative shadow-lg">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-purple-600 flex items-center justify-center">
-            <Globe size={20} className="text-white" />
+          <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-blue-500 to-purple-600 flex items-center justify-center shadow-lg ring-2 ring-blue-500/30">
+            <Globe size={22} className="text-white" />
           </div>
-          <h1 className="text-xl font-semibold text-white tracking-tight">AegisMap</h1>
+          <h1 className="text-2xl font-bold text-white tracking-tight">AegisMap</h1>
         </div>
 
         {/* Desktop Navigation - simple text links */}
         <nav className="desktop-nav flex items-center gap-8">
-          <button className="text-gray-300 text-sm font-medium hover:text-white transition-colors">Map</button>
-          <button className="text-white text-sm font-medium hover:text-blue-400 transition-colors">Disasters</button>
-          <button className="text-gray-300 text-sm font-medium hover:text-white transition-colors">Satellites</button>
-          <button className="text-gray-300 text-sm font-medium hover:text-white transition-colors">About</button>
+          <button className="text-gray-300 text-sm font-medium hover:text-white transition-colors px-2 py-1 rounded hover:bg-white/5">Map</button>
+          <button className="text-white text-sm font-semibold hover:text-blue-400 transition-colors px-2 py-1 rounded bg-white/10">Disasters</button>
+          <button className="text-gray-300 text-sm font-medium hover:text-white transition-colors px-2 py-1 rounded hover:bg-white/5">Satellites</button>
+          <button className="text-gray-300 text-sm font-medium hover:text-white transition-colors px-2 py-1 rounded hover:bg-white/5">About</button>
         </nav>
 
         {/* Mobile Hamburger Menu Button */}
@@ -100,7 +105,10 @@ function App() {
         {selectedDisaster && (
           <Sidebar
             disaster={selectedDisaster}
-            onClose={() => setSelectedDisaster(null)}
+            onClose={() => {
+              console.log('🔒 Closing sidebar');
+              setSelectedDisaster(null);
+            }}
           />
         )}
       </main>

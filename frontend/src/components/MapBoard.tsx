@@ -207,12 +207,15 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
                 if (e.features && e.features[0]) {
                     const props = e.features[0].properties as any;
                     console.log('🔥 Fire marker clicked!', props);
+                    // Handle both uppercase and lowercase coordinate properties
+                    const lat = props.lat || props.Lat || props.latitude || props.Latitude || e.lngLat.lat;
+                    const lng = props.lng || props.Lng || props.longitude || props.Longitude || e.lngLat.lng;
                     const disaster = {
                         id: props.id || `fire_${Date.now()}`,
                         type: props.type || 'fire',
                         title: props.title || props.name || 'Fire Event',
-                        lat: parseFloat(props.lat || props.latitude || e.lngLat.lat),
-                        lng: parseFloat(props.lng || props.longitude || e.lngLat.lng),
+                        lat: parseFloat(String(lat)),
+                        lng: parseFloat(String(lng)),
                         date: props.date || props.start || new Date().toISOString(),
                         severity: props.severity || 'medium',
                     };
@@ -268,17 +271,29 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
                 if (e.features && e.features[0]) {
                     const props = e.features[0].properties as any;
                     console.log('🌍 Earthquake marker clicked!', props);
+                    // Handle both uppercase and lowercase coordinate properties
+                    const latValue = props.lat || props.Lat || props.latitude || props.Latitude || e.lngLat.lat;
+                    const lngValue = props.lng || props.Lng || props.longitude || props.Longitude || e.lngLat.lng;
+                    const latNum = parseFloat(String(latValue));
+                    const lngNum = parseFloat(String(lngValue));
+                    
+                    // Validate coordinates
+                    if (isNaN(latNum) || isNaN(lngNum)) {
+                        console.error('❌ Invalid coordinates:', { latValue, lngValue, latNum, lngNum });
+                        return;
+                    }
+                    
                     const disaster = {
                         id: props.id || `earthquake_${Date.now()}`,
                         type: props.type || 'earthquake',
                         title: props.title || props.name || 'Earthquake Event',
-                        lat: parseFloat(props.lat || props.latitude || e.lngLat.lat),
-                        lng: parseFloat(props.lng || props.longitude || e.lngLat.lng),
-                        date: props.date || new Date().toISOString(),
+                        lat: latNum,
+                        lng: lngNum,
+                        date: props.date || props.start || new Date().toISOString(),
                         severity: props.severity || 'medium',
                         magnitude: props.magnitude ? parseFloat(props.magnitude) : undefined,
                     };
-                    console.log('Selected disaster:', disaster);
+                    console.log('✅ Selected disaster (validated):', disaster);
                     onDisasterSelect(disaster);
                 }
             });
@@ -330,12 +345,15 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
                 if (e.features && e.features[0]) {
                     const props = e.features[0].properties as any;
                     console.log('🌋 Volcano marker clicked!', props);
+                    // Handle both uppercase and lowercase coordinate properties
+                    const lat = props.lat || props.Lat || props.latitude || props.Latitude || e.lngLat.lat;
+                    const lng = props.lng || props.Lng || props.longitude || props.Longitude || e.lngLat.lng;
                     const disaster = {
                         id: props.id || `volcano_${Date.now()}`,
                         type: props.type || 'volcano',
                         title: props.title || props.name || 'Volcano Event',
-                        lat: parseFloat(props.lat || props.latitude || e.lngLat.lat),
-                        lng: parseFloat(props.lng || props.longitude || e.lngLat.lng),
+                        lat: parseFloat(String(lat)),
+                        lng: parseFloat(String(lng)),
                         date: props.date || props.start || new Date().toISOString(),
                         severity: props.severity || 'medium',
                     };
