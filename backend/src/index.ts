@@ -196,17 +196,16 @@ app.post('/api/analyze', async (c) => {
 		}
 
 		// Call Gemini API - Try multiple model names for compatibility
-		// Try Gemini 3 Preview Pro models first, then fallback to stable models
+		// Models listed from most recent/experimental to stable
 		const models = [
-			'gemini-3.0-pro-preview',      // Gemini 3 Preview Pro (if available)
-			'gemini-3-pro-preview',        // Alternative naming
-			'gemini-pro-3.0-preview',      // Alternative naming
-			'gemini-exp-1206',             // Experimental/preview naming
-			'gemini-1.5-pro-latest',       // Latest stable 1.5 Pro
-			'gemini-1.5-pro',              // Stable 1.5 Pro
-			'gemini-pro',                  // Latest Pro model
+			'gemini-2.0-flash-001',        // Gemini 2.0 Flash (latest)
+			'gemini-1.5-pro-002',          // Stable Gemini 1.5 Pro
+			'gemini-1.5-pro',              // Stable Gemini 1.5 Pro (without version)
+			'gemini-1.5-flash-002',        // Stable Gemini 1.5 Flash
+			'gemini-1.5-flash',            // Stable Gemini 1.5 Flash (without version)
+			'gemini-exp-1206',             // Experimental/preview
 		];
-		const apiVersions = ['v1', 'v1beta'];
+		const apiVersions = ['v1beta', 'v1']; // Try v1beta first (most common), then v1
 		
 		const prompt = `You are an expert satellite imagery analyst. A disaster "${disasterTitle}" will be overpassed by satellite "${satelliteName}" at ${passTime}. Local cloud cover is ${cloudCover}%. 
 
@@ -233,14 +232,27 @@ Provide a concise 2-sentence summary for a first responder. Be direct and action
 		};
 
 		let lastError: any = null;
+		let attempts: string[] = [];
+		
+		// Check if API key is set
+		if (!c.env.GEMINI_API_KEY) {
+			console.error('❌ GEMINI_API_KEY is not set in environment variables');
+			return c.json({ 
+				error: 'AI analysis failed', 
+				details: { error: 'GEMINI_API_KEY environment variable is not configured' },
+				message: 'Gemini API key is missing. Please configure GEMINI_API_KEY in Cloudflare Worker secrets.'
+			}, 500);
+		}
 		
 		// Try different model/version combinations
 		for (const apiVersion of apiVersions) {
 			for (const model of models) {
 				try {
 					const geminiUrl = `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:generateContent?key=${c.env.GEMINI_API_KEY}`;
+					const attempt = `${apiVersion}/${model}`;
+					attempts.push(attempt);
 					
-					console.log(`Trying Gemini API: ${apiVersion}/${model}`);
+					console.log(`🔄 Trying Gemini API: ${attempt}`);
 					
 					const geminiResponse = await fetch(geminiUrl, {
 						method: 'POST',
@@ -295,11 +307,13 @@ Provide a concise 2-sentence summary for a first responder. Be direct and action
 		}
 
 		// If all models failed, return error
-		console.error('All Gemini model attempts failed. Last error:', lastError);
+		console.error('❌ All Gemini model attempts failed. Tried models:', attempts);
+		console.error('Last error:', lastError);
 		return c.json({ 
 			error: 'AI analysis failed', 
 			details: lastError,
-			message: 'Unable to connect to any available Gemini model. Please check API key and model availability.'
+			attempts: attempts,
+			message: `Unable to connect to any available Gemini model after trying ${attempts.length} combinations. Please check API key and model availability. Tried: ${attempts.join(', ')}`
 		}, 500);
 	} catch (error) {
 		console.error('Error in AI analysis:', error);
