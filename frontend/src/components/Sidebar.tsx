@@ -67,9 +67,6 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                 }
 
                 // DEBUG: Validate TLE format
-                const tleLines = tles.trim().split('\n');
-                const satelliteCount = Math.floor(tleLines.length / 3);
-
                 if (tleLines.length % 3 !== 0) {
                     (window as any).aegisDebug?.log(
                         'tles',
