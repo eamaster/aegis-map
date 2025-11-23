@@ -21,6 +21,8 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
     const [timeUntilPass, setTimeUntilPass] = useState<string>('');
 
     const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787';
+    
+    console.log('🔗 API_BASE configured:', API_BASE);
 
     // Fetch TLE data and calculate next pass
     useEffect(() => {
@@ -28,6 +30,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
 
         const fetchData = async () => {
             try {
+                console.log('🚀 Starting data fetch for disaster:', disaster.title);
                 // DEBUG: Log TLE fetch
                 (window as any).aegisDebug?.log(
                     'tles',
@@ -36,8 +39,15 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                 );
 
                 // Fetch TLEs
+                console.log('📡 Fetching TLEs from:', `${API_BASE}/api/tles`);
                 const tleResponse = await fetch(`${API_BASE}/api/tles`);
+                
+                if (!tleResponse.ok) {
+                    throw new Error(`TLE API error: ${tleResponse.status} ${tleResponse.statusText}`);
+                }
+                
                 const tles = await tleResponse.text();
+                console.log('✅ TLEs received:', { length: tles.length, lines: tles.split('\n').length });
 
                 // DEBUG: Validate TLE format
                 const tleLines = tles.trim().split('\n');
@@ -80,6 +90,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                 }
 
                 // Calculate next pass
+                console.log('🛰️ Calculating satellite passes for:', { latNum, lngNum, tleLength: tles.length });
                 (window as any).aegisDebug?.log(
                     'orbital',
                     `Calculating satellite passes for disaster at (${latNum}, ${lngNum})`,
@@ -88,14 +99,26 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
 
                 const pass = getNextPass(tles, latNum, lngNum);
 
+                console.log('🛰️ Satellite pass result:', pass);
+
                 if (!pass) {
+                    console.warn('⚠️ No satellite passes found in next 24 hours');
                     (window as any).aegisDebug?.log(
                         'orbital',
                         'No satellite passes found in next 24 hours',
                         'warning'
                     );
+                    setNextPass(null);
+                    setAiAnalysis("No satellite passes detected in the next 24 hours. Coverage unavailable.");
+                    return;
                 } else {
                     const timeUntil = (pass.time.getTime() - new Date().getTime()) / 1000 / 60; // minutes
+                    console.log('✅ Satellite pass found:', {
+                        satellite: pass.satelliteName,
+                        time: pass.time.toISOString(),
+                        timeUntil: Math.round(timeUntil) + ' minutes',
+                        elevation: pass.elevation.toFixed(1) + '°'
+                    });
                     (window as any).aegisDebug?.log(
                         'orbital',
                         `Next pass: ${pass.satelliteName} at ${pass.time.toLocaleString()} (in ${Math.round(timeUntil)} min) - Elevation: ${pass.elevation.toFixed(1)}°`,
@@ -106,22 +129,22 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
 
                 setNextPass(pass);
 
-                if (!pass) {
-                    setAiAnalysis("No satellite passes detected in the next 24 hours. Coverage unavailable.");
-                    return;
-                }
-
                 // Fetch weather data
+                console.log('🌤️ Fetching weather data for pass time:', pass.time.toISOString());
                 fetchWeather(latNum, lngNum, pass.time);
             } catch (error) {
-                console.error('Error fetching data:', error);
+                console.error('❌ Error fetching data in sidebar:', error);
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                console.error('Error details:', { error, errorMessage, stack: error instanceof Error ? error.stack : undefined });
                 (window as any).aegisDebug?.log(
                     'tles',
-                    `FAILED to fetch TLEs: ${error}`,
+                    `FAILED to fetch TLEs: ${errorMessage}`,
                     'error',
-                    { error: String(error) }
+                    { error: errorMessage, fullError: error }
                 );
-                setAiAnalysis("Unable to retrieve satellite data.");
+                setAiAnalysis(`Unable to retrieve satellite data: ${errorMessage}`);
+                setNextPass(null);
+                setCloudCover(null);
             }
         };
 
@@ -133,6 +156,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
         try {
             const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&hourly=cloud_cover&forecast_days=2`;
 
+            console.log('🌤️ Fetching weather from:', url);
             // DEBUG: Log weather API call
             (window as any).aegisDebug?.log(
                 'weather',
@@ -141,7 +165,15 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
             );
 
             const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`Weather API error: ${response.status} ${response.statusText}`);
+            }
             const data: WeatherData = await response.json();
+            console.log('🌤️ Weather data received:', { 
+                hasHourly: !!data.hourly, 
+                hasCloudCover: !!(data.hourly?.cloud_cover),
+                timeCount: data.hourly?.time?.length || 0
+            });
 
             // DEBUG: Validate weather response
             if (!data.hourly || !data.hourly.cloud_cover) {
@@ -161,6 +193,11 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
 
             if (closestIndex >= 0) {
                 const cloudValue = data.hourly.cloud_cover[closestIndex];
+                console.log('✅ Cloud cover found:', { 
+                    cloudValue, 
+                    time: data.hourly.time[closestIndex],
+                    status: cloudValue < 20 ? 'Clear' : 'Cloudy'
+                });
                 setCloudCover(cloudValue);
 
                 // DEBUG: Log weather result
@@ -171,6 +208,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                     { cloudCover: cloudValue, time: data.hourly.time[closestIndex] }
                 );
             } else {
+                console.warn('⚠️ Could not find cloud data for pass time:', passTime.toISOString());
                 (window as any).aegisDebug?.log(
                     'weather',
                     'WARNING: Could not find cloud data for pass time',
@@ -178,13 +216,16 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                 );
             }
         } catch (error) {
-            console.error('Error fetching weather:', error);
+            console.error('❌ Error fetching weather:', error);
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            console.error('Weather error details:', { error, errorMessage });
             (window as any).aegisDebug?.log(
                 'weather',
-                `FAILED to fetch weather: ${error}`,
+                `FAILED to fetch weather: ${errorMessage}`,
                 'error',
-                { error: String(error) }
+                { error: errorMessage, fullError: error }
             );
+            setCloudCover(0); // Default to 0 if weather fetch fails so AI analysis can still run
         }
     };
 
@@ -214,10 +255,18 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
 
     // Trigger AI analysis automatically when data is ready
     useEffect(() => {
+        console.log('🤖 AI Analysis trigger check:', {
+            hasDisaster: !!disaster,
+            hasNextPass: !!nextPass,
+            cloudCover,
+            hasAiAnalysis: !!aiAnalysis,
+            loadingAnalysis
+        });
         if (disaster && nextPass && cloudCover !== null && !aiAnalysis && !loadingAnalysis) {
+            console.log('✅ Triggering AI analysis...');
             analyzePass();
         }
-    }, [disaster, nextPass, cloudCover]);
+    }, [disaster, nextPass, cloudCover, aiAnalysis, loadingAnalysis]);
 
     // Get AI analysis
     const analyzePass = async () => {
@@ -240,13 +289,23 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                 requestBody
             );
 
+            console.log('🤖 Calling Gemini API:', { API_BASE, requestBody });
             const response = await fetch(`${API_BASE}/api/analyze`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(requestBody),
             });
 
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`Gemini API error: ${response.status} ${response.statusText} - ${errorText}`);
+            }
+
             const data: AIAnalysisResponse = await response.json();
+            console.log('✅ Gemini API response received:', { 
+                hasAnalysis: !!data.analysis, 
+                analysisLength: data.analysis?.length || 0 
+            });
 
             // DEBUG: Validate Gemini response
             if (!data.analysis || data.analysis.length < 10) {
@@ -269,14 +328,16 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
 
             setAiAnalysis(data.analysis);
         } catch (error) {
-            console.error('Error getting AI analysis:', error);
+            console.error('❌ Error getting AI analysis:', error);
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            console.error('AI analysis error details:', { error, errorMessage, stack: error instanceof Error ? error.stack : undefined });
             (window as any).aegisDebug?.log(
                 'gemini',
-                `FAILED to get AI analysis: ${error}`,
+                `FAILED to get AI analysis: ${errorMessage}`,
                 'error',
-                { error: String(error) }
+                { error: errorMessage, fullError: error }
             );
-            setAiAnalysis('Analysis unavailable.');
+            setAiAnalysis(`Analysis unavailable: ${errorMessage}`);
         } finally {
             setLoadingAnalysis(false);
         }
