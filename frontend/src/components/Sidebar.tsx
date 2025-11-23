@@ -264,20 +264,21 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
     if (!disaster) return null;
 
     return (
-        <div className="fixed bottom-4 left-4 right-4 z-[100] flex flex-col max-h-[60vh] rounded-2xl shadow-2xl overflow-hidden md:fixed md:top-24 md:right-6 md:w-[400px] md:bottom-auto md:left-auto md:max-h-[calc(100vh-160px)] glass-panel border border-white/10 backdrop-blur-xl bg-gray-900/85">
+        <div className="fixed right-0 top-0 bottom-0 z-[100] w-full max-w-[420px] flex flex-col shadow-2xl overflow-hidden glass-panel border-l border-white/10 backdrop-blur-xl bg-gray-900/85 md:top-[73px] md:bottom-0 md:right-0 md:w-[420px] md:h-[calc(100vh-73px)] md:flex">
             {/* Header */}
-            <div className="p-5 flex items-center justify-between border-b border-white/10">
+            <div className="p-5 flex items-center justify-between border-b border-white/10 flex-shrink-0">
                 <h2 className="text-xl font-bold text-white">Coverage Analysis</h2>
                 <button
                     onClick={onClose}
                     className="text-gray-400 hover:text-white transition-colors p-1 hover:bg-white/10 rounded-full"
+                    aria-label="Close sidebar"
                 >
                     <X size={20} />
                 </button>
             </div>
 
             {/* Content */}
-            <div className="p-5 space-y-4 overflow-y-auto custom-scrollbar">
+            <div className="p-5 space-y-4 overflow-y-auto custom-scrollbar flex-1">
 
                 {/* AI Insight Card */}
                 <div className="glass-card rounded-xl p-4 border-l-4 border-blue-500 relative overflow-hidden group">

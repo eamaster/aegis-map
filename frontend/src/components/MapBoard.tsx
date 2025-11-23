@@ -202,15 +202,22 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
 
             // Add click handler
             map.current.on('click', 'fires-layer', (e) => {
-                console.log('🔥 Fire marker clicked!', e.features);
+                e.preventDefault();
+                e.stopPropagation();
                 if (e.features && e.features[0]) {
-                    const disaster = e.features[0].properties as any;
-                    console.log('Fire disaster data:', disaster);
-                    onDisasterSelect({
-                        ...disaster,
-                        lat: parseFloat(disaster.lat),
-                        lng: parseFloat(disaster.lng),
-                    });
+                    const props = e.features[0].properties as any;
+                    console.log('🔥 Fire marker clicked!', props);
+                    const disaster = {
+                        id: props.id || `fire_${Date.now()}`,
+                        type: props.type || 'fire',
+                        title: props.title || props.name || 'Fire Event',
+                        lat: parseFloat(props.lat || props.latitude || e.lngLat.lat),
+                        lng: parseFloat(props.lng || props.longitude || e.lngLat.lng),
+                        date: props.date || props.start || new Date().toISOString(),
+                        severity: props.severity || 'medium',
+                    };
+                    console.log('Selected disaster:', disaster);
+                    onDisasterSelect(disaster);
                 }
             });
 
@@ -256,16 +263,23 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
 
             // Add click handler
             map.current.on('click', 'earthquakes-layer', (e) => {
-                console.log('🌍 Earthquake marker clicked!', e.features);
+                e.preventDefault();
+                e.stopPropagation();
                 if (e.features && e.features[0]) {
-                    const disaster = e.features[0].properties as any;
-                    console.log('Earthquake disaster data:', disaster);
-                    onDisasterSelect({
-                        ...disaster,
-                        lat: parseFloat(disaster.lat),
-                        lng: parseFloat(disaster.lng),
-                        magnitude: parseFloat(disaster.magnitude),
-                    });
+                    const props = e.features[0].properties as any;
+                    console.log('🌍 Earthquake marker clicked!', props);
+                    const disaster = {
+                        id: props.id || `earthquake_${Date.now()}`,
+                        type: props.type || 'earthquake',
+                        title: props.title || props.name || 'Earthquake Event',
+                        lat: parseFloat(props.lat || props.latitude || e.lngLat.lat),
+                        lng: parseFloat(props.lng || props.longitude || e.lngLat.lng),
+                        date: props.date || new Date().toISOString(),
+                        severity: props.severity || 'medium',
+                        magnitude: props.magnitude ? parseFloat(props.magnitude) : undefined,
+                    };
+                    console.log('Selected disaster:', disaster);
+                    onDisasterSelect(disaster);
                 }
             });
 
@@ -311,15 +325,22 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
 
             // Add click handler
             map.current.on('click', 'volcanoes-layer', (e) => {
-                console.log('🌋 Volcano marker clicked!', e.features);
+                e.preventDefault();
+                e.stopPropagation();
                 if (e.features && e.features[0]) {
-                    const disaster = e.features[0].properties as any;
-                    console.log('Volcano disaster data:', disaster);
-                    onDisasterSelect({
-                        ...disaster,
-                        lat: parseFloat(disaster.lat),
-                        lng: parseFloat(disaster.lng),
-                    });
+                    const props = e.features[0].properties as any;
+                    console.log('🌋 Volcano marker clicked!', props);
+                    const disaster = {
+                        id: props.id || `volcano_${Date.now()}`,
+                        type: props.type || 'volcano',
+                        title: props.title || props.name || 'Volcano Event',
+                        lat: parseFloat(props.lat || props.latitude || e.lngLat.lat),
+                        lng: parseFloat(props.lng || props.longitude || e.lngLat.lng),
+                        date: props.date || props.start || new Date().toISOString(),
+                        severity: props.severity || 'medium',
+                    };
+                    console.log('Selected disaster:', disaster);
+                    onDisasterSelect(disaster);
                 }
             });
 
