@@ -203,7 +203,7 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
             // Add click handler
             map.current.on('click', 'fires-layer', (e) => {
                 e.preventDefault();
-                e.stopPropagation();
+                e.originalEvent?.stopPropagation();
                 if (e.features && e.features[0]) {
                     const props = e.features[0].properties as any;
                     console.log('🔥 Fire marker clicked!', props);
@@ -267,7 +267,7 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
             // Add click handler
             map.current.on('click', 'earthquakes-layer', (e) => {
                 e.preventDefault();
-                e.stopPropagation();
+                e.originalEvent?.stopPropagation();
                 if (e.features && e.features[0]) {
                     const props = e.features[0].properties as any;
                     console.log('🌍 Earthquake marker clicked!', props);
@@ -276,13 +276,13 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
                     const lngValue = props.lng || props.Lng || props.longitude || props.Longitude || e.lngLat.lng;
                     const latNum = parseFloat(String(latValue));
                     const lngNum = parseFloat(String(lngValue));
-                    
+
                     // Validate coordinates
                     if (isNaN(latNum) || isNaN(lngNum)) {
                         console.error('❌ Invalid coordinates:', { latValue, lngValue, latNum, lngNum });
                         return;
                     }
-                    
+
                     const disaster = {
                         id: props.id || `earthquake_${Date.now()}`,
                         type: props.type || 'earthquake',
@@ -341,7 +341,7 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
             // Add click handler
             map.current.on('click', 'volcanoes-layer', (e) => {
                 e.preventDefault();
-                e.stopPropagation();
+                e.originalEvent?.stopPropagation();
                 if (e.features && e.features[0]) {
                     const props = e.features[0].properties as any;
                     console.log('🌋 Volcano marker clicked!', props);
