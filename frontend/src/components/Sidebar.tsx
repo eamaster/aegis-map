@@ -444,29 +444,51 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
             const data: AIAnalysisResponse = await response.json();
             console.log('✅ Gemini API response received:', { 
                 hasAnalysis: !!data.analysis, 
-                analysisLength: data.analysis?.length || 0 
+                analysisLength: data.analysis?.length || 0,
+                analysisText: data.analysis?.substring(0, 100) || 'N/A',
+                fullResponse: data
             });
 
             // DEBUG: Validate Gemini response
-            if (!data.analysis || data.analysis.length < 10) {
+            if (!data.analysis || data.analysis.trim().length === 0) {
+                console.error('❌ AI analysis is empty or whitespace only:', data);
                 (window as any).aegisDebug?.log(
                     'gemini',
-                    'WARNING: AI analysis response is too short or empty',
+                    'WARNING: AI analysis response is empty or whitespace only',
                     'warning',
                     data
                 );
-            } else {
-                // Check if analysis mentions the disaster
-                const mentionsDisaster = data.analysis.toLowerCase().includes(disaster.title.toLowerCase().split(' ')[0]);
+                setAiAnalysis('Analysis unavailable: Empty response from AI service.');
+                return;
+            }
+            
+            if (data.analysis.trim().length < 10) {
+                console.warn('⚠️ AI analysis is very short:', data.analysis);
                 (window as any).aegisDebug?.log(
                     'gemini',
-                    `AI analysis received (${data.analysis.length} chars). Relevant: ${mentionsDisaster ? 'YES' : 'MAYBE'}`,
-                    'success',
-                    { analysis: data.analysis.slice(0, 100) + '...', length: data.analysis.length, mentionsDisaster }
+                    'WARNING: AI analysis response is too short',
+                    'warning',
+                    { analysis: data.analysis, length: data.analysis.length }
                 );
             }
-
-            setAiAnalysis(data.analysis);
+            
+            // Trim and set the analysis
+            const trimmedAnalysis = data.analysis.trim();
+            console.log('✅ Setting AI analysis:', { 
+                length: trimmedAnalysis.length, 
+                preview: trimmedAnalysis.substring(0, 200) 
+            });
+            
+            // Check if analysis mentions the disaster
+            const mentionsDisaster = trimmedAnalysis.toLowerCase().includes(disaster.title.toLowerCase().split(' ')[0]);
+            (window as any).aegisDebug?.log(
+                'gemini',
+                `AI analysis received (${trimmedAnalysis.length} chars). Relevant: ${mentionsDisaster ? 'YES' : 'MAYBE'}`,
+                'success',
+                { analysis: trimmedAnalysis.slice(0, 100) + '...', length: trimmedAnalysis.length, mentionsDisaster }
+            );
+            
+            setAiAnalysis(trimmedAnalysis);
         } catch (error) {
             console.error('❌ Error getting AI analysis:', error);
             const errorMessage = error instanceof Error ? error.message : String(error);
@@ -540,8 +562,10 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                     <p className="text-gray-300 text-sm leading-relaxed">
                         {loadingAnalysis ? (
                             <span className="animate-pulse text-blue-300 font-medium">Analyzing satellite telemetry...</span>
+                        ) : aiAnalysis && aiAnalysis.trim().length > 0 ? (
+                            <span>{aiAnalysis}</span>
                         ) : (
-                            aiAnalysis || "Waiting for data..."
+                            <span className="text-gray-500 italic">Waiting for analysis...</span>
                         )}
                     </p>
                 </div>

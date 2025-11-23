@@ -253,8 +253,25 @@ Provide a concise 2-sentence summary for a first responder. Be direct and action
 					const geminiData = await geminiResponse.json();
 
 					if (geminiResponse.ok) {
-						const analysis = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || 'Analysis unavailable';
-						console.log(`✅ Successfully used Gemini model: ${apiVersion}/${model}`);
+						const rawAnalysis = geminiData.candidates?.[0]?.content?.parts?.[0]?.text;
+						console.log(`✅ Gemini API response (${apiVersion}/${model}):`, {
+							hasCandidates: !!geminiData.candidates,
+							candidateCount: geminiData.candidates?.length || 0,
+							hasContent: !!geminiData.candidates?.[0]?.content,
+							hasParts: !!geminiData.candidates?.[0]?.content?.parts,
+							partCount: geminiData.candidates?.[0]?.content?.parts?.length || 0,
+							rawAnalysisLength: rawAnalysis?.length || 0,
+							rawAnalysisPreview: rawAnalysis?.substring(0, 100) || 'N/A',
+							fullResponse: JSON.stringify(geminiData).substring(0, 500)
+						});
+						
+						if (!rawAnalysis || rawAnalysis.trim().length === 0) {
+							console.error(`❌ Gemini returned empty analysis for ${apiVersion}/${model}:`, geminiData);
+							continue; // Try next model
+						}
+						
+						const analysis = rawAnalysis.trim();
+						console.log(`✅ Successfully used Gemini model: ${apiVersion}/${model}, analysis length: ${analysis.length}`);
 						return c.json({ analysis });
 					}
 					
