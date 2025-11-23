@@ -93,8 +93,45 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
     const loadDisasters = async () => {
         try {
             const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787';
+
+            // DEBUG: Log API call
+            (window as any).aegisDebug?.log('backend', `Fetching disasters from ${API_BASE}/api/disasters`, 'info');
+
             const response = await fetch(`${API_BASE}/api/disasters`);
             const data: Disaster[] = await response.json();
+
+            // DEBUG: Validate disaster data
+            if (!Array.isArray(data)) {
+                (window as any).aegisDebug?.log('disasters', 'ERROR: Response is not an array', 'error', { data });
+                setLoading(false);
+                return;
+            }
+
+            const fireCount = data.filter(d => d.type === 'fire').length;
+            const volcanoCount = data.filter(d => d.type === 'volcano').length;
+            const earthquakeCount = data.filter(d => d.type === 'earthquake').length;
+
+            // DEBUG: Log disaster stats
+            (window as any).aegisDebug?.log(
+                'disasters',
+                `Loaded ${data.length} disasters: ${fireCount} fires, ${volcanoCount} volcanoes, ${earthquakeCount} earthquakes`,
+                'success',
+                { count: data.length, types: { fires: fireCount, volcanoes: volcanoCount, earthquakes: earthquakeCount } }
+            );
+
+            // Validate coordinates
+            const invalid = data.filter(d =>
+                Math.abs(d.lat) > 90 || Math.abs(d.lng) > 180
+            );
+            if (invalid.length > 0) {
+                (window as any).aegisDebug?.log(
+                    'disasters',
+                    `WARNING: Found ${invalid.length} disasters with invalid coordinates`,
+                    'warning',
+                    invalid
+                );
+            }
+
             setDisasters(data);
             setLoading(false);
 
@@ -104,6 +141,12 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
             }
         } catch (error) {
             console.error('Error loading disasters:', error);
+            (window as any).aegisDebug?.log(
+                'disasters',
+                `FAILED to load disasters: ${error}`,
+                'error',
+                { error: String(error) }
+            );
             setLoading(false);
         }
     };
@@ -119,6 +162,13 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
 
         // Add fires layer
         if (fires.length > 0) {
+            // DEBUG: Log layer creation
+            (window as any).aegisDebug?.log(
+                'map',
+                `Adding fires layer with ${fires.length} markers`,
+                'info'
+            );
+
             map.current.addSource('fires', {
                 type: 'geojson',
                 data: {

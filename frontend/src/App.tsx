@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Globe, Menu, X } from 'lucide-react';
 import MapBoard from './components/MapBoard';
 import Sidebar from './components/Sidebar';
+import DebugPanel from './components/DebugPanel';
 import type { Disaster } from './types';
 
 function App() {
@@ -103,6 +104,9 @@ function App() {
           />
         )}
       </main>
+
+      {/* Debug Panel */}
+      <DebugPanel />
     </div>
   );
 }
