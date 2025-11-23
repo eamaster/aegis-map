@@ -196,13 +196,15 @@ app.post('/api/analyze', async (c) => {
 		}
 
 		// Call Gemini API - Try multiple model names for compatibility
-		// Models listed from most recent/experimental to stable
+		// Models listed from most recent/experimental to stable/common
 		const models = [
 			'gemini-2.0-flash-001',        // Gemini 2.0 Flash (latest)
-			'gemini-1.5-pro-002',          // Stable Gemini 1.5 Pro
-			'gemini-1.5-pro',              // Stable Gemini 1.5 Pro (without version)
-			'gemini-1.5-flash-002',        // Stable Gemini 1.5 Flash
-			'gemini-1.5-flash',            // Stable Gemini 1.5 Flash (without version)
+			'gemini-1.5-pro-002',          // Stable Gemini 1.5 Pro (with version)
+			'gemini-1.5-pro-latest',       // Latest 1.5 Pro alias
+			'gemini-1.5-pro',              // Stable Gemini 1.5 Pro (common)
+			'gemini-1.5-flash-002',        // Stable Gemini 1.5 Flash (with version)
+			'gemini-1.5-flash',            // Stable Gemini 1.5 Flash (common)
+			'gemini-pro',                  // Simple Pro model name
 			'gemini-exp-1206',             // Experimental/preview
 		];
 		const apiVersions = ['v1beta', 'v1']; // Try v1beta first (most common), then v1
