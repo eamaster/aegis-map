@@ -114,7 +114,7 @@ app.get('/api/disasters', async (c) => {
 // Route 2: GET /api/tles
 // Fetches satellite TLE data from CelesTrak
 app.get('/api/tles', async (c) => {
-	const cacheKey = 'tles';
+	const cacheKey = 'tles_v2';
 	const cacheTTL = 43200; // 12 hours
 
 	try {
@@ -130,10 +130,23 @@ app.get('/api/tles', async (c) => {
 		// Fetch TLEs for disaster monitoring satellites
 		// Landsat-8 (39084), Landsat-9 (49260), Sentinel-2A (40697), 
 		// Sentinel-2B (42063), Terra (25994), Aqua (27424)
-		const response = await fetch(
-			'https://celestrak.org/NORAD/elements/gp.php?CATNR=39084,49260,40697,42063,25994,27424&FORMAT=tle'
-		);
-		const tleData = await response.text();
+		const satellites = [39084, 49260, 40697, 42063, 25994, 27424];
+
+		console.log(`Fetching TLEs for ${satellites.length} satellites...`);
+
+		const tlePromises = satellites.map(async (catNr) => {
+			const response = await fetch(
+				`https://celestrak.org/NORAD/elements/gp.php?CATNR=${catNr}&FORMAT=tle`
+			);
+			if (!response.ok) {
+				console.error(`Failed to fetch TLE for ${catNr}: ${response.statusText}`);
+				return '';
+			}
+			return await response.text();
+		});
+
+		const results = await Promise.all(tlePromises);
+		const tleData = results.join(''); // Combine all TLEs into one string
 
 		// Cache the TLE data
 		if (c.env.AEGIS_CACHE) {
