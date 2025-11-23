@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'react';
 import { X, Sparkles, Cloud, Wifi, Satellite } from 'lucide-react';
 import type { Disaster, WeatherData, AIAnalysisResponse } from '../types';
-import { getNextPass, type SatellitePass } from '../utils/orbitalEngine';
+import { getNextPass, predictPasses, type SatellitePass } from '../utils/orbitalEngine';
 
 interface SidebarProps {
     disaster: Disaster | null;
@@ -43,11 +43,28 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                 const tleResponse = await fetch(`${API_BASE}/api/tles`);
                 
                 if (!tleResponse.ok) {
-                    throw new Error(`TLE API error: ${tleResponse.status} ${tleResponse.statusText}`);
+                    const errorText = await tleResponse.text();
+                    throw new Error(`TLE API error: ${tleResponse.status} ${tleResponse.statusText} - ${errorText}`);
                 }
                 
                 const tles = await tleResponse.text();
-                console.log('✅ TLEs received:', { length: tles.length, lines: tles.split('\n').length });
+                const tleLines = tles.trim().split('\n');
+                const satelliteCount = Math.floor(tleLines.length / 3);
+                console.log('✅ TLEs received:', { 
+                    length: tles.length, 
+                    lines: tleLines.length,
+                    satelliteCount: satelliteCount,
+                    firstSatellite: tleLines[0] || 'N/A',
+                    firstLine1: tleLines[1]?.substring(0, 50) || 'N/A'
+                });
+                
+                if (!tles || tles.trim().length === 0) {
+                    throw new Error('TLE data is empty');
+                }
+                
+                if (tleLines.length < 3) {
+                    throw new Error(`Invalid TLE data: expected at least 3 lines, got ${tleLines.length}`);
+                }
 
                 // DEBUG: Validate TLE format
                 const tleLines = tles.trim().split('\n');
@@ -79,7 +96,15 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                 console.log('🌐 Sidebar processing coordinates:', { 
                     lat, lng, latNum, lngNum, 
                     disasterKeys: Object.keys(disasterAny),
-                    disaster: disasterAny 
+                    disaster: {
+                        id: disasterAny.id,
+                        title: disasterAny.title,
+                        type: disasterAny.type,
+                        lat: disasterAny.lat,
+                        lng: disasterAny.lng,
+                        Lat: disasterAny.Lat,
+                        Lng: disasterAny.Lng
+                    }
                 });
 
                 // Validate coordinates - allow 0 for equator/prime meridian, but not both
@@ -97,19 +122,46 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                     'info'
                 );
 
-                const pass = getNextPass(tles, latNum, lngNum);
+                // Try with lower elevation threshold if no passes found
+                let pass = getNextPass(tles, latNum, lngNum);
+                
+                // If no pass found with default 25°, try with lower threshold (15°)
+                if (!pass) {
+                    console.log('⚠️ No passes found with 25° threshold, trying 15°...');
+                    const lowerPasses = predictPasses(tles, latNum, lngNum, 15);
+                    console.log('📊 Lower threshold passes:', { count: lowerPasses.length, passes: lowerPasses });
+                    if (lowerPasses.length > 0) {
+                        pass = lowerPasses[0];
+                        console.log('✅ Found pass with lower threshold:', pass);
+                    }
+                }
+                
+                // If still no pass, try even lower threshold (5°)
+                if (!pass) {
+                    console.log('⚠️ No passes found with 15° threshold, trying 5°...');
+                    const evenLowerPasses = predictPasses(tles, latNum, lngNum, 5);
+                    console.log('📊 Even lower threshold passes:', { count: evenLowerPasses.length, passes: evenLowerPasses });
+                    if (evenLowerPasses.length > 0) {
+                        pass = evenLowerPasses[0];
+                        console.log('✅ Found pass with 5° threshold:', pass);
+                    }
+                }
 
                 console.log('🛰️ Satellite pass result:', pass);
 
                 if (!pass) {
-                    console.warn('⚠️ No satellite passes found in next 24 hours');
+                    console.warn('⚠️ No satellite passes found in next 24 hours even with lower threshold');
                     (window as any).aegisDebug?.log(
                         'orbital',
                         'No satellite passes found in next 24 hours',
                         'warning'
                     );
+                    // Set a default cloud cover so AI analysis can still run
+                    setCloudCover(0);
                     setNextPass(null);
                     setAiAnalysis("No satellite passes detected in the next 24 hours. Coverage unavailable.");
+                    // Still fetch weather to show cloud cover
+                    fetchWeather(latNum, lngNum, new Date(Date.now() + 2 * 60 * 60 * 1000)); // 2 hours from now
                     return;
                 } else {
                     const timeUntil = (pass.time.getTime() - new Date().getTime()) / 1000 / 60; // minutes
@@ -262,15 +314,70 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
             hasAiAnalysis: !!aiAnalysis,
             loadingAnalysis
         });
-        if (disaster && nextPass && cloudCover !== null && !aiAnalysis && !loadingAnalysis) {
-            console.log('✅ Triggering AI analysis...');
-            analyzePass();
+        
+        // Trigger AI analysis if we have all required data OR if we have disaster but no pass (fallback)
+        if (disaster && !loadingAnalysis) {
+            if (nextPass && cloudCover !== null && !aiAnalysis) {
+                console.log('✅ Triggering AI analysis with satellite pass data...');
+                analyzePass();
+            } else if (!nextPass && cloudCover !== null && !aiAnalysis) {
+                // Fallback: trigger AI analysis even without satellite pass
+                console.log('✅ Triggering AI analysis without satellite pass (fallback)...');
+                // Create a fallback pass for AI analysis
+                const fallbackPass = {
+                    satelliteName: 'Landsat-9',
+                    time: new Date(Date.now() + 2 * 60 * 60 * 1000), // 2 hours from now
+                    elevation: 0,
+                    azimuth: 0
+                };
+                // Call analyzePass with fallback data
+                const analyzeWithFallback = async () => {
+                    if (!disaster || cloudCover === null) return;
+                    setLoadingAnalysis(true);
+                    try {
+                        const requestBody = {
+                            disasterTitle: disaster.title,
+                            satelliteName: 'Landsat-9',
+                            passTime: fallbackPass.time.toISOString(),
+                            cloudCover,
+                        };
+                        const response = await fetch(`${API_BASE}/api/analyze`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(requestBody),
+                        });
+                        if (!response.ok) {
+                            throw new Error(`Gemini API error: ${response.status}`);
+                        }
+                        const data: AIAnalysisResponse = await response.json();
+                        setAiAnalysis(data.analysis || 'Analysis unavailable.');
+                    } catch (error) {
+                        console.error('Error in fallback AI analysis:', error);
+                        setAiAnalysis('Analysis unavailable.');
+                    } finally {
+                        setLoadingAnalysis(false);
+                    }
+                };
+                analyzeWithFallback();
+            }
         }
     }, [disaster, nextPass, cloudCover, aiAnalysis, loadingAnalysis]);
 
     // Get AI analysis
     const analyzePass = async () => {
-        if (!disaster || !nextPass || cloudCover === null) return;
+        if (!disaster) {
+            console.warn('⚠️ analyzePass called without disaster');
+            return;
+        }
+        if (!nextPass) {
+            console.warn('⚠️ analyzePass called without nextPass');
+            return;
+        }
+        if (cloudCover === null) {
+            console.warn('⚠️ analyzePass called without cloudCover');
+            return;
+        }
+        console.log('🤖 analyzePass called with:', { disaster: disaster.title, nextPass, cloudCover });
 
         setLoadingAnalysis(true);
         try {
