@@ -5,7 +5,9 @@
 
 import { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
+import toast from 'react-hot-toast';
 import type { Disaster } from '../types';
+import MapLegend from './MapLegend';
 
 // Set Mapbox access token
 const accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
@@ -22,6 +24,11 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
     const [disasters, setDisasters] = useState<Disaster[]>([]);
     const [loading, setLoading] = useState(true);
     const [mapError, setMapError] = useState<string>('');
+    const [lastUpdated, setLastUpdated] = useState<Date | undefined>(undefined);
+    const [isRefreshing, setIsRefreshing] = useState(false);
+    
+    // Store tooltips to clean them up
+    const tooltipRef = useRef<mapboxgl.Popup | null>(null);
 
     // Initialize map only once
     useEffect(() => {
@@ -138,10 +145,23 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
 
             setDisasters(data);
             setLoading(false);
+            setLastUpdated(new Date());
+            setIsRefreshing(false);
 
             if (map.current) {
                 addDisasterLayers(data);
             }
+
+            // Show success toast (reuse counts from above)
+            toast.success(
+                `✓ Loaded ${data.length} disasters\n${fireCount} 🔥 ${earthquakeCount} 🌍 ${volcanoCount} 🌋`,
+                {
+                    duration: 4000,
+                    style: {
+                        minWidth: '250px',
+                    },
+                }
+            );
         } catch (error) {
             console.error('Error loading disasters:', error);
             (window as any).aegisDebug?.log(
@@ -151,7 +171,34 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
                 { error: String(error) }
             );
             setLoading(false);
+            setIsRefreshing(false);
+
+            // Show error toast
+            toast.error(`Failed to load disaster data: ${error}`, {
+                duration: 5000,
+            });
         }
+    };
+
+    // Manual refresh handler
+    const handleRefresh = async () => {
+        setIsRefreshing(true);
+        
+        // Remove existing layers and sources before refreshing
+        if (map.current) {
+            ['fires-layer', 'earthquakes-layer', 'volcanoes-layer'].forEach(layerId => {
+                if (map.current?.getLayer(layerId)) {
+                    map.current.removeLayer(layerId);
+                }
+            });
+            ['fires', 'earthquakes', 'volcanoes'].forEach(sourceId => {
+                if (map.current?.getSource(sourceId)) {
+                    map.current.removeSource(sourceId);
+                }
+            });
+        }
+        
+        await loadDisasters();
     };
 
     // Add disaster data layers to map
@@ -192,13 +239,47 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
                 type: 'circle',
                 source: 'fires',
                 paint: {
-                    'circle-radius': 8,
+                    'circle-radius': [
+                        'case',
+                        ['==', ['get', 'severity'], 'high'],
+                        10, // Larger for high severity
+                        8
+                    ],
                     'circle-color': '#FF4444',
-                    'circle-stroke-width': 2,
+                    'circle-stroke-width': [
+                        'case',
+                        ['==', ['get', 'severity'], 'high'],
+                        3, // Thicker stroke for high severity
+                        2
+                    ],
                     'circle-stroke-color': '#ffffff',
                     'circle-opacity': 0.8,
                 },
             });
+
+            // Add pulsing effect for high-severity fires
+            const animateFires = () => {
+                if (!map.current || !map.current.getLayer('fires-layer')) return;
+                
+                const phase = (Date.now() % 2000) / 2000; // 2 second cycle
+                const radius = 10 + Math.sin(phase * Math.PI * 2) * 3;
+                
+                try {
+                    map.current.setPaintProperty('fires-layer', 'circle-radius', [
+                        'case',
+                        ['==', ['get', 'severity'], 'high'],
+                        radius,
+                        8
+                    ]);
+                } catch (e) {
+                    // Layer might be removed during animation
+                }
+            };
+
+            // Start animation loop for high-severity markers
+            const firesAnimationId = setInterval(animateFires, 50);
+            // Store animation ID for cleanup
+            (map.current as any).firesAnimationId = firesAnimationId;
 
             // Add click handler
             map.current.on('click', 'fires-layer', (e) => {
@@ -225,12 +306,41 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
             });
 
             // Change cursor on hover
-            map.current.on('mouseenter', 'fires-layer', () => {
+            map.current.on('mouseenter', 'fires-layer', (e) => {
                 if (map.current) map.current.getCanvas().style.cursor = 'pointer';
+                
+                // Show tooltip
+                if (e.features && e.features[0]) {
+                    const props = e.features[0].properties as any;
+                    const title = props.title || props.name || 'Fire Event';
+                    
+                    // Remove existing tooltip
+                    if (tooltipRef.current) {
+                        tooltipRef.current.remove();
+                    }
+                    
+                    // Create new tooltip
+                    if (map.current) {
+                        tooltipRef.current = new mapboxgl.Popup({
+                            closeButton: false,
+                            closeOnClick: false,
+                            className: 'disaster-tooltip'
+                        })
+                            .setLngLat(e.lngLat)
+                            .setHTML(`<div class="text-sm font-medium">🔥 ${title}</div>`)
+                            .addTo(map.current);
+                    }
+                }
             });
 
             map.current.on('mouseleave', 'fires-layer', () => {
                 if (map.current) map.current.getCanvas().style.cursor = '';
+                
+                // Remove tooltip
+                if (tooltipRef.current) {
+                    tooltipRef.current.remove();
+                    tooltipRef.current = null;
+                }
             });
         }
 
@@ -256,13 +366,45 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
                 type: 'circle',
                 source: 'earthquakes',
                 paint: {
-                    'circle-radius': 8,
+                    'circle-radius': [
+                        'case',
+                        ['==', ['get', 'severity'], 'high'],
+                        10, // Larger for high severity
+                        8
+                    ],
                     'circle-color': '#FF8C00',
-                    'circle-stroke-width': 2,
+                    'circle-stroke-width': [
+                        'case',
+                        ['==', ['get', 'severity'], 'high'],
+                        3, // Thicker stroke for high severity
+                        2
+                    ],
                     'circle-stroke-color': '#ffffff',
                     'circle-opacity': 0.8,
                 },
             });
+
+            // Add pulsing effect for high-severity earthquakes
+            const animateEarthquakes = () => {
+                if (!map.current || !map.current.getLayer('earthquakes-layer')) return;
+                
+                const phase = (Date.now() % 2000) / 2000; // 2 second cycle
+                const radius = 10 + Math.sin(phase * Math.PI * 2) * 3;
+                
+                try {
+                    map.current.setPaintProperty('earthquakes-layer', 'circle-radius', [
+                        'case',
+                        ['==', ['get', 'severity'], 'high'],
+                        radius,
+                        8
+                    ]);
+                } catch (e) {
+                    // Layer might be removed during animation
+                }
+            };
+
+            const earthquakesAnimationId = setInterval(animateEarthquakes, 50);
+            (map.current as any).earthquakesAnimationId = earthquakesAnimationId;
 
             // Add click handler
             map.current.on('click', 'earthquakes-layer', (e) => {
@@ -300,12 +442,42 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
             });
 
             // Change cursor on hover
-            map.current.on('mouseenter', 'earthquakes-layer', () => {
+            map.current.on('mouseenter', 'earthquakes-layer', (e) => {
                 if (map.current) map.current.getCanvas().style.cursor = 'pointer';
+                
+                // Show tooltip
+                if (e.features && e.features[0]) {
+                    const props = e.features[0].properties as any;
+                    const title = props.title || props.name || 'Earthquake Event';
+                    const magnitude = props.magnitude ? ` M${props.magnitude}` : '';
+                    
+                    // Remove existing tooltip
+                    if (tooltipRef.current) {
+                        tooltipRef.current.remove();
+                    }
+                    
+                    // Create new tooltip
+                    if (map.current) {
+                        tooltipRef.current = new mapboxgl.Popup({
+                            closeButton: false,
+                            closeOnClick: false,
+                            className: 'disaster-tooltip'
+                        })
+                            .setLngLat(e.lngLat)
+                            .setHTML(`<div class="text-sm font-medium">🌍 ${title}${magnitude}</div>`)
+                            .addTo(map.current);
+                    }
+                }
             });
 
             map.current.on('mouseleave', 'earthquakes-layer', () => {
                 if (map.current) map.current.getCanvas().style.cursor = '';
+                
+                // Remove tooltip
+                if (tooltipRef.current) {
+                    tooltipRef.current.remove();
+                    tooltipRef.current = null;
+                }
             });
         }
 
@@ -331,13 +503,45 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
                 type: 'circle',
                 source: 'volcanoes',
                 paint: {
-                    'circle-radius': 8,
+                    'circle-radius': [
+                        'case',
+                        ['==', ['get', 'severity'], 'high'],
+                        10, // Larger for high severity
+                        8
+                    ],
                     'circle-color': '#FF6B35',
-                    'circle-stroke-width': 2,
+                    'circle-stroke-width': [
+                        'case',
+                        ['==', ['get', 'severity'], 'high'],
+                        3, // Thicker stroke for high severity
+                        2
+                    ],
                     'circle-stroke-color': '#ffffff',
                     'circle-opacity': 0.8,
                 },
             });
+
+            // Add pulsing effect for high-severity volcanoes
+            const animateVolcanoes = () => {
+                if (!map.current || !map.current.getLayer('volcanoes-layer')) return;
+                
+                const phase = (Date.now() % 2000) / 2000; // 2 second cycle
+                const radius = 10 + Math.sin(phase * Math.PI * 2) * 3;
+                
+                try {
+                    map.current.setPaintProperty('volcanoes-layer', 'circle-radius', [
+                        'case',
+                        ['==', ['get', 'severity'], 'high'],
+                        radius,
+                        8
+                    ]);
+                } catch (e) {
+                    // Layer might be removed during animation
+                }
+            };
+
+            const volcanoesAnimationId = setInterval(animateVolcanoes, 50);
+            (map.current as any).volcanoesAnimationId = volcanoesAnimationId;
 
             // Add click handler
             map.current.on('click', 'volcanoes-layer', (e) => {
@@ -364,14 +568,51 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
             });
 
             // Change cursor on hover
-            map.current.on('mouseenter', 'volcanoes-layer', () => {
+            map.current.on('mouseenter', 'volcanoes-layer', (e) => {
                 if (map.current) map.current.getCanvas().style.cursor = 'pointer';
+                
+                // Show tooltip
+                if (e.features && e.features[0]) {
+                    const props = e.features[0].properties as any;
+                    const title = props.title || props.name || 'Volcano Event';
+                    
+                    // Remove existing tooltip
+                    if (tooltipRef.current) {
+                        tooltipRef.current.remove();
+                    }
+                    
+                    // Create new tooltip
+                    if (map.current) {
+                        tooltipRef.current = new mapboxgl.Popup({
+                            closeButton: false,
+                            closeOnClick: false,
+                            className: 'disaster-tooltip'
+                        })
+                            .setLngLat(e.lngLat)
+                            .setHTML(`<div class="text-sm font-medium">🌋 ${title}</div>`)
+                            .addTo(map.current);
+                    }
+                }
             });
 
             map.current.on('mouseleave', 'volcanoes-layer', () => {
                 if (map.current) map.current.getCanvas().style.cursor = '';
+                
+                // Remove tooltip
+                if (tooltipRef.current) {
+                    tooltipRef.current.remove();
+                    tooltipRef.current = null;
+                }
             });
         }
+    };
+
+    // Calculate disaster counts
+    const disasterCounts = {
+        fires: disasters.filter(d => d.type === 'fire').length,
+        volcanoes: disasters.filter(d => d.type === 'volcano').length,
+        earthquakes: disasters.filter(d => d.type === 'earthquake').length,
+        total: disasters.length,
     };
 
     return (
@@ -400,15 +641,14 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
                 </div>
             )}
 
-
-
-            {/* Statistics */}
+            {/* Map Legend - shows disaster types and counts */}
             {!loading && !mapError && (
-                <div className="absolute bottom-4 left-4 bg-gray-900 bg-opacity-90 px-4 py-3 rounded-lg shadow-lg z-10">
-                    <p className="text-white text-sm">
-                        <span className="font-bold">{disasters.length}</span> active disasters
-                    </p>
-                </div>
+                <MapLegend
+                    counts={disasterCounts}
+                    lastUpdated={lastUpdated}
+                    onRefresh={handleRefresh}
+                    isRefreshing={isRefreshing}
+                />
             )}
         </div>
     );

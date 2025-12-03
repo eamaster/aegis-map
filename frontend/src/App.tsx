@@ -1,18 +1,41 @@
 import { useState, useEffect } from 'react';
-import { Globe, Menu, X } from 'lucide-react';
+import { Globe, Menu, X, HelpCircle } from 'lucide-react';
+import { Toaster } from 'react-hot-toast';
 import MapBoard from './components/MapBoard';
 import Sidebar from './components/Sidebar';
 import DebugPanel from './components/DebugPanel';
+import TutorialOverlay from './components/TutorialOverlay';
 import type { Disaster } from './types';
 
 function App() {
   const [selectedDisaster, setSelectedDisaster] = useState<Disaster | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [showTutorial, setShowTutorial] = useState(false);
 
   // Debug: Log state changes
   useEffect(() => {
     console.log('🔍 selectedDisaster state changed:', selectedDisaster);
   }, [selectedDisaster]);
+
+  // Show tutorial on first visit
+  useEffect(() => {
+    const hasSeenTutorial = localStorage.getItem('aegismap_tutorial_seen');
+    if (!hasSeenTutorial) {
+      setShowTutorial(true);
+      localStorage.setItem('aegismap_tutorial_seen', 'true');
+    }
+  }, []);
+
+  // Keyboard shortcut to show tutorial (? key)
+  useEffect(() => {
+    const handleKeyPress = (e: KeyboardEvent) => {
+      if (e.key === '?' || (e.shiftKey && e.key === '/')) {
+        setShowTutorial(true);
+      }
+    };
+    window.addEventListener('keydown', handleKeyPress);
+    return () => window.removeEventListener('keydown', handleKeyPress);
+  }, []);
 
   return (
     <div className="w-screen h-screen relative overflow-hidden bg-black flex flex-col">
@@ -31,6 +54,14 @@ function App() {
           <button className="text-white text-sm font-medium hover:text-blue-400 transition-colors">Disasters</button>
           <button className="text-gray-300 text-sm font-medium hover:text-white transition-colors">Satellites</button>
           <button className="text-gray-300 text-sm font-medium hover:text-white transition-colors">About</button>
+          <button
+            onClick={() => setShowTutorial(true)}
+            className="text-gray-400 hover:text-white transition-colors p-2 hover:bg-white/10 rounded-lg"
+            aria-label="Show tutorial"
+            title="Show tutorial (Press ?)"
+          >
+            <HelpCircle size={20} />
+          </button>
         </nav>
 
         {/* Mobile Hamburger Menu Button */}
@@ -116,6 +147,36 @@ function App() {
 
       {/* Debug Panel */}
       <DebugPanel />
+
+      {/* Tutorial Overlay */}
+      {showTutorial && <TutorialOverlay onClose={() => setShowTutorial(false)} />}
+
+      {/* Toast Notifications */}
+      <Toaster
+        position="top-center"
+        toastOptions={{
+          duration: 3000,
+          style: {
+            background: '#1F2937',
+            color: '#fff',
+            border: '1px solid rgba(255, 255, 255, 0.1)',
+            borderRadius: '0.5rem',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)',
+          },
+          success: {
+            iconTheme: {
+              primary: '#10B981',
+              secondary: '#fff',
+            },
+          },
+          error: {
+            iconTheme: {
+              primary: '#EF4444',
+              secondary: '#fff',
+            },
+          },
+        }}
+      />
     </div>
   );
 }

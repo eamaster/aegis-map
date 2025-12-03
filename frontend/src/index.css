@@ -50,6 +50,35 @@ body {
   z-index: 10;
 }
 
+/* Disaster tooltip styling */
+.disaster-tooltip .mapboxgl-popup-content {
+  background: rgba(17, 24, 39, 0.95);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  color: white;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  font-size: 0.875rem;
+}
+
+.disaster-tooltip .mapboxgl-popup-tip {
+  border-top-color: rgba(17, 24, 39, 0.95);
+}
+
+/* Pulsing animation for high severity markers */
+@keyframes pulse-ring {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+
 /* Glassmorphism Utilities */
 .glass-panel {
   background: rgba(17, 24, 39, 0.95);
