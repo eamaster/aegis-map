@@ -18,8 +18,6 @@ interface MapBoardProps {
     onDisasterSelect: (disaster: Disaster | null) => void;
 }
 
-let isInitialLoad = true; // Track if this is the first load
-
 export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
     const mapContainer = useRef<HTMLDivElement>(null);
     const map = useRef<mapboxgl.Map | null>(null);
@@ -31,6 +29,9 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
     
     // Store tooltips to clean them up
     const tooltipRef = useRef<mapboxgl.Popup | null>(null);
+    
+    // Track if this is the first load (component scope, not module scope)
+    const isInitialLoadRef = useRef(true);
 
     // Initialize map only once
     useEffect(() => {
@@ -155,7 +156,7 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
             }
 
             // Show success toast only on manual refresh, not initial load
-            if (!isInitialLoad) {
+            if (!isInitialLoadRef.current) {
                 toast.success(
                     `✓ Refreshed: ${data.length} disasters\n${fireCount} 🔥 ${earthquakeCount} 🌍 ${volcanoCount} 🌋`,
                     {
@@ -166,7 +167,7 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
                     }
                 );
             }
-            isInitialLoad = false;
+            isInitialLoadRef.current = false;
         } catch (error) {
             console.error('Error loading disasters:', error);
             (window as any).aegisDebug?.log(
