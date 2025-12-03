@@ -40,37 +40,37 @@ function App() {
   return (
     <div className="w-screen h-screen relative overflow-hidden bg-black flex flex-col">
       {/* Header */}
-      <header className="flex items-center justify-between px-6 py-4 bg-gray-900/70 backdrop-blur-md border-b border-white/5 z-50 relative">
+      <header className="flex items-center justify-between px-8 py-3 bg-gray-900/90 backdrop-blur-xl border-b border-white/10 z-50 relative shadow-lg">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-purple-600 flex items-center justify-center">
-            <Globe size={20} className="text-white" />
+          <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500 via-blue-600 to-purple-600 flex items-center justify-center shadow-lg">
+            <Globe size={22} className="text-white" />
           </div>
-          <h1 className="text-xl font-semibold text-white tracking-tight">AegisMap</h1>
+          <div>
+            <h1 className="text-xl font-bold text-white tracking-tight">AegisMap</h1>
+            <p className="text-xs text-gray-400">Disaster Monitoring</p>
+          </div>
         </div>
 
-        {/* Desktop Navigation - simple text links */}
-        <nav className="desktop-nav flex items-center gap-8">
-          <button className="text-gray-300 text-sm font-medium hover:text-white transition-colors">Map</button>
-          <button className="text-white text-sm font-medium hover:text-blue-400 transition-colors">Disasters</button>
-          <button className="text-gray-300 text-sm font-medium hover:text-white transition-colors">Satellites</button>
-          <button className="text-gray-300 text-sm font-medium hover:text-white transition-colors">About</button>
+        {/* Desktop Navigation - clean and minimal */}
+        <nav className="desktop-nav flex items-center gap-2">
           <button
             onClick={() => setShowTutorial(true)}
-            className="text-gray-400 hover:text-white transition-colors p-2 hover:bg-white/10 rounded-lg"
+            className="text-gray-300 hover:text-white hover:bg-white/10 transition-all px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-medium"
             aria-label="Show tutorial"
-            title="Show tutorial (Press ?)"
+            title="Help (Press ?)"
           >
-            <HelpCircle size={20} />
+            <HelpCircle size={18} />
+            <span>Help</span>
           </button>
         </nav>
 
-        {/* Mobile Hamburger Menu Button */}
+        {/* Mobile Menu Button */}
         <button
           onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
           className="mobile-menu-btn p-2 text-white hover:bg-white/10 rounded-lg transition-colors"
           aria-label="Toggle menu"
         >
-          {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+          {mobileMenuOpen ? <X size={22} /> : <Menu size={22} />}
         </button>
       </header>
 
@@ -100,28 +100,14 @@ function App() {
               {/* Menu Items */}
               <div className="flex-1 px-4 py-6 space-y-2">
                 <button
-                  onClick={() => setMobileMenuOpen(false)}
-                  className="w-full px-4 py-3 text-left text-gray-300 hover:text-white hover:bg-white/10 rounded-lg font-medium transition-all"
+                  onClick={() => {
+                    setShowTutorial(true);
+                    setMobileMenuOpen(false);
+                  }}
+                  className="w-full px-4 py-3 text-left text-white bg-blue-600 hover:bg-blue-700 rounded-lg font-medium transition-all flex items-center gap-2"
                 >
-                  Map
-                </button>
-                <button
-                  onClick={() => setMobileMenuOpen(false)}
-                  className="w-full px-4 py-3 text-left text-white bg-white/10 rounded-lg font-medium hover:bg-white/20 transition-all"
-                >
-                  Disasters
-                </button>
-                <button
-                  onClick={() => setMobileMenuOpen(false)}
-                  className="w-full px-4 py-3 text-left text-gray-300 hover:text-white hover:bg-white/10 rounded-lg font-medium transition-all"
-                >
-                  Satellites
-                </button>
-                <button
-                  onClick={() => setMobileMenuOpen(false)}
-                  className="w-full px-4 py-3 text-left text-gray-300 hover:text-white hover:bg-white/10 rounded-lg font-medium transition-all"
-                >
-                  About
+                  <HelpCircle size={18} />
+                  Help & Tutorial
                 </button>
               </div>
             </div>
@@ -153,26 +139,36 @@ function App() {
 
       {/* Toast Notifications */}
       <Toaster
-        position="top-center"
+        position="bottom-right"
         toastOptions={{
           duration: 3000,
           style: {
-            background: '#1F2937',
+            background: 'rgba(17, 24, 39, 0.95)',
+            backdropFilter: 'blur(16px)',
             color: '#fff',
-            border: '1px solid rgba(255, 255, 255, 0.1)',
-            borderRadius: '0.5rem',
-            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)',
+            border: '1px solid rgba(255, 255, 255, 0.15)',
+            borderRadius: '0.75rem',
+            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7)',
+            padding: '16px',
+            fontSize: '14px',
+            fontWeight: '500',
           },
           success: {
             iconTheme: {
               primary: '#10B981',
               secondary: '#fff',
             },
+            style: {
+              border: '1px solid rgba(16, 185, 129, 0.3)',
+            },
           },
           error: {
             iconTheme: {
               primary: '#EF4444',
               secondary: '#fff',
+            },
+            style: {
+              border: '1px solid rgba(239, 68, 68, 0.3)',
             },
           },
         }}

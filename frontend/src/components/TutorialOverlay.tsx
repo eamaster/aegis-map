@@ -36,14 +36,14 @@ export default function TutorialOverlay({ onClose }: TutorialOverlayProps) {
                 onClick={(e) => e.stopPropagation()}
             >
                 {/* Header */}
-                <div className="bg-gradient-to-r from-blue-600 to-purple-600 px-6 py-4 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center">
-                            <MapPin size={24} className="text-white" />
+                <div className="bg-gradient-to-r from-blue-600 via-blue-700 to-purple-600 px-6 py-5 flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-xl bg-white/20 backdrop-blur-sm flex items-center justify-center shadow-lg">
+                            <MapPin size={26} className="text-white" />
                         </div>
                         <div>
-                            <h2 className="text-xl font-bold text-white">Welcome to AegisMap</h2>
-                            <p className="text-blue-100 text-sm">Real-time disaster monitoring</p>
+                            <h2 className="text-2xl font-black text-white tracking-tight">Welcome to AegisMap</h2>
+                            <p className="text-blue-100 text-sm font-medium">Professional Disaster Monitoring Platform</p>
                         </div>
                     </div>
                     <button
@@ -51,7 +51,7 @@ export default function TutorialOverlay({ onClose }: TutorialOverlayProps) {
                         className="text-white/80 hover:text-white hover:bg-white/20 p-2 rounded-lg transition-colors"
                         aria-label="Close tutorial"
                     >
-                        <X size={20} />
+                        <X size={22} />
                     </button>
                 </div>
 
@@ -123,15 +123,15 @@ export default function TutorialOverlay({ onClose }: TutorialOverlayProps) {
                 </div>
 
                 {/* Footer */}
-                <div className="bg-gray-800/50 px-6 py-4 flex items-center justify-between border-t border-white/10">
-                    <p className="text-gray-400 text-xs">
-                        Press <kbd className="px-2 py-1 bg-gray-700 rounded text-white text-xs">?</kbd> anytime to see this guide again
+                <div className="bg-gray-800/50 px-6 py-5 flex items-center justify-between border-t border-white/10">
+                    <p className="text-gray-400 text-sm font-medium">
+                        Press <kbd className="px-2.5 py-1.5 bg-gray-700 rounded-md text-white text-xs font-bold shadow-md">?</kbd> anytime for help
                     </p>
                     <button
                         onClick={handleClose}
-                        className="px-4 py-2 bg-gradient-to-r from-blue-600 to-purple-600 text-white font-medium rounded-lg hover:from-blue-700 hover:to-purple-700 transition-all shadow-lg hover:shadow-xl"
+                        className="px-6 py-2.5 bg-gradient-to-r from-blue-600 to-purple-600 text-white font-bold rounded-lg hover:from-blue-700 hover:to-purple-700 transition-all shadow-lg hover:shadow-xl hover:scale-105"
                     >
-                        Get Started
+                        Get Started →
                     </button>
                 </div>
             </div>

@@ -28,6 +28,7 @@ interface DebugStats {
 }
 
 export default function DebugPanel() {
+    // Hidden by default - only show if explicitly opened
     const [isOpen, setIsOpen] = useState(false);
     const [logs, setLogs] = useState<DebugInfo[]>([]);
     const [stats, setStats] = useState<DebugStats>({
@@ -113,16 +114,8 @@ export default function DebugPanel() {
     }, [stats, logs]);
 
     if (!isOpen) {
-        return (
-            <button
-                onClick={() => setIsOpen(true)}
-                className="fixed bottom-4 right-4 z-[9999] bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2 text-sm font-medium transition-all"
-                title="Open Debug Panel (Ctrl+D)"
-            >
-                <Activity size={16} />
-                Debug
-            </button>
-        );
+        // Completely hidden - only accessible via Ctrl+D
+        return null;
     }
 
     const StatusIcon = ({ status }: { status: 'success' | 'error' | 'warning' | 'info' }) => {
