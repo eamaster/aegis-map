@@ -114,6 +114,7 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
             if (!Array.isArray(data)) {
                 (window as any).aegisDebug?.log('disasters', 'ERROR: Response is not an array', 'error', { data });
                 setLoading(false);
+                isInitialLoadRef.current = false; // Mark as no longer initial load even on error
                 return;
             }
 
@@ -178,6 +179,7 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
             );
             setLoading(false);
             setIsRefreshing(false);
+            isInitialLoadRef.current = false; // Mark as no longer initial load even on error
 
             // Show error toast
             toast.error(`Failed to load disaster data: ${error}`, {

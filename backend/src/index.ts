@@ -195,19 +195,17 @@ app.post('/api/analyze', async (c) => {
 			return c.json({ error: 'Missing required fields' }, 400);
 		}
 
-		// Call Gemini API - Try multiple model names for compatibility
-		// Models listed from most recent/experimental to stable/common
+		// Call Gemini API - Use correct model names (as of Dec 2024)
+		// Priority: stable models first, then experimental
 		const models = [
-			'gemini-2.0-flash-001',        // Gemini 2.0 Flash (latest)
-			'gemini-1.5-pro-002',          // Stable Gemini 1.5 Pro (with version)
-			'gemini-1.5-pro-latest',       // Latest 1.5 Pro alias
-			'gemini-1.5-pro',              // Stable Gemini 1.5 Pro (common)
-			'gemini-1.5-flash-002',        // Stable Gemini 1.5 Flash (with version)
-			'gemini-1.5-flash',            // Stable Gemini 1.5 Flash (common)
-			'gemini-pro',                  // Simple Pro model name
-			'gemini-exp-1206',             // Experimental/preview
+			'gemini-1.5-flash',            // Most stable and widely available
+			'gemini-1.5-flash-latest',     // Latest 1.5 Flash
+			'gemini-1.5-pro',              // Stable Pro model
+			'gemini-1.5-pro-latest',       // Latest 1.5 Pro
+			'gemini-pro',                  // Legacy Pro model
+			'gemini-2.0-flash-exp',        // Experimental 2.0
 		];
-		const apiVersions = ['v1beta', 'v1']; // Try v1beta first (most common), then v1
+		const apiVersions = ['v1beta', 'v1']; // v1beta has most models
 		
 		const prompt = `You are an expert satellite imagery analyst. A disaster "${disasterTitle}" will be overpassed by satellite "${satelliteName}" at ${passTime}. Local cloud cover is ${cloudCover}%. 
 
