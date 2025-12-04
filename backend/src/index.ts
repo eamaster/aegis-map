@@ -44,15 +44,17 @@ app.get('/api/disasters', async (c) => {
 		);
 		const eonetData = await eonetResponse.json();
 
-		// Filter for wildfires (id 8) and volcanoes (id 12)
+		// Filter for wildfires and volcanoes using EONET v3 string IDs
 		const eonetDisasters = eonetData.events
 			.filter((event: any) => {
 				const categoryIds = event.categories.map((cat: any) => cat.id);
-				return categoryIds.includes(8) || categoryIds.includes(12);
+				// FIX: Use string IDs for v3 API (not numeric v2.1 IDs)
+				return categoryIds.includes('wildfires') || categoryIds.includes('volcanoes');
 			})
 			.map((event: any) => {
 				const categoryId = event.categories[0]?.id;
-				const type = categoryId === 8 ? 'fire' : 'volcano';
+				// FIX: Use string comparison for v3 API
+				const type = categoryId === 'wildfires' ? 'fire' : 'volcano';
 
 				// Get first coordinate
 				const coords = event.geometry?.[0]?.coordinates;
@@ -96,6 +98,9 @@ app.get('/api/disasters', async (c) => {
 
 		// Merge all disasters
 		const allDisasters = [...eonetDisasters, ...earthquakes];
+
+		// Log counts for debugging
+		console.log(`✅ Fetched ${eonetDisasters.length} EONET disasters (wildfires/volcanoes) and ${earthquakes.length} earthquakes`);
 
 		// Cache the result
 		if (c.env.AEGIS_CACHE) {
