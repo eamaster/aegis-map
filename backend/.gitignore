@@ -166,13 +166,6 @@ dist
 !.env.example
 .wrangler/
 
-# Test files with potentially sensitive data
-test-gemini-direct.js
-test-disasters.js
+# Test files (may contain sensitive data)
 test-*.js
 !test-*.example.js
-
-# Test files (may contain sensitive data)
-test-gemini-direct.js
-test-disasters.js
-test-*.js

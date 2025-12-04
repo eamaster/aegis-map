@@ -8,7 +8,6 @@ import mapboxgl from 'mapbox-gl';
 import toast from 'react-hot-toast';
 import type { Disaster } from '../types';
 import MapLegend from './MapLegend';
-import { DisasterSummary } from './DisasterSummary';
 
 // Set Mapbox access token
 const accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
@@ -660,16 +659,7 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
                 />
             )}
 
-            {/* Disaster Summary - geographic intelligence */}
-            {!loading && !mapError && disasters.length > 0 && (
-                <div className="absolute bottom-4 left-4 z-30">
-                    <div className="bg-gradient-to-br from-gray-900/98 via-gray-900/95 to-gray-800/98 backdrop-blur-2xl border border-white/20 rounded-2xl shadow-[0_20px_70px_-10px_rgba(0,0,0,0.8)] overflow-hidden w-[380px] max-h-[calc(100vh-120px)]">
-                        <div className="p-5 overflow-y-auto custom-scrollbar max-h-[calc(100vh-120px)]">
-                            <DisasterSummary disasters={disasters} />
-                        </div>
-                    </div>
-                </div>
-            )}
+            {/* Removed DisasterSummary - too cluttered */}
         </div>
     );
 }

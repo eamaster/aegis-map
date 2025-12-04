@@ -307,6 +307,16 @@ Provide a concise 2-sentence summary for a first responder. Be direct and action
 					console.error(`Gemini API error (${apiVersion}/${model}):`, geminiData);
 					lastError = geminiData;
 					
+					// Special handling for regional restrictions
+					if (geminiData.error?.code === 400 && geminiData.error?.message?.includes('location is not supported')) {
+						console.error('❌ Regional restriction detected - API not available in your location');
+						return c.json({ 
+							error: 'AI analysis unavailable', 
+							details: { error: 'Gemini API is not available in your region' },
+							analysis: `Satellite ${satelliteName} will pass over this disaster at ${new Date(passTime).toLocaleString()}. Cloud cover: ${cloudCover}%. ${cloudCover < 30 ? 'Good imaging conditions expected.' : 'Cloud coverage may affect image quality.'}`
+						}, 503); // Return 503 Service Unavailable with fallback analysis
+					}
+					
 				} catch (error) {
 					console.error(`Error calling Gemini API (${apiVersion}/${model}):`, error);
 					lastError = error;
