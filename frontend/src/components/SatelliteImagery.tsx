@@ -16,21 +16,12 @@ export default function SatelliteImagery({ lat, lng, disasterType, date }: Satel
   useEffect(() => {
     // Generate NASA Worldview URL for interactive viewing
     const dateStr = date ? new Date(date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
-    const worldview = `https://worldview.earthdata.nasa.gov/?v=${lng-2},${lat-2},${lng+2},${lat+2}&t=${dateStr}T00:00:00Z&l=Reference_Labels_15m,Reference_Features_15m,Coastlines_15m,VIIRS_NOAA20_Thermal_Anomalies_375m_Night,VIIRS_NOAA20_Thermal_Anomalies_375m_Day,MODIS_Combined_Thermal_Anomalies_All`;
+    const worldview = `https://worldview.earthdata.nasa.gov/?v=${lng - 2},${lat - 2},${lng + 2},${lat + 2}&t=${dateStr}T00:00:00Z&l=Reference_Labels_15m,Reference_Features_15m,Coastlines_15m,VIIRS_NOAA20_Thermal_Anomalies_375m_Night,VIIRS_NOAA20_Thermal_Anomalies_375m_Day,MODIS_Combined_Thermal_Anomalies_All`;
     setWorldviewUrl(worldview);
-
-    // Select appropriate GIBS layer based on disaster type
-    let layerName = 'MODIS_Terra_CorrectedReflectance_TrueColor';
-    if (disasterType === 'fire') {
-      layerName = 'MODIS_Combined_Thermal_Anomalies_All'; // Fire detection
-    } else if (disasterType === 'volcano') {
-      layerName = 'MODIS_Terra_CorrectedReflectance_TrueColor'; // Visual imagery for volcanoes
-    }
 
     // Generate static map image using NASA GIBS WMTS endpoint
     // Format: https://gibs.earthdata.nasa.gov/wmts/epsg4326/best/{layer}/default/{date}/250m/{z}/{y}/{x}.png
     const zoom = 7; // Zoom level (higher = more detail)
-    const tileSize = 256;
 
     // Calculate tile coordinates from lat/lng
     const tilex = Math.floor((lng + 180) / 360 * Math.pow(2, zoom));
@@ -71,7 +62,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date }: Satel
             }}
           />
         )}
-        
+
         {/* Overlay: Coordinates */}
         <div className="absolute bottom-2 left-2 bg-black/70 px-2 py-1 rounded text-xs text-white font-mono">
           {lat.toFixed(4)}°N, {lng.toFixed(4)}°E
