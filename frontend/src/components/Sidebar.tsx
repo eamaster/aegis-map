@@ -443,21 +443,39 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                 body: JSON.stringify(requestBody),
             });
 
-            // Parse JSON first to check for fallback analysis (e.g., 503 with analysis field)
-            const data: AIAnalysisResponse = await response.json();
-
-            // If response is not OK, check if there's a fallback analysis before throwing
+            // Check status first, then parse JSON with error handling
             if (!response.ok) {
+                // Read response body as text first (can only be read once)
+                const responseText = await response.text();
+                
                 // Special handling for 503 Service Unavailable with fallback analysis
-                if (response.status === 503 && data.analysis) {
-                    console.warn('⚠️ Gemini API unavailable, using fallback analysis');
-                    setAiAnalysis(data.analysis);
-                    setLoadingAnalysis(false);
-                    return;
+                if (response.status === 503) {
+                    try {
+                        const data: AIAnalysisResponse = JSON.parse(responseText);
+                        if (data.analysis) {
+                            console.warn('⚠️ Gemini API unavailable, using fallback analysis');
+                            setAiAnalysis(data.analysis);
+                            setLoadingAnalysis(false);
+                            return;
+                        }
+                    } catch (jsonError) {
+                        // If JSON parsing fails, fall through to error handling
+                        console.error('Failed to parse 503 response JSON:', jsonError);
+                    }
                 }
-                // For other errors, throw as before
-                throw new Error(`Gemini API error: ${response.status} ${response.statusText} - ${data.error || JSON.stringify(data)}`);
+                
+                // For other errors or if 503 doesn't have fallback, try to parse error details
+                try {
+                    const errorData: AIAnalysisResponse = JSON.parse(responseText);
+                    throw new Error(`Gemini API error: ${response.status} ${response.statusText} - ${errorData.error || JSON.stringify(errorData)}`);
+                } catch (parseError) {
+                    // If JSON parsing fails, use text response
+                    throw new Error(`Gemini API error: ${response.status} ${response.statusText} - ${responseText}`);
+                }
             }
+
+            // Response is OK, parse JSON normally
+            const data: AIAnalysisResponse = await response.json();
             console.log('✅ Gemini API response received:', { 
                 hasAnalysis: !!data.analysis, 
                 analysisLength: data.analysis?.length || 0,
