@@ -467,10 +467,16 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                 // For other errors or if 503 doesn't have fallback, try to parse error details
                 try {
                     const errorData: AIAnalysisResponse = JSON.parse(responseText);
+                    // JSON parsing succeeded, throw structured error with API details
                     throw new Error(`Gemini API error: ${response.status} ${response.statusText} - ${errorData.error || JSON.stringify(errorData)}`);
                 } catch (parseError) {
-                    // If JSON parsing fails, use text response
-                    throw new Error(`Gemini API error: ${response.status} ${response.statusText} - ${responseText}`);
+                    // Only catch JSON parsing errors (SyntaxError), re-throw our intentional errors
+                    if (parseError instanceof SyntaxError) {
+                        // JSON parsing failed, use text response
+                        throw new Error(`Gemini API error: ${response.status} ${response.statusText} - ${responseText}`);
+                    }
+                    // Re-throw our intentionally thrown error (preserves structured error details)
+                    throw parseError;
                 }
             }
 
