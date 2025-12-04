@@ -28,5 +28,9 @@ export interface AIAnalysisRequest {
 }
 
 export interface AIAnalysisResponse {
-    analysis: string;
+    analysis?: string;
+    error?: string;
+    details?: {
+        error?: string;
+    };
 }
