@@ -116,7 +116,10 @@ export default function MapLegend({ counts, lastUpdated, onRefresh, isRefreshing
                         <div className="text-xs text-gray-500">
                             {lastUpdated ? (() => {
                                 const timeStr = formatTime(lastUpdated);
-                                return timeStr === 'now' ? 'Just now' : `${timeStr} ago`;
+                                if (timeStr === 'now') return 'Just now';
+                                // Clock times (e.g., "14:30") don't need "ago"
+                                if (timeStr.includes(':')) return timeStr;
+                                return `${timeStr} ago`;
                             })() : 'Loading...'}
                         </div>
                         {onRefresh && (

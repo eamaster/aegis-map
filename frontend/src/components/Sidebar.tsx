@@ -443,12 +443,21 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                 body: JSON.stringify(requestBody),
             });
 
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`Gemini API error: ${response.status} ${response.statusText} - ${errorText}`);
-            }
-
+            // Parse JSON first to check for fallback analysis (e.g., 503 with analysis field)
             const data: AIAnalysisResponse = await response.json();
+
+            // If response is not OK, check if there's a fallback analysis before throwing
+            if (!response.ok) {
+                // Special handling for 503 Service Unavailable with fallback analysis
+                if (response.status === 503 && data.analysis) {
+                    console.warn('⚠️ Gemini API unavailable, using fallback analysis');
+                    setAiAnalysis(data.analysis);
+                    setLoadingAnalysis(false);
+                    return;
+                }
+                // For other errors, throw as before
+                throw new Error(`Gemini API error: ${response.status} ${response.statusText} - ${data.error || JSON.stringify(data)}`);
+            }
             console.log('✅ Gemini API response received:', { 
                 hasAnalysis: !!data.analysis, 
                 analysisLength: data.analysis?.length || 0,
