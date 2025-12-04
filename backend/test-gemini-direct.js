@@ -1,8 +1,16 @@
-// Direct test of Gemini API with your key
-const GEMINI_API_KEY = 'AIzaSyDdEzVyS9VirgrWrV5Y91Dj-4Hr1yPRiCA';
+// Direct test of Gemini API
+// IMPORTANT: Set GEMINI_API_KEY environment variable before running
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+
+if (!GEMINI_API_KEY) {
+  console.error('❌ Error: GEMINI_API_KEY environment variable is not set');
+  console.error('Usage: GEMINI_API_KEY=your-key-here node test-gemini-direct.js');
+  process.exit(1);
+}
 
 async function testDirect() {
   console.log('🧪 Testing Gemini API directly with key...\n');
+  console.log('🔑 Using API key from environment variable');
   
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
   
