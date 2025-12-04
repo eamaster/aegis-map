@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import { X, Sparkles, Cloud, Wifi, Satellite } from 'lucide-react';
 import type { Disaster, WeatherData, AIAnalysisResponse } from '../types';
 import { getNextPass, predictPasses, type SatellitePass } from '../utils/orbitalEngine';
+import SatelliteImagery from './SatelliteImagery';
 
 interface SidebarProps {
     disaster: Disaster | null;
@@ -46,19 +47,19 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                 // Fetch TLEs
                 console.log('📡 Fetching TLEs from:', `${API_BASE}/api/tles`);
                 const tleResponse = await fetch(`${API_BASE}/api/tles`);
-                
+
                 // Check content type to determine if it's JSON (error) or text (TLE data)
                 const contentType = tleResponse.headers.get('content-type') || '';
                 const isJson = contentType.includes('application/json');
-                
+
                 if (!tleResponse.ok) {
                     const errorText = isJson ? JSON.stringify(await tleResponse.json()) : await tleResponse.text();
                     throw new Error(`TLE API error: ${tleResponse.status} ${tleResponse.statusText} - ${errorText}`);
                 }
-                
+
                 // Get response text (it could be TLE data or JSON error)
                 const responseText = await tleResponse.text();
-                
+
                 // If response looks like JSON (starts with { or [), it's likely an error message
                 if (isJson || (responseText.trim().startsWith('{') || responseText.trim().startsWith('['))) {
                     try {
@@ -70,9 +71,9 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                         console.warn('⚠️ Response looked like JSON but parse failed, treating as text');
                     }
                 }
-                
+
                 const tles = responseText;
-                
+
                 // Log raw response for debugging
                 console.log('📥 Raw TLE response:', {
                     length: tles.length,
@@ -81,23 +82,23 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                     hasNewlines: tles.includes('\n'),
                     lineCount: tles.split('\n').length
                 });
-                
+
                 if (!tles || tles.trim().length === 0) {
                     throw new Error('TLE data is empty - no data received from API');
                 }
-                
+
                 const tleLines = tles.trim().split('\n').filter(line => line.trim().length > 0);
                 const satelliteCount = Math.floor(tleLines.length / 3);
-                
-                console.log('✅ TLEs parsed:', { 
-                    rawLength: tles.length, 
+
+                console.log('✅ TLEs parsed:', {
+                    rawLength: tles.length,
                     lines: tleLines.length,
                     satelliteCount: satelliteCount,
                     firstSatellite: tleLines[0]?.substring(0, 80) || 'N/A',
                     firstLine1: tleLines[1]?.substring(0, 80) || 'N/A',
                     firstLine2: tleLines[2]?.substring(0, 80) || 'N/A'
                 });
-                
+
                 if (tleLines.length < 3) {
                     console.error('❌ Invalid TLE data details:', {
                         receivedLength: tles.length,
@@ -133,8 +134,8 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                 const latNum = typeof lat === 'number' ? lat : parseFloat(String(lat || '0'));
                 const lngNum = typeof lng === 'number' ? lng : parseFloat(String(lng || '0'));
 
-                console.log('🌐 Sidebar processing coordinates:', { 
-                    lat, lng, latNum, lngNum, 
+                console.log('🌐 Sidebar processing coordinates:', {
+                    lat, lng, latNum, lngNum,
                     disasterKeys: Object.keys(disasterAny),
                     disaster: {
                         id: disasterAny.id,
@@ -164,7 +165,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
 
                 // Try with lower elevation threshold if no passes found
                 let pass = getNextPass(tles, latNum, lngNum);
-                
+
                 // If no pass found with default 25°, try with lower threshold (15°)
                 if (!pass) {
                     console.log('⚠️ No passes found with 25° threshold, trying 15°...');
@@ -175,7 +176,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                         console.log('✅ Found pass with lower threshold:', pass);
                     }
                 }
-                
+
                 // If still no pass, try even lower threshold (5°)
                 if (!pass) {
                     console.log('⚠️ No passes found with 15° threshold, trying 5°...');
@@ -261,8 +262,8 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                 throw new Error(`Weather API error: ${response.status} ${response.statusText}`);
             }
             const data: WeatherData = await response.json();
-            console.log('🌤️ Weather data received:', { 
-                hasHourly: !!data.hourly, 
+            console.log('🌤️ Weather data received:', {
+                hasHourly: !!data.hourly,
                 hasCloudCover: !!(data.hourly?.cloud_cover),
                 timeCount: data.hourly?.time?.length || 0
             });
@@ -285,8 +286,8 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
 
             if (closestIndex >= 0) {
                 const cloudValue = data.hourly.cloud_cover[closestIndex];
-                console.log('✅ Cloud cover found:', { 
-                    cloudValue, 
+                console.log('✅ Cloud cover found:', {
+                    cloudValue,
                     time: data.hourly.time[closestIndex],
                     status: cloudValue < 20 ? 'Clear' : 'Cloudy'
                 });
@@ -354,7 +355,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
             hasAiAnalysis: !!aiAnalysis,
             loadingAnalysis
         });
-        
+
         // Trigger AI analysis if we have all required data OR if we have disaster but no pass (fallback)
         if (disaster && !loadingAnalysis) {
             if (nextPass && cloudCover !== null && !aiAnalysis) {
@@ -447,7 +448,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
             if (!response.ok) {
                 // Read response body as text first (can only be read once)
                 const responseText = await response.text();
-                
+
                 // Special handling for 503 Service Unavailable with fallback analysis
                 if (response.status === 503) {
                     try {
@@ -463,7 +464,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                         console.error('Failed to parse 503 response JSON:', jsonError);
                     }
                 }
-                
+
                 // For other errors or if 503 doesn't have fallback, try to parse error details
                 try {
                     const errorData: AIAnalysisResponse = JSON.parse(responseText);
@@ -482,8 +483,8 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
 
             // Response is OK, parse JSON normally
             const data: AIAnalysisResponse = await response.json();
-            console.log('✅ Gemini API response received:', { 
-                hasAnalysis: !!data.analysis, 
+            console.log('✅ Gemini API response received:', {
+                hasAnalysis: !!data.analysis,
                 analysisLength: data.analysis?.length || 0,
                 analysisText: data.analysis?.substring(0, 100) || 'N/A',
                 fullResponse: data
@@ -501,7 +502,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                 setAiAnalysis('Analysis unavailable: Empty response from AI service.');
                 return;
             }
-            
+
             if (data.analysis.trim().length < 10) {
                 console.warn('⚠️ AI analysis is very short:', data.analysis);
                 (window as any).aegisDebug?.log(
@@ -511,14 +512,14 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                     { analysis: data.analysis, length: data.analysis.length }
                 );
             }
-            
+
             // Trim and set the analysis
             const trimmedAnalysis = data.analysis.trim();
-            console.log('✅ Setting AI analysis:', { 
-                length: trimmedAnalysis.length, 
-                preview: trimmedAnalysis.substring(0, 200) 
+            console.log('✅ Setting AI analysis:', {
+                length: trimmedAnalysis.length,
+                preview: trimmedAnalysis.substring(0, 200)
             });
-            
+
             // Check if analysis mentions the disaster
             const mentionsDisaster = trimmedAnalysis.toLowerCase().includes(disaster.title.toLowerCase().split(' ')[0]);
             (window as any).aegisDebug?.log(
@@ -527,9 +528,9 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                 'success',
                 { analysis: trimmedAnalysis.slice(0, 100) + '...', length: trimmedAnalysis.length, mentionsDisaster }
             );
-            
+
             setAiAnalysis(trimmedAnalysis);
-            console.log('✅ AI analysis state updated:', { 
+            console.log('✅ AI analysis state updated:', {
                 trimmedAnalysis,
                 length: trimmedAnalysis.length,
                 firstChars: trimmedAnalysis.substring(0, 100)
@@ -562,11 +563,11 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
     // Removed excessive logging on every render - only log on mount or disaster change
 
     return (
-        <div 
+        <div
             className="fixed right-0 top-[73px] bottom-0 z-[100] w-[420px] flex flex-col shadow-2xl overflow-hidden border-l border-white/10 backdrop-blur-xl"
-            style={{ 
-                display: 'flex', 
-                height: 'calc(100vh - 73px)', 
+            style={{
+                display: 'flex',
+                height: 'calc(100vh - 73px)',
                 right: 0,
                 left: 'auto',
                 position: 'fixed',
@@ -614,6 +615,16 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                         )}
                     </p>
                 </div>
+
+                {/* Satellite Imagery */}
+                {disaster && (
+                    <SatelliteImagery
+                        lat={disaster.lat}
+                        lng={disaster.lng}
+                        disasterType={disaster.type}
+                        date={disaster.date}
+                    />
+                )}
 
                 {/* Countdown Widget */}
                 {nextPass && (
