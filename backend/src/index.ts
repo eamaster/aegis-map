@@ -200,17 +200,12 @@ app.post('/api/analyze', async (c) => {
 			return c.json({ error: 'Missing required fields' }, 400);
 		}
 
-		// Call Gemini API - Use correct model names (as of Dec 2024)
-		// Priority: stable models first, then experimental
+		// Call Gemini API - Use current stable models (December 2025)
+		// Tested working model: gemini-2.5-flash with v1beta
 		const models = [
-			'gemini-1.5-flash',            // Most stable and widely available
-			'gemini-1.5-flash-latest',     // Latest 1.5 Flash
-			'gemini-1.5-pro',              // Stable Pro model
-			'gemini-1.5-pro-latest',       // Latest 1.5 Pro
-			'gemini-pro',                  // Legacy Pro model
-			'gemini-2.0-flash-exp',        // Experimental 2.0
+			'gemini-2.5-flash',            // Confirmed working - December 2025
 		];
-		const apiVersions = ['v1beta', 'v1']; // v1beta has most models
+		const apiVersions = ['v1beta']; // v1beta confirmed working
 		
 		const prompt = `You are an expert satellite imagery analyst. A disaster "${disasterTitle}" will be overpassed by satellite "${satelliteName}" at ${passTime}. Local cloud cover is ${cloudCover}%. 
 
@@ -268,6 +263,15 @@ Provide a concise 2-sentence summary for a first responder. Be direct and action
 					});
 
 					const geminiData = await geminiResponse.json();
+					
+					// Log the actual API response for debugging
+					console.log(`📡 Gemini API response for ${attempt}:`, {
+						status: geminiResponse.status,
+						ok: geminiResponse.ok,
+						hasError: !!geminiData.error,
+						errorCode: geminiData.error?.code,
+						errorMessage: geminiData.error?.message?.substring(0, 100)
+					});
 
 					if (geminiResponse.ok) {
 						const rawAnalysis = geminiData.candidates?.[0]?.content?.parts?.[0]?.text;
