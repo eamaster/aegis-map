@@ -623,7 +623,6 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                         lng={disaster.lng}
                         disasterType={disaster.type}
                         date={disaster.date}
-                        title={disaster.title}
                     />
                 )}
 

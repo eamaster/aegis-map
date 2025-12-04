@@ -26,10 +26,10 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
     const [mapError, setMapError] = useState<string>('');
     const [lastUpdated, setLastUpdated] = useState<Date | undefined>(undefined);
     const [isRefreshing, setIsRefreshing] = useState(false);
-    
+
     // Store tooltips to clean them up
     const tooltipRef = useRef<mapboxgl.Popup | null>(null);
-    
+
     // Track if this is the first load (component scope, not module scope)
     const isInitialLoadRef = useRef(true);
 
@@ -191,7 +191,7 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
     // Manual refresh handler
     const handleRefresh = async () => {
         setIsRefreshing(true);
-        
+
         // Remove existing layers and sources before refreshing
         if (map.current) {
             ['fires-layer', 'earthquakes-layer', 'volcanoes-layer'].forEach(layerId => {
@@ -205,7 +205,7 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
                 }
             });
         }
-        
+
         await loadDisasters();
     };
 
@@ -268,10 +268,10 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
             // Add pulsing effect for high-severity fires
             const animateFires = () => {
                 if (!map.current || !map.current.getLayer('fires-layer')) return;
-                
+
                 const phase = (Date.now() % 2000) / 2000; // 2 second cycle
                 const radius = 10 + Math.sin(phase * Math.PI * 2) * 3;
-                
+
                 try {
                     map.current.setPaintProperty('fires-layer', 'circle-radius', [
                         'case',
@@ -316,17 +316,17 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
             // Change cursor on hover
             map.current.on('mouseenter', 'fires-layer', (e) => {
                 if (map.current) map.current.getCanvas().style.cursor = 'pointer';
-                
+
                 // Show tooltip
                 if (e.features && e.features[0]) {
                     const props = e.features[0].properties as any;
                     const title = props.title || props.name || 'Fire Event';
-                    
+
                     // Remove existing tooltip
                     if (tooltipRef.current) {
                         tooltipRef.current.remove();
                     }
-                    
+
                     // Create new tooltip
                     if (map.current) {
                         tooltipRef.current = new mapboxgl.Popup({
@@ -343,7 +343,7 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
 
             map.current.on('mouseleave', 'fires-layer', () => {
                 if (map.current) map.current.getCanvas().style.cursor = '';
-                
+
                 // Remove tooltip
                 if (tooltipRef.current) {
                     tooltipRef.current.remove();
@@ -395,10 +395,10 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
             // Add pulsing effect for high-severity earthquakes
             const animateEarthquakes = () => {
                 if (!map.current || !map.current.getLayer('earthquakes-layer')) return;
-                
+
                 const phase = (Date.now() % 2000) / 2000; // 2 second cycle
                 const radius = 10 + Math.sin(phase * Math.PI * 2) * 3;
-                
+
                 try {
                     map.current.setPaintProperty('earthquakes-layer', 'circle-radius', [
                         'case',
@@ -452,18 +452,18 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
             // Change cursor on hover
             map.current.on('mouseenter', 'earthquakes-layer', (e) => {
                 if (map.current) map.current.getCanvas().style.cursor = 'pointer';
-                
+
                 // Show tooltip
                 if (e.features && e.features[0]) {
                     const props = e.features[0].properties as any;
                     const title = props.title || props.name || 'Earthquake Event';
                     const magnitude = props.magnitude ? ` M${props.magnitude}` : '';
-                    
+
                     // Remove existing tooltip
                     if (tooltipRef.current) {
                         tooltipRef.current.remove();
                     }
-                    
+
                     // Create new tooltip
                     if (map.current) {
                         tooltipRef.current = new mapboxgl.Popup({
@@ -480,7 +480,7 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
 
             map.current.on('mouseleave', 'earthquakes-layer', () => {
                 if (map.current) map.current.getCanvas().style.cursor = '';
-                
+
                 // Remove tooltip
                 if (tooltipRef.current) {
                     tooltipRef.current.remove();
@@ -532,10 +532,10 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
             // Add pulsing effect for high-severity volcanoes
             const animateVolcanoes = () => {
                 if (!map.current || !map.current.getLayer('volcanoes-layer')) return;
-                
+
                 const phase = (Date.now() % 2000) / 2000; // 2 second cycle
                 const radius = 10 + Math.sin(phase * Math.PI * 2) * 3;
-                
+
                 try {
                     map.current.setPaintProperty('volcanoes-layer', 'circle-radius', [
                         'case',
@@ -578,17 +578,17 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
             // Change cursor on hover
             map.current.on('mouseenter', 'volcanoes-layer', (e) => {
                 if (map.current) map.current.getCanvas().style.cursor = 'pointer';
-                
+
                 // Show tooltip
                 if (e.features && e.features[0]) {
                     const props = e.features[0].properties as any;
                     const title = props.title || props.name || 'Volcano Event';
-                    
+
                     // Remove existing tooltip
                     if (tooltipRef.current) {
                         tooltipRef.current.remove();
                     }
-                    
+
                     // Create new tooltip
                     if (map.current) {
                         tooltipRef.current = new mapboxgl.Popup({
@@ -605,7 +605,7 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
 
             map.current.on('mouseleave', 'volcanoes-layer', () => {
                 if (map.current) map.current.getCanvas().style.cursor = '';
-                
+
                 // Remove tooltip
                 if (tooltipRef.current) {
                     tooltipRef.current.remove();
