@@ -126,7 +126,7 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
                 addDisasterLayers(disasters);
             }
         });
-    }, [theme]);
+    }, [theme, disasters]); // Added 'disasters' dependency
 
     // Load disasters from backend
     const loadDisasters = async () => {
