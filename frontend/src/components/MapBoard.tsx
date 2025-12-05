@@ -211,6 +211,36 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
         await loadDisasters();
     };
 
+    // ✅ CRITICAL FIX: Re-render layers when filters change
+    useEffect(() => {
+        if (!map.current || disasters.length === 0) return;
+
+        console.log('🔄 Filters changed, re-rendering layers:', Array.from(activeFilters));
+
+        // Remove existing layers
+        ['fires-layer', 'earthquakes-layer', 'volcanoes-layer'].forEach(layerId => {
+            if (map.current?.getLayer(layerId)) {
+                // Stop animations
+                const animationId = (map.current as any)[`${layerId.replace('-layer', '')}AnimationId`];
+                if (animationId) {
+                    clearInterval(animationId);
+                }
+                map.current.removeLayer(layerId);
+            }
+        });
+
+        // Remove existing sources
+        ['fires', 'earthquakes', 'volcanoes'].forEach(sourceId => {
+            if (map.current?.getSource(sourceId)) {
+                map.current.removeSource(sourceId);
+            }
+        });
+
+        // Re-add layers with current filters
+        addDisasterLayers(disasters);
+    }, [activeFilters, disasters]); // Re-run when filters OR disasters change
+
+
     // Add disaster data layers to map
     const addDisasterLayers = (disasters: Disaster[]) => {
         if (!map.current) return;
