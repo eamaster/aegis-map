@@ -65,9 +65,14 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
 
   const fetchFireHotspots = async (lat: number, lng: number) => {
     try {
-      // NASA FIRMS API - Active key from https://firms.modaps.eosdis.nasa.gov/api/
+      // NASA FIRMS API - Loaded from environment variable for security
       // Transaction Limit: 5000 requests / 10 minutes
-      const MAP_KEY = '8ab16a9c9e7573557de5777c46fa2681'; // ✅ ACTIVATED
+      const MAP_KEY = import.meta.env.VITE_FIRMS_API_KEY;
+
+      if (!MAP_KEY) {
+        console.error('❌ FIRMS API key not found in environment variables');
+        return;
+      }
       const source = 'VIIRS_NOAA20_NRT'; // Near Real-Time VIIRS data
       const dayRange = 7;
       const area = `${lat},${lng},50`; // 50km radius
@@ -91,18 +96,19 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
       }
 
       // Parse CSV (skip header)
+      // VIIRS NOAA20 CSV Format: lat,lng,bright_ti4,scan,track,acq_date,acq_time,satellite,confidence,version,bright_ti5,frp,daynight
       const hotspots: FireHotspot[] = lines.slice(1)
         .filter(line => line.trim())
         .map(line => {
           const fields = line.split(',');
           return {
-            latitude: parseFloat(fields[0]),
-            longitude: parseFloat(fields[1]),
-            bright_ti4: parseFloat(fields[2]),
-            confidence: fields[9],
-            frp: parseFloat(fields[13]),
-            acq_date: fields[5],
-            acq_time: fields[6]
+            latitude: parseFloat(fields[0]),     // Column 0: latitude
+            longitude: parseFloat(fields[1]),    // Column 1: longitude
+            bright_ti4: parseFloat(fields[2]),   // Column 2: brightness temperature (Kelvin)
+            confidence: fields[8],               // Column 8: confidence ('l'/'n'/'h') ✅ FIXED
+            frp: parseFloat(fields[11]),         // Column 11: Fire Radiative Power (MW) ✅ FIXED
+            acq_date: fields[5],                 // Column 5: acquisition date
+            acq_time: fields[6]                  // Column 6: acquisition time
           };
         })
         .filter(h => !isNaN(h.latitude) && h.confidence !== 'l'); // Exclude low confidence
@@ -132,23 +138,23 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
     const mapboxToken = import.meta.env.VITE_MAPBOX_TOKEN;
 
     if (disasterType === 'fire' && selectedLayer === 'fire') {
-      // Base map (dark for fire overlay)
-      const baseUrl = `https://api.mapbox.com/styles/v1/mapbox/dark-v11/static/${lng},${lat},8,0/800x600@2x?access_token=${mapboxToken}`;
+      // Base map (dark for fire overlay) - Zoom 11 for better detail
+      const baseUrl = `https://api.mapbox.com/styles/v1/mapbox/dark-v11/static/${lng},${lat},11,0/800x600@2x?access_token=${mapboxToken}`;
       setImageUrl(baseUrl);
 
-      // Fire overlay from NASA GIBS
-      const fireOverlay = `https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=VIIRS_NOAA20_Thermal_Anomalies_375m_All&TIME=${dateStr}&CRS=EPSG:4326&WIDTH=800&HEIGHT=600&BBOX=${lat - 0.5},${lng - 0.5},${lat + 0.5},${lng + 0.5}&FORMAT=image/png&TRANSPARENT=true`;
+      // Fire overlay from NASA GIBS - Tighter bounds (±0.2°) for closer view
+      const fireOverlay = `https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=VIIRS_NOAA20_Thermal_Anomalies_375m_All&TIME=${dateStr}&CRS=EPSG:4326&WIDTH=800&HEIGHT=600&BBOX=${lat - 0.2},${lng - 0.2},${lat + 0.2},${lng + 0.2}&FORMAT=image/png&TRANSPARENT=true`;
       setOverlayUrl(fireOverlay);
 
     } else if (selectedLayer === 'thermal') {
-      // Thermal infrared (Bands 7-2-1)
-      const thermalUrl = `https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=MODIS_Terra_CorrectedReflectance_Bands721&TIME=${dateStr}&CRS=EPSG:4326&WIDTH=800&HEIGHT=600&BBOX=${lat - 0.5},${lng - 0.5},${lat + 0.5},${lng + 0.5}&FORMAT=image/jpeg`;
+      // Thermal infrared (Bands 7-2-1) - Tighter bounds (±0.2°) for detail
+      const thermalUrl = `https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=MODIS_Terra_CorrectedReflectance_Bands721&TIME=${dateStr}&CRS=EPSG:4326&WIDTH=800&HEIGHT=600&BBOX=${lat - 0.2},${lng - 0.2},${lat + 0.2},${lng + 0.2}&FORMAT=image/jpeg`;
       setImageUrl(thermalUrl);
       setOverlayUrl('');
 
     } else {
-      // Visual (high-res satellite)
-      const visualUrl = `https://api.mapbox.com/styles/v1/mapbox/satellite-v9/static/${lng},${lat},9,0/800x600@2x?access_token=${mapboxToken}`;
+      // Visual (high-res satellite) - Zoom 12 for maximum detail
+      const visualUrl = `https://api.mapbox.com/styles/v1/mapbox/satellite-v9/static/${lng},${lat},12,0/800x600@2x?access_token=${mapboxToken}`;
       setImageUrl(visualUrl);
       setOverlayUrl('');
     }
@@ -221,8 +227,8 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
           <button
             onClick={() => setSelectedLayer('fire')}
             className={`flex-1 px-3 py-2 text-xs rounded-lg font-medium transition-all ${selectedLayer === 'fire'
-                ? 'bg-red-500/30 text-red-300 border-2 border-red-500/50 shadow-lg'
-                : 'bg-gray-800/50 text-gray-400 hover:bg-gray-700/50 border border-gray-700/50'
+              ? 'bg-red-500/30 text-red-300 border-2 border-red-500/50 shadow-lg'
+              : 'bg-gray-800/50 text-gray-400 hover:bg-gray-700/50 border border-gray-700/50'
               }`}
           >
             <Flame size={14} className="inline mr-1" />
@@ -232,8 +238,8 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
         <button
           onClick={() => setSelectedLayer('thermal')}
           className={`flex-1 px-3 py-2 text-xs rounded-lg font-medium transition-all ${selectedLayer === 'thermal'
-              ? 'bg-orange-500/30 text-orange-300 border-2 border-orange-500/50 shadow-lg'
-              : 'bg-gray-800/50 text-gray-400 hover:bg-gray-700/50 border border-gray-700/50'
+            ? 'bg-orange-500/30 text-orange-300 border-2 border-orange-500/50 shadow-lg'
+            : 'bg-gray-800/50 text-gray-400 hover:bg-gray-700/50 border border-gray-700/50'
             }`}
         >
           🌡️ Thermal
@@ -241,8 +247,8 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
         <button
           onClick={() => setSelectedLayer('visual')}
           className={`flex-1 px-3 py-2 text-xs rounded-lg font-medium transition-all ${selectedLayer === 'visual'
-              ? 'bg-blue-500/30 text-blue-300 border-2 border-blue-500/50 shadow-lg'
-              : 'bg-gray-800/50 text-gray-400 hover:bg-gray-700/50 border border-gray-700/50'
+            ? 'bg-blue-500/30 text-blue-300 border-2 border-blue-500/50 shadow-lg'
+            : 'bg-gray-800/50 text-gray-400 hover:bg-gray-700/50 border border-gray-700/50'
             }`}
         >
           📸 Visual
