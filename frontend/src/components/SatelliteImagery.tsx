@@ -138,17 +138,19 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
     const mapboxToken = import.meta.env.VITE_MAPBOX_TOKEN;
 
     if (disasterType === 'fire' && selectedLayer === 'fire') {
-      // Base map (dark for fire overlay) - Zoom 14 for street-level detail
-      const baseUrl = `https://api.mapbox.com/styles/v1/mapbox/dark-v11/static/${lng},${lat},14,0/800x600@2x?access_token=${mapboxToken}`;
+      // ✅ Base: High-res Mapbox satellite (better than MODIS 250m)
+      const baseUrl = `https://api.mapbox.com/styles/v1/mapbox/satellite-v9/static/${lng},${lat},14,0/800x600@2x?access_token=${mapboxToken}`;
       setImageUrl(baseUrl);
 
-      // Fire overlay from NASA GIBS - Much tighter bounds (±0.02° = ~2.2km radius) for 10x closer view
-      const fireOverlay = `https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=VIIRS_NOAA20_Thermal_Anomalies_375m_All&TIME=${dateStr}&CRS=EPSG:4326&WIDTH=800&HEIGHT=600&BBOX=${lat - 0.02},${lng - 0.02},${lat + 0.02},${lng + 0.02}&FORMAT=image/png&TRANSPARENT=true`;
+      // ✅ Fire overlay: Use MODERATE bbox (±0.1° = ~11km) to avoid pixelation
+      // VIIRS is 375m resolution, so need at least 30 pixels across = 0.1° minimum
+      const fireOverlay = `https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=VIIRS_NOAA20_Thermal_Anomalies_375m_All&TIME=${dateStr}&CRS=EPSG:4326&WIDTH=800&HEIGHT=600&BBOX=${lat - 0.1},${lng - 0.1},${lat + 0.1},${lng + 0.1}&FORMAT=image/png&TRANSPARENT=true`;
       setOverlayUrl(fireOverlay);
 
     } else if (selectedLayer === 'thermal') {
-      // Thermal infrared (Bands 7-2-1) - Much tighter bounds (±0.02°) for detail
-      const thermalUrl = `https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=MODIS_Terra_CorrectedReflectance_Bands721&TIME=${dateStr}&CRS=EPSG:4326&WIDTH=800&HEIGHT=600&BBOX=${lat - 0.02},${lng - 0.02},${lat + 0.02},${lng + 0.02}&FORMAT=image/jpeg`;
+      // ✅ Thermal: Use MODIS with WIDER bbox to match its 250m-1km resolution
+      // MODIS looks good at ±0.15° (~16km radius) - matches sensor resolution
+      const thermalUrl = `https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=MODIS_Terra_CorrectedReflectance_Bands721&TIME=${dateStr}&CRS=EPSG:4326&WIDTH=800&HEIGHT=600&BBOX=${lat - 0.15},${lng - 0.15},${lat + 0.15},${lng + 0.15}&FORMAT=image/jpeg`;
       setImageUrl(thermalUrl);
       setOverlayUrl('');
 
