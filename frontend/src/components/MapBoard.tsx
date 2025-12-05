@@ -16,9 +16,11 @@ mapboxgl.accessToken = accessToken;
 
 interface MapBoardProps {
     onDisasterSelect: (disaster: Disaster | null) => void;
+    activeFilters: Set<string>;
+    onFilterToggle: (type: string) => void;
 }
 
-export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
+export default function MapBoard({ onDisasterSelect, activeFilters, onFilterToggle }: MapBoardProps) {
     const mapContainer = useRef<HTMLDivElement>(null);
     const map = useRef<mapboxgl.Map | null>(null);
     const [disasters, setDisasters] = useState<Disaster[]>([]);
@@ -213,10 +215,14 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
     const addDisasterLayers = (disasters: Disaster[]) => {
         if (!map.current) return;
 
+        // ✅ Filter disasters based on active filters
+        const visibleDisasters = disasters.filter(d => activeFilters.has(d.type));
+        console.log(`📍 Rendering ${visibleDisasters.length}/${disasters.length} disasters (filters:`, Array.from(activeFilters), ')');
+
         // Separate disasters by type
-        const fires = disasters.filter((d) => d.type === 'fire');
-        const volcanoes = disasters.filter((d) => d.type === 'volcano');
-        const earthquakes = disasters.filter((d) => d.type === 'earthquake');
+        const fires = visibleDisasters.filter((d) => d.type === 'fire');
+        const volcanoes = visibleDisasters.filter((d) => d.type === 'volcano');
+        const earthquakes = visibleDisasters.filter((d) => d.type === 'earthquake');
 
         // Add fires layer
         if (fires.length > 0) {
@@ -656,6 +662,8 @@ export default function MapBoard({ onDisasterSelect }: MapBoardProps) {
                     lastUpdated={lastUpdated}
                     onRefresh={handleRefresh}
                     isRefreshing={isRefreshing}
+                    activeFilters={activeFilters}
+                    onFilterToggle={onFilterToggle}
                 />
             )}
 

@@ -11,6 +11,28 @@ function App() {
   const [selectedDisaster, setSelectedDisaster] = useState<Disaster | null>(null);
   const [showTutorial, setShowTutorial] = useState(false);
 
+  // ✅ Filter state - all disasters visible by default
+  const [activeFilters, setActiveFilters] = useState<Set<string>>(
+    new Set(['fire', 'earthquake', 'volcano'])
+  );
+
+  // ✅ Filter toggle handler
+  const handleFilterToggle = (type: string) => {
+    setActiveFilters(prev => {
+      const newFilters = new Set(prev);
+      if (newFilters.has(type)) {
+        // Don't allow turning off all filters
+        if (newFilters.size > 1) {
+          newFilters.delete(type);
+        }
+      } else {
+        newFilters.add(type);
+      }
+      console.log(`🔄 Filter toggled: ${type}, active:`, Array.from(newFilters));
+      return newFilters;
+    });
+  };
+
   // Debug: Log state changes
   useEffect(() => {
     console.log('🔍 selectedDisaster state changed:', selectedDisaster);
@@ -60,7 +82,11 @@ function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 relative">
-        <MapBoard onDisasterSelect={setSelectedDisaster} />
+        <MapBoard
+          onDisasterSelect={setSelectedDisaster}
+          activeFilters={activeFilters}
+          onFilterToggle={handleFilterToggle}
+        />
       </main>
 
       {/* Sidebar - outside main container for proper positioning */}
