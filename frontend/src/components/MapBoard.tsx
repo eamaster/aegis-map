@@ -8,6 +8,7 @@ import mapboxgl from 'mapbox-gl';
 import toast from 'react-hot-toast';
 import type { Disaster } from '../types';
 import MapLegend from './MapLegend';
+import { useTheme } from '../contexts/ThemeContext';
 
 // Set Mapbox access token
 const accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
@@ -28,6 +29,9 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
     const [mapError, setMapError] = useState<string>('');
     const [lastUpdated, setLastUpdated] = useState<Date | undefined>(undefined);
     const [isRefreshing, setIsRefreshing] = useState(false);
+
+    // ✅ Theme state
+    const { theme } = useTheme();
 
     // Store tooltips to clean them up
     const tooltipRef = useRef<mapboxgl.Popup | null>(null);
@@ -58,7 +62,9 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
             // Create map instance
             map.current = new mapboxgl.Map({
                 container: mapContainer.current,
-                style: 'mapbox://styles/mapbox/dark-v11',
+                style: theme === 'dark'
+                    ? 'mapbox://styles/mapbox/dark-v11'
+                    : 'mapbox://styles/mapbox/light-v11',
                 center: [-100, 40], // US West Coast focus
                 zoom: 3.5,
                 projection: { name: 'globe' } as any, // 3D globe
@@ -100,6 +106,27 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
             setLoading(false);
         }
     }, []); // Empty dependency array = run once
+
+    // \u2705 Theme change listener - update map style when theme changes
+    useEffect(() => {
+        if (!map.current) return;
+
+        console.log('\ud83c\udfa8 Theme changed to:', theme);
+
+        const newStyle = theme === 'dark'
+            ? 'mapbox://styles/mapbox/dark-v11'
+            : 'mapbox://styles/mapbox/light-v11';
+
+        map.current.setStyle(newStyle);
+
+        // Re-add disaster layers after style loads
+        map.current.once('style.load', () => {
+            console.log('\ud83d\uddfa\ufe0f Map style reloaded, re-adding disaster layers');
+            if (disasters.length > 0) {
+                addDisasterLayers(disasters);
+            }
+        });
+    }, [theme]);
 
     // Load disasters from backend
     const loadDisasters = async () => {

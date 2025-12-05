@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Globe, HelpCircle } from 'lucide-react';
+import { Globe, HelpCircle, Sun, Moon } from 'lucide-react';
+import { useTheme } from './contexts/ThemeContext';
 import { Toaster } from 'react-hot-toast';
 import MapBoard from './components/MapBoard';
 import Sidebar from './components/Sidebar';
@@ -10,6 +11,9 @@ import type { Disaster } from './types';
 function App() {
   const [selectedDisaster, setSelectedDisaster] = useState<Disaster | null>(null);
   const [showTutorial, setShowTutorial] = useState(false);
+
+  // ✅ Theme state
+  const { theme, toggleTheme } = useTheme();
 
   // ✅ Filter state - all disasters visible by default
   const [activeFilters, setActiveFilters] = useState<Set<string>>(
@@ -56,27 +60,75 @@ function App() {
 
   return (
     <div className="w-screen h-screen relative overflow-hidden bg-black flex flex-col">
-      {/* Header - Clean & Simple */}
-      <header className="flex items-center justify-between px-6 py-3 bg-gray-900/90 backdrop-blur-xl border-b border-white/10 z-50 relative">
+      {/* Header - Theme-Aware */}
+      <header
+        className="flex items-center justify-between px-6 py-3 backdrop-blur-xl border-b z-50 relative"
+        style={{
+          background: theme === 'dark' ? 'rgba(17, 24, 39, 0.9)' : 'rgba(255, 255, 255, 0.9)',
+          borderColor: theme === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'
+        }}
+      >
         {/* Logo */}
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
             <Globe size={20} className="text-white" />
           </div>
           <div>
-            <h1 className="text-lg font-bold text-white">AegisMap</h1>
-            <p className="text-xs text-gray-400">Disaster Monitoring</p>
+            <h1
+              className="text-lg font-bold"
+              style={{ color: theme === 'dark' ? '#fff' : '#111827' }}
+            >
+              AegisMap
+            </h1>
+            <p
+              className="text-xs"
+              style={{ color: theme === 'dark' ? '#9ca3af' : '#6b7280' }}
+            >
+              Disaster Monitoring
+            </p>
           </div>
         </div>
 
-        {/* Help Button */}
-        <button
-          onClick={() => setShowTutorial(true)}
-          className="text-gray-400 hover:text-white px-3 py-1.5 rounded-lg hover:bg-white/10 transition-all text-sm"
-          title="Help (Press ?)"
-        >
-          <HelpCircle size={18} />
-        </button>
+        {/* Right Buttons */}
+        <div className="flex items-center gap-2">
+          {/* Theme Toggle */}
+          <button
+            onClick={toggleTheme}
+            className="p-2 rounded-lg transition-all"
+            style={{ color: theme === 'dark' ? '#9ca3af' : '#6b7280' }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = theme === 'dark'
+                ? 'rgba(255,255,255,0.1)'
+                : 'rgba(0,0,0,0.1)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'transparent';
+            }}
+            title={`Switch to ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}
+            aria-label="Toggle theme"
+          >
+            {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+          </button>
+
+          {/* Help Button */}
+          <button
+            onClick={() => setShowTutorial(true)}
+            className="p-2 rounded-lg transition-all"
+            style={{ color: theme === 'dark' ? '#9ca3af' : '#6b7280' }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = theme === 'dark'
+                ? 'rgba(255,255,255,0.1)'
+                : 'rgba(0,0,0,0.1)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'transparent';
+            }}
+            title="Help (Press ?)"
+            aria-label="Show help"
+          >
+            <HelpCircle size={18} />
+          </button>
+        </div>
       </header>
 
 
