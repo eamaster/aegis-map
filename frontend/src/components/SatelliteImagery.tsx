@@ -70,7 +70,13 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
       const MAP_KEY = import.meta.env.VITE_FIRMS_API_KEY;
 
       if (!MAP_KEY) {
-        console.error('❌ FIRMS API key not found in environment variables');
+        console.warn('⚠️ FIRMS API key not configured - fire hotspot data unavailable');
+        setFireStats({
+          total: 0,
+          highConfidence: 0,
+          avgTemp: 0,
+          maxFRP: 0
+        });
         return;
       }
       const source = 'VIIRS_NOAA20_NRT'; // Near Real-Time VIIRS data

@@ -21,6 +21,47 @@ interface MapBoardProps {
     onFilterToggle: (type: string) => void;
 }
 
+// Helper function to safely remove all disaster layers and sources
+const removeDisasterLayers = (mapInstance: mapboxgl.Map | null) => {
+    if (!mapInstance) return;
+
+    console.log('🧹 Cleaning up existing layers and sources...');
+
+    // Stop all animations first
+    ['firesAnimationId', 'earthquakesAnimationId', 'volcanoesAnimationId'].forEach(animId => {
+        const id = (mapInstance as any)[animId];
+        if (id) {
+            clearInterval(id);
+            (mapInstance as any)[animId] = null;
+        }
+    });
+
+    // Remove layers (must be done before removing sources)
+    ['fires-layer', 'earthquakes-layer', 'volcanoes-layer'].forEach(layerId => {
+        if (mapInstance.getLayer(layerId)) {
+            try {
+                mapInstance.removeLayer(layerId);
+                console.log(`  ✅ Removed layer: ${layerId}`);
+            } catch (e) {
+                console.warn(`  ⚠️ Could not remove layer ${layerId}:`, e);
+            }
+        }
+    });
+
+    // Remove sources
+    ['fires', 'earthquakes', 'volcanoes'].forEach(sourceId => {
+        if (mapInstance.getSource(sourceId)) {
+            try {
+                mapInstance.removeSource(sourceId);
+                console.log(`  ✅ Removed source: ${sourceId}`);
+            } catch (e) {
+                console.warn(`  ⚠️ Could not remove source ${sourceId}:`, e);
+            }
+        }
+    });
+};
+
+
 export default function MapBoard({ onDisasterSelect, activeFilters, onFilterToggle }: MapBoardProps) {
     const mapContainer = useRef<HTMLDivElement>(null);
     const map = useRef<mapboxgl.Map | null>(null);
@@ -126,7 +167,7 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
                 addDisasterLayers(disasters);
             }
         });
-    }, [theme, disasters]); // Added 'disasters' dependency
+    }, [theme]); // Only depend on theme, NOT disasters (prevents double-trigger)
 
     // Load disasters from backend
     const loadDisasters = async () => {
@@ -244,33 +285,20 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
 
         console.log('🔄 Filters changed, re-rendering layers:', Array.from(activeFilters));
 
-        // Remove existing layers
-        ['fires-layer', 'earthquakes-layer', 'volcanoes-layer'].forEach(layerId => {
-            if (map.current?.getLayer(layerId)) {
-                // Stop animations
-                const animationId = (map.current as any)[`${layerId.replace('-layer', '')}AnimationId`];
-                if (animationId) {
-                    clearInterval(animationId);
-                }
-                map.current.removeLayer(layerId);
-            }
-        });
-
-        // Remove existing sources
-        ['fires', 'earthquakes', 'volcanoes'].forEach(sourceId => {
-            if (map.current?.getSource(sourceId)) {
-                map.current.removeSource(sourceId);
-            }
-        });
+        // Use helper function to clean up
+        removeDisasterLayers(map.current);
 
         // Re-add layers with current filters
         addDisasterLayers(disasters);
-    }, [activeFilters, disasters]); // Re-run when filters OR disasters change
+    }, [activeFilters, disasters]); // No need for addDisasterLayers in deps // Re-run when filters OR disasters change
 
 
     // Add disaster data layers to map
     const addDisasterLayers = (disasters: Disaster[]) => {
         if (!map.current) return;
+
+        // Safety check: Clean up any existing layers first
+        removeDisasterLayers(map.current);
 
         // ✅ Filter disasters based on active filters
         const visibleDisasters = disasters.filter(d => activeFilters.has(d.type));
