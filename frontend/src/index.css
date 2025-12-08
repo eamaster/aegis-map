@@ -208,3 +208,45 @@ body {
         display: none !important;
     }
 }
+
+/* ============================================================================
+   GLASSMORPHISM UTILITIES - AegisMap Professional UI
+   ============================================================================ */
+
+/* Enhanced backdrop blur for better glassmorphism effect */
+@supports (backdrop-filter: blur(20px)) or (-webkit-backdrop-filter: blur(20px)) {
+  .backdrop-blur-2xl {
+    backdrop-filter: blur(40px);
+    -webkit-backdrop-filter: blur(40px);
+  }
+}
+
+/* Smooth scale transition for hover effects */
+.hover\:scale-102:hover {
+  transform: scale(1.02);
+}
+
+/* Tabular numbers for better alignment in disaster counts */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Glass-themed scrollbar styling */
+.glass-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.glass-scrollbar::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+}
+
+.glass-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.glass-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
