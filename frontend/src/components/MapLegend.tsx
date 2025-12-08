@@ -60,7 +60,7 @@ export default function MapLegend({
 
     return (
         <div className="absolute top-4 right-4 z-30">
-            <div className="relative bg-gradient-to-br from-gray-900/50 via-gray-800/50 to-gray-900/50 backdrop-blur-2xl border border-white/20 rounded-3xl shadow-[0_20px_60px_rgba(0,0,0,0.6)] overflow-hidden w-72">
+            <div className="relative bg-gradient-to-br from-gray-900/50 via-gray-800/50 to-gray-900/50 backdrop-blur-2xl border border-white/20 rounded-3xl shadow-[0_20px_60px_rgba(0,0,0,0.6)] overflow-hidden w-80">
                 <div className="absolute top-0 right-0 w-48 h-48 bg-gradient-to-br from-blue-500/10 via-purple-500/10 to-transparent rounded-full blur-3xl" />
                 <div className="absolute bottom-0 left-0 w-48 h-48 bg-gradient-to-tr from-purple-500/10 via-blue-500/10 to-transparent rounded-full blur-3xl" />
 
@@ -97,15 +97,15 @@ export default function MapLegend({
                         <button
                             onClick={() => onFilterToggle('fire')}
                             className={`group w-full flex items-center justify-between px-5 py-4 rounded-2xl transition-all duration-300 transform ${isActive('fire')
-                                    ? 'bg-gradient-to-r from-red-600/30 via-red-500/30 to-red-600/30 backdrop-blur-md border-2 border-red-400/60 shadow-[0_0_20px_rgba(239,68,68,0.4)] scale-105'
-                                    : 'bg-gray-800/30 backdrop-blur-sm border-2 border-white/10 opacity-60 hover:opacity-100 hover:border-white/20'
+                                ? 'bg-gradient-to-r from-red-600/30 via-red-500/30 to-red-600/30 backdrop-blur-md border-2 border-red-400/60 shadow-[0_0_20px_rgba(239,68,68,0.4)] scale-105'
+                                : 'bg-gray-800/30 backdrop-blur-sm border-2 border-white/10 opacity-60 hover:opacity-100 hover:border-white/20'
                                 }`}
                             style={{ transform: isActive('fire') ? 'scale(1.05)' : 'scale(1)' }}
                         >
                             <div className="flex items-center gap-4">
                                 <div className={`relative w-4 h-4 rounded-full transition-all duration-300 ${isActive('fire')
-                                        ? 'bg-red-500 shadow-[0_0_16px_rgba(239,68,68,1)] scale-125'
-                                        : 'bg-gray-600 group-hover:bg-gray-500'
+                                    ? 'bg-red-500 shadow-[0_0_16px_rgba(239,68,68,1)] scale-125'
+                                    : 'bg-gray-600 group-hover:bg-gray-500'
                                     }`}>
                                     {isActive('fire') && (
                                         <div className="absolute inset-0 rounded-full bg-red-400 animate-ping opacity-75" />
@@ -124,15 +124,15 @@ export default function MapLegend({
                         <button
                             onClick={() => onFilterToggle('earthquake')}
                             className={`group w-full flex items-center justify-between px-5 py-4 rounded-2xl transition-all duration-300 transform ${isActive('earthquake')
-                                    ? 'bg-gradient-to-r from-orange-600/30 via-orange-500/30 to-orange-600/30 backdrop-blur-md border-2 border-orange-400/60 shadow-[0_0_20px_rgba(255,140,0,0.4)] scale-105'
-                                    : 'bg-gray-800/30 backdrop-blur-sm border-2 border-white/10 opacity-60 hover:opacity-100 hover:border-white/20'
+                                ? 'bg-gradient-to-r from-orange-600/30 via-orange-500/30 to-orange-600/30 backdrop-blur-md border-2 border-orange-400/60 shadow-[0_0_20px_rgba(255,140,0,0.4)] scale-105'
+                                : 'bg-gray-800/30 backdrop-blur-sm border-2 border-white/10 opacity-60 hover:opacity-100 hover:border-white/20'
                                 }`}
                             style={{ transform: isActive('earthquake') ? 'scale(1.05)' : 'scale(1)' }}
                         >
                             <div className="flex items-center gap-4">
                                 <div className={`relative w-4 h-4 rounded-full transition-all duration-300 ${isActive('earthquake')
-                                        ? 'bg-orange-500 shadow-[0_0_16px_rgba(255,140,0,1)] scale-125'
-                                        : 'bg-gray-600 group-hover:bg-gray-500'
+                                    ? 'bg-orange-500 shadow-[0_0_16px_rgba(255,140,0,1)] scale-125'
+                                    : 'bg-gray-600 group-hover:bg-gray-500'
                                     }`}>
                                     {isActive('earthquake') && (
                                         <div className="absolute inset-0 rounded-full bg-orange-400 animate-ping opacity-75" />
@@ -151,15 +151,15 @@ export default function MapLegend({
                         <button
                             onClick={() => onFilterToggle('volcano')}
                             className={`group w-full flex items-center justify-between px-5 py-4 rounded-2xl transition-all duration-300 transform ${isActive('volcano')
-                                    ? 'bg-gradient-to-r from-orange-600/30 via-red-600/30 to-orange-600/30 backdrop-blur-md border-2 border-orange-500/60 shadow-[0_0_20px_rgba(255,107,53,0.4)] scale-105'
-                                    : 'bg-gray-800/30 backdrop-blur-sm border-2 border-white/10 opacity-60 hover:opacity-100 hover:border-white/20'
+                                ? 'bg-gradient-to-r from-orange-600/30 via-red-600/30 to-orange-600/30 backdrop-blur-md border-2 border-orange-500/60 shadow-[0_0_20px_rgba(255,107,53,0.4)] scale-105'
+                                : 'bg-gray-800/30 backdrop-blur-sm border-2 border-white/10 opacity-60 hover:opacity-100 hover:border-white/20'
                                 }`}
                             style={{ transform: isActive('volcano') ? 'scale(1.05)' : 'scale(1)' }}
                         >
                             <div className="flex items-center gap-4">
                                 <div className={`relative w-4 h-4 rounded-full transition-all duration-300 ${isActive('volcano')
-                                        ? 'bg-orange-600 shadow-[0_0_16px_rgba(255,107,53,1)] scale-125'
-                                        : 'bg-gray-600 group-hover:bg-gray-500'
+                                    ? 'bg-orange-600 shadow-[0_0_16px_rgba(255,107,53,1)] scale-125'
+                                    : 'bg-gray-600 group-hover:bg-gray-500'
                                     }`}>
                                     {isActive('volcano') && (
                                         <div className="absolute inset-0 rounded-full bg-orange-500 animate-ping opacity-75" />

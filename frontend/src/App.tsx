@@ -1,26 +1,27 @@
 import { useState, useEffect } from 'react';
-import { Globe, HelpCircle, Sun, Moon } from 'lucide-react';
+import { Globe, HelpCircle } from 'lucide-react';
 import { useTheme } from './contexts/ThemeContext';
 import { Toaster } from 'react-hot-toast';
 import MapBoard from './components/MapBoard';
 import Sidebar from './components/Sidebar';
 import DebugPanel from './components/DebugPanel';
 import TutorialOverlay from './components/TutorialOverlay';
+import ThemeToggle from './components/ThemeToggle';
 import type { Disaster } from './types';
 
 function App() {
   const [selectedDisaster, setSelectedDisaster] = useState<Disaster | null>(null);
   const [showTutorial, setShowTutorial] = useState(false);
 
-  // ✅ Theme state
-  const { theme, toggleTheme } = useTheme();
+  // Theme state
+  const { theme } = useTheme();
 
-  // ✅ Filter state - all disasters visible by default
+  // Filter state - all disasters visible by default
   const [activeFilters, setActiveFilters] = useState<Set<string>>(
     new Set(['fire', 'earthquake', 'volcano'])
   );
 
-  // ✅ Filter toggle handler
+  // Filter toggle handler
   const handleFilterToggle = (type: string) => {
     setActiveFilters(prev => {
       const newFilters = new Set(prev);
@@ -32,20 +33,9 @@ function App() {
       } else {
         newFilters.add(type);
       }
-      console.log(`🔄 Filter toggled: ${type}, active:`, Array.from(newFilters));
       return newFilters;
     });
   };
-
-  // Debug: Log state changes
-  useEffect(() => {
-    console.log('🔍 selectedDisaster state changed:', selectedDisaster);
-  }, [selectedDisaster]);
-
-  // Don't auto-show tutorial - let users discover it via Help button
-  useEffect(() => {
-    // Tutorial only shows when user clicks Help button
-  }, []);
 
   // Keyboard shortcut to show tutorial (? key)
   useEffect(() => {
@@ -60,6 +50,8 @@ function App() {
 
   return (
     <div className="w-screen h-screen relative overflow-hidden bg-black flex flex-col">
+      <ThemeToggle />
+
       {/* Header - Theme-Aware */}
       <header
         className="flex items-center justify-between px-6 py-3 backdrop-blur-xl border-b z-50 relative"
@@ -91,25 +83,6 @@ function App() {
 
         {/* Right Buttons */}
         <div className="flex items-center gap-2">
-          {/* Theme Toggle */}
-          <button
-            onClick={toggleTheme}
-            className="p-2 rounded-lg transition-all"
-            style={{ color: theme === 'dark' ? '#9ca3af' : '#6b7280' }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = theme === 'dark'
-                ? 'rgba(255,255,255,0.1)'
-                : 'rgba(0,0,0,0.1)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = 'transparent';
-            }}
-            title={`Switch to ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}
-            aria-label="Toggle theme"
-          >
-            {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
-          </button>
-
           {/* Help Button */}
           <button
             onClick={() => setShowTutorial(true)}
@@ -146,7 +119,6 @@ function App() {
         <Sidebar
           disaster={selectedDisaster}
           onClose={() => {
-            console.log('🔒 Closing sidebar');
             setSelectedDisaster(null);
           }}
         />
