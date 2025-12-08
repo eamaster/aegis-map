@@ -26,7 +26,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     useEffect(() => {
         // Apply theme to document
         document.documentElement.setAttribute('data-theme', theme);
+        // ALSO update for body (some components might need this)
+        document.body.setAttribute('data-theme', theme);
         localStorage.setItem('aegis-theme', theme);
+
+        // Log for debugging
+        console.log('Theme changed to:', theme);
     }, [theme]);
 
     const toggleTheme = () => {

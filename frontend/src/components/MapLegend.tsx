@@ -63,7 +63,7 @@ export default function MapLegend({
             <div
                 className="relative overflow-hidden rounded-3xl"
                 style={{
-                    width: 'clamp(240px, 92vw, 420px)',
+                    width: 'clamp(300px, 95vw, 440px)', // Increased minimum from 240px to 300px
                     background: 'linear-gradient(135deg, rgba(17, 24, 39, 0.5) 0%, rgba(31, 41, 55, 0.5) 50%, rgba(17, 24, 39, 0.5) 100%)',
                     backdropFilter: 'blur(40px)',
                     WebkitBackdropFilter: 'blur(40px)', // Safari support

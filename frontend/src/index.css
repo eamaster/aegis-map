@@ -1,31 +1,35 @@
 /* Mapbox GL JS CSS - MUST BE FIRST */
 @import 'mapbox-gl/dist/mapbox-gl.css';
 
-/* ============================================================================
-   THEME SYSTEM - Light/Dark Mode Variables
-   ============================================================================ */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-:root {
-    /* Default (Dark Theme) */
+/* ===== THEME CSS VARIABLES ===== */
+:root,
+[data-theme="dark"] {
+    /* Dark theme (default) */
     --bg-primary: #0a0f1c;
-    --bg-secondary: #111827;
-    --bg-tertiary: #1f2937;
+    --bg-secondary: rgba(17, 24, 39, 0.95);
     --text-primary: #ffffff;
     --text-secondary: #9ca3af;
     --border-color: rgba(255, 255, 255, 0.1);
-    --glass-bg: rgba(17, 24, 39, 0.85);
+    --glassmorphism-bg: linear-gradient(135deg, rgba(17, 24, 39, 0.5), rgba(31, 41, 55, 0.5));
+    --glassmorphism-border: rgba(255, 255, 255, 0.2);
 }
 
-[data-theme='light'] {
+[data-theme="light"] {
+    /* Light theme */
     --bg-primary: #f9fafb;
-    --bg-secondary: #ffffff;
-    --bg-tertiary: #f3f4f6;
+    --bg-secondary: rgba(255, 255, 255, 0.95);
     --text-primary: #111827;
     --text-secondary: #6b7280;
     --border-color: rgba(0, 0, 0, 0.1);
-    --glass-bg: rgba(255, 255, 255, 0.85);
+    --glassmorphism-bg: linear-gradient(135deg, rgba(255, 255, 255, 0.7), rgba(249, 250, 251, 0.7));
+    --glassmorphism-border: rgba(0, 0, 0, 0.15);
 }
 
+/* Ensure body uses theme variables */
 body {
     background-color: var(--bg-primary);
     color: var(--text-primary);
@@ -37,9 +41,7 @@ body {
     border: 1px solid var(--border-color);
 }
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+
 
 /* Global styles */
 * {
@@ -215,38 +217,38 @@ body {
 
 /* Enhanced backdrop blur for better glassmorphism effect */
 @supports (backdrop-filter: blur(20px)) or (-webkit-backdrop-filter: blur(20px)) {
-  .backdrop-blur-2xl {
-    backdrop-filter: blur(40px);
-    -webkit-backdrop-filter: blur(40px);
-  }
+    .backdrop-blur-2xl {
+        backdrop-filter: blur(40px);
+        -webkit-backdrop-filter: blur(40px);
+    }
 }
 
 /* Smooth scale transition for hover effects */
 .hover\:scale-102:hover {
-  transform: scale(1.02);
+    transform: scale(1.02);
 }
 
 /* Tabular numbers for better alignment in disaster counts */
 .tabular-nums {
-  font-variant-numeric: tabular-nums;
+    font-variant-numeric: tabular-nums;
 }
 
 /* Glass-themed scrollbar styling */
 .glass-scrollbar::-webkit-scrollbar {
-  width: 6px;
+    width: 6px;
 }
 
 .glass-scrollbar::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 10px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 10px;
 }
 
 .glass-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .glass-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.3);
+    background: rgba(255, 255, 255, 0.3);
 }

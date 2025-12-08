@@ -13,7 +13,6 @@ export default {
                     earthquake: '#FF8C00',
                 }
             },
-            // Add explicit backdrop filter support
             backdropBlur: {
                 xs: '2px',
                 sm: '4px',
@@ -26,10 +25,8 @@ export default {
         },
     },
     plugins: [],
-    // ✅ CRITICAL: Safelist ALL glassmorphism patterns
-    // This forces Tailwind to generate CSS for these classes
     safelist: [
-        // Explicit backdrop blur classes
+        // Backdrop blur
         'backdrop-blur-xs',
         'backdrop-blur-sm',
         'backdrop-blur-md',
@@ -37,18 +34,18 @@ export default {
         'backdrop-blur-xl',
         'backdrop-blur-2xl',
         'backdrop-blur-3xl',
-        // Pattern-based safelisting for ALL opacity variants
+        // Opacity patterns
         {
-            pattern: /bg-(gray|white|black|blue|purple|red|orange|green|yellow|pink|indigo)-(50|100|200|300|400|500|600|700|800|900)\/(5|10|20|30|40|50|60|70|80|90|95)/,
+            pattern: /bg-(gray|white|black|blue|purple|red|orange|green|yellow|pink|indigo)-(50|100|200|300|400|500|600|700|800|900)\/(5|10|20|30|40|50|60|70|80|90|95|98)/,
         },
         {
-            pattern: /from-(gray|white|black|blue|purple|red|orange|green)-(50|100|200|300|400|500|600|700|800|900)\/(5|10|20|30|40|50|60|70|80|90|95)/,
+            pattern: /from-(gray|white|black|blue|purple|red|orange|green)-(50|100|200|300|400|500|600|700|800|900)\/(5|10|20|30|40|50|60|70|80|90|95|98)/,
         },
         {
-            pattern: /via-(gray|white|black|blue|purple|red|orange|green)-(50|100|200|300|400|500|600|700|800|900)\/(5|10|20|30|40|50|60|70|80|90|95)/,
+            pattern: /via-(gray|white|black|blue|purple|red|orange|green)-(50|100|200|300|400|500|600|700|800|900)\/(5|10|20|30|40|50|60|70|80|90|95|98)/,
         },
         {
-            pattern: /to-(gray|white|black|blue|purple|red|orange|green)-(50|100|200|300|400|500|600|700|800|900)\/(5|10|20|30|40|50|60|70|80|90|95)/,
+            pattern: /to-(gray|white|black|blue|purple|red|orange|green)-(50|100|200|300|400|500|600|700|800|900)\/(5|10|20|30|40|50|60|70|80|90|95|98)/,
         },
         {
             pattern: /border-(gray|white|black|blue|purple|red|orange)-(50|100|200|300|400|500|600|700|800|900)\/(5|10|20|30|40|50|60|70|80|90|95)/,
@@ -57,7 +54,7 @@ export default {
         {
             pattern: /bg-gradient-to-(r|l|t|b|tr|tl|br|bl)/,
         },
-        // Arbitrary shadows
+        // Shadows
         {
             pattern: /shadow-\[.+\]/,
         },
@@ -66,15 +63,25 @@ export default {
         'rounded-2xl',
         'rounded-3xl',
         'rounded-full',
-        // Transform scales
+        // Scales
         'scale-95',
         'scale-100',
         'scale-105',
         'scale-110',
         'scale-125',
-        // Tracking
-        {
-            pattern: /tracking-\[.+\]/,
-        },
+        // Z-index
+        'z-30',
+        'z-50',
+        'z-[100]',
+        'z-[9999]',
+        // Min width
+        'min-w-0',
+        // Flex wrap
+        'flex-wrap',
+        // Whitespace
+        'whitespace-nowrap',
+        // Text overflow
+        'overflow-hidden',
+        'text-ellipsis',
     ],
 }
