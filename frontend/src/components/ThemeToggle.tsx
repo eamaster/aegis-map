@@ -1,35 +1,29 @@
 import { Moon, Sun } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useTheme } from '../contexts/ThemeContext';
 
 export default function ThemeToggle() {
-    const [theme, setTheme] = useState<'light' | 'dark'>('dark');
-
-    // Load theme from localStorage on mount
-    useEffect(() => {
-        const savedTheme = localStorage.getItem('theme') as 'light' | 'dark' | null;
-        if (savedTheme) {
-            setTheme(savedTheme);
-            document.documentElement.setAttribute('data-theme', savedTheme);
-        }
-    }, []);
-
-    const toggleTheme = () => {
-        const newTheme = theme === 'dark' ? 'light' : 'dark';
-        setTheme(newTheme);
-        localStorage.setItem('theme', newTheme);
-        document.documentElement.setAttribute('data-theme', newTheme);
-    };
+    // ✅ USE THE EXISTING THEME CONTEXT - don't create separate state!
+    const { theme, toggleTheme } = useTheme();
 
     return (
         <button
             onClick={toggleTheme}
-            className="fixed top-4 right-4 z-50 p-3 rounded-xl bg-gray-900/40 backdrop-blur-xl border border-white/20 shadow-lg hover:bg-gray-900/60 transition-all duration-300"
+            className="p-2 rounded-lg transition-all hover:bg-opacity-80"
+            style={{
+                background: theme === 'dark'
+                    ? 'rgba(255, 255, 255, 0.1)'
+                    : 'rgba(0, 0, 0, 0.05)',
+                border: theme === 'dark'
+                    ? '1px solid rgba(255, 255, 255, 0.2)'
+                    : '1px solid rgba(0, 0, 0, 0.1)'
+            }}
             aria-label="Toggle theme"
+            title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
         >
             {theme === 'dark' ? (
-                <Sun size={20} className="text-yellow-400" />
+                <Sun size={18} className="text-yellow-400" />
             ) : (
-                <Moon size={20} className="text-blue-600" />
+                <Moon size={18} className="text-gray-700" />
             )}
         </button>
     );

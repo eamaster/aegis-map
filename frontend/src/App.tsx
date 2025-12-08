@@ -50,8 +50,6 @@ function App() {
 
   return (
     <div className="w-screen h-screen relative overflow-hidden bg-black flex flex-col">
-      <ThemeToggle />
-
       {/* Header - Theme-Aware */}
       <header
         className="flex items-center justify-between px-6 py-3 backdrop-blur-xl border-b z-50 relative"
@@ -83,6 +81,9 @@ function App() {
 
         {/* Right Buttons */}
         <div className="flex items-center gap-2">
+          {/* Theme Toggle */}
+          <ThemeToggle />
+
           {/* Help Button */}
           <button
             onClick={() => setShowTutorial(true)}
