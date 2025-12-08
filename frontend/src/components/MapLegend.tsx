@@ -59,7 +59,15 @@ export default function MapLegend({
     }
 
     return (
-        <div className="absolute top-4 right-4 z-30">
+        <div
+            className="absolute z-30"
+            style={{
+                position: 'absolute',
+                top: '16px',
+                right: '16px',
+                zIndex: 30
+            }}
+        >
             <div
                 className="relative overflow-hidden rounded-3xl"
                 style={{

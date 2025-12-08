@@ -37,13 +37,17 @@ export default function TutorialOverlay({ onClose }: TutorialOverlayProps) {
         >
             {/* Modal Container - Professional Glassmorphism */}
             <div
-                className={`relative bg-gradient-to-br from-gray-900/95 via-gray-800/95 to-gray-900/95 backdrop-blur-2xl border border-white/10 rounded-3xl shadow-[0_20px_60px_rgba(0,0,0,0.5)] max-w-3xl w-full max-h-[90vh] overflow-hidden transition-all duration-300 ${isVisible ? 'scale-100 opacity-100 translate-y-0' : 'scale-95 opacity-0 translate-y-4'
-                    }`}
+                className={`relative border border-white/10 rounded-3xl shadow-[0_20px_60px_rgba(0,0,0,0.5)] max-w-3xl w-full max-h-[90vh] overflow-hidden transition-all duration-300 ${isVisible ? 'scale-100 opacity-100 translate-y-0' : 'scale-95 opacity-0 translate-y-4'}`}
+                style={{
+                    background: 'linear-gradient(135deg, rgba(10, 15, 28, 0.98), rgba(20, 25, 40, 0.98))',
+                    backdropFilter: 'blur(40px)',
+                    WebkitBackdropFilter: 'blur(40px)'
+                }}
                 onClick={(e) => e.stopPropagation()}
             >
                 {/* Decorative gradient overlays */}
-                <div className="absolute top-0 right-0 w-96 h-96 bg-gradient-to-br from-blue-500/10 via-purple-500/10 to-transparent rounded-full blur-3xl" />
-                <div className="absolute bottom-0 left-0 w-96 h-96 bg-gradient-to-tr from-purple-500/10 via-blue-500/10 to-transparent rounded-full blur-3xl" />
+                <div className="absolute top-0 right-0 w-96 h-96 bg-gradient-to-br from-blue-500/10 via-purple-500/10 to-transparent rounded-full blur-3xl opacity-50" />
+                <div className="absolute bottom-0 left-0 w-96 h-96 bg-gradient-to-tr from-purple-500/10 via-blue-500/10 to-transparent rounded-full blur-3xl opacity-50" />
 
                 {/* Close Button - Floating */}
                 <button
@@ -83,7 +87,7 @@ export default function TutorialOverlay({ onClose }: TutorialOverlayProps) {
                                 <div className="flex-1">
                                     <h3 className="text-white font-bold text-lg mb-2 flex items-center gap-2">
                                         Color-Coded Disasters
-                                        <span className="text-xs px-2 py-0.5 bg-blue-500/20 text-blue-300 rounded-full font-medium">Live</span>
+                                        <span className="text-xs px-2 py-0.5 bg-blue-500/20 text-blue-300 rounded-full font-medium ml-2">Live</span>
                                     </h3>
                                     <div className="space-y-2 text-sm text-gray-300 leading-relaxed">
                                         <div className="flex items-center gap-2">
