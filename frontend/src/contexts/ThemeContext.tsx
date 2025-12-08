@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, useLayoutEffect } from 'react';
 import type { ReactNode } from 'react';
 
 
@@ -13,25 +13,22 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
     const [theme, setTheme] = useState<Theme>(() => {
-        // FORCE dark mode on first load, then check localStorage
-        const saved = localStorage.getItem('aegis-theme') as Theme;
-        // Remove any stored 'light' theme preference on app load
-        if (!saved || saved === 'light') {
-            localStorage.setItem('aegis-theme', 'dark');
-            return 'dark';
-        }
-        return saved || 'dark';
+        // Enforce dark as the initial theme; respect saved value only if valid
+        const saved = localStorage.getItem('aegis-theme') as Theme | null;
+        return saved === 'light' || saved === 'dark' ? saved : 'dark';
     });
 
-    useEffect(() => {
-        // Apply theme to document
+    // Apply theme to the document immediately to avoid a flash of incorrect theme
+    useLayoutEffect(() => {
         document.documentElement.setAttribute('data-theme', theme);
-        // ALSO update for body (some components might need this)
+        document.body.setAttribute('data-theme', theme);
+    }, [theme]);
+
+    useEffect(() => {
+        // Persist theme and ensure any late-loaded components see it
+        document.documentElement.setAttribute('data-theme', theme);
         document.body.setAttribute('data-theme', theme);
         localStorage.setItem('aegis-theme', theme);
-
-        // Log for debugging
-        console.log('Theme changed to:', theme);
     }, [theme]);
 
     const toggleTheme = () => {

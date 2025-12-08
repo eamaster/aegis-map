@@ -296,7 +296,7 @@ export default function TutorialOverlay({ onClose }: TutorialOverlayProps) {
                             }}
                         >
                             <p className="text-sm text-gray-200 leading-relaxed">
-                                <strong className="text-blue-400">💡 Pro Tip:</strong> Use the <strong className="text-white">legend panel</strong> (top-left)
+                                <strong className="text-blue-400">💡 Pro Tip:</strong> Use the <strong className="text-white">legend panel</strong> (top-right)
                                 to filter disasters by type. Click disaster types to show/hide specific markers on the map.
                             </p>
                         </div>

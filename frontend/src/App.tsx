@@ -49,12 +49,20 @@ function App() {
   }, []);
 
   return (
-    <div className="w-screen h-screen relative overflow-hidden bg-black flex flex-col">
+    <div
+      className="w-screen h-screen relative overflow-hidden flex flex-col"
+      style={{
+        backgroundColor: 'var(--bg-primary)',
+        color: 'var(--text-primary)',
+      }}
+    >
       {/* Header - Professional Glassmorphism Design */}
       <header
         className="relative flex items-center justify-between px-6 py-3.5 border-b z-50"
         style={{
-          background: 'linear-gradient(135deg, rgba(17, 24, 39, 0.95) 0%, rgba(31, 41, 55, 0.95) 100%)',
+          background: theme === 'dark'
+            ? 'linear-gradient(135deg, rgba(17, 24, 39, 0.95) 0%, rgba(31, 41, 55, 0.95) 100%)'
+            : 'linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(241, 245, 249, 0.95) 100%)',
           backdropFilter: 'blur(24px)',
           WebkitBackdropFilter: 'blur(24px)',
           borderColor: theme === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
