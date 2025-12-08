@@ -63,7 +63,7 @@ export default function MapLegend({
             <div
                 className="relative overflow-hidden rounded-3xl"
                 style={{
-                    width: '352px', // Increased from 320px (w-80) to 352px to prevent number cutoff
+                    width: 'clamp(240px, 92vw, 420px)',
                     background: 'linear-gradient(135deg, rgba(17, 24, 39, 0.5) 0%, rgba(31, 41, 55, 0.5) 50%, rgba(17, 24, 39, 0.5) 100%)',
                     backdropFilter: 'blur(40px)',
                     WebkitBackdropFilter: 'blur(40px)', // Safari support
@@ -74,10 +74,10 @@ export default function MapLegend({
                 <div className="absolute top-0 right-0 w-48 h-48 bg-gradient-to-br from-blue-500/10 via-purple-500/10 to-transparent rounded-full blur-3xl" />
                 <div className="absolute bottom-0 left-0 w-48 h-48 bg-gradient-to-tr from-purple-500/10 via-blue-500/10 to-transparent rounded-full blur-3xl" />
 
-                <div className="relative flex items-center justify-between px-5 py-4 bg-gradient-to-r from-gray-800/60 via-gray-900/60 to-gray-800/60 backdrop-blur-sm border-b border-white/10">
+                <div className="relative flex items-center justify-between px-4 sm:px-5 py-4 bg-gradient-to-r from-gray-800/60 via-gray-900/60 to-gray-800/60 backdrop-blur-sm border-b border-white/10">
                     <div className="flex items-center gap-3">
                         <div className="w-2.5 h-2.5 rounded-full bg-green-400 animate-pulse shadow-[0_0_12px_rgba(74,222,128,0.9)]" />
-                        <h3 className="text-white font-black text-base tracking-tight">Active Disasters</h3>
+                        <h3 className="text-white font-black text-sm sm:text-base tracking-tight whitespace-nowrap">Active Disasters</h3>
                     </div>
                     <button
                         onClick={() => setIsExpanded(false)}
@@ -88,18 +88,21 @@ export default function MapLegend({
                     </button>
                 </div>
 
-                <div className="relative p-5 space-y-4">
+                <div className="relative px-4 sm:px-5 py-5 space-y-4">
                     <div className="relative overflow-hidden">
                         <div className="absolute inset-0 bg-gradient-to-br from-blue-500/20 via-purple-500/20 to-blue-500/20 rounded-2xl blur-xl" />
                         <div className="relative text-center py-6 bg-gradient-to-br from-blue-600/20 via-purple-600/20 to-blue-600/20 backdrop-blur-sm rounded-2xl border-2 border-blue-400/30 shadow-lg">
-                            <div className="text-6xl font-black bg-gradient-to-br from-white via-blue-100 to-purple-100 bg-clip-text text-transparent drop-shadow-[0_2px_8px_rgba(255,255,255,0.3)]">
+                            <div
+                                className="font-black bg-gradient-to-br from-white via-blue-100 to-purple-100 bg-clip-text text-transparent drop-shadow-[0_2px_8px_rgba(255,255,255,0.3)]"
+                                style={{ fontSize: 'clamp(42px, 8vw, 64px)', lineHeight: 1.05 }}
+                            >
                                 {counts.total.toLocaleString()}
                             </div>
-                            <div className="text-xs text-gray-200 uppercase tracking-[0.2em] mt-2 font-bold">Total Events</div>
+                            <div className="text-xs sm:text-sm text-gray-200 uppercase tracking-[0.2em] mt-2 font-bold">Total Events</div>
                         </div>
                     </div>
 
-                    <div className="text-[10px] text-gray-300 text-center uppercase tracking-[0.15em] font-bold bg-white/5 backdrop-blur-sm rounded-xl py-2 border border-white/10">
+                    <div className="text-[10px] sm:text-[11px] text-gray-300 text-center uppercase tracking-[0.15em] font-bold bg-white/5 backdrop-blur-sm rounded-xl py-2 border border-white/10">
                         ↓ Click to Filter Map ↓
                     </div>
 
@@ -112,7 +115,7 @@ export default function MapLegend({
                                 }`}
                             style={{ transform: isActive('fire') ? 'scale(1.05)' : 'scale(1)' }}
                         >
-                            <div className="flex items-center gap-4">
+                            <div className="flex items-center gap-3 sm:gap-4">
                                 <div className={`relative w-4 h-4 rounded-full transition-all duration-300 ${isActive('fire')
                                     ? 'bg-red-500 shadow-[0_0_16px_rgba(239,68,68,1)] scale-125'
                                     : 'bg-gray-600 group-hover:bg-gray-500'
@@ -122,11 +125,14 @@ export default function MapLegend({
                                     )}
                                 </div>
                                 <Flame size={18} className={isActive('fire') ? 'text-red-300' : 'text-gray-500 group-hover:text-gray-400'} />
-                                <span className={`text-sm font-bold ${isActive('fire') ? 'text-white' : 'text-gray-500 group-hover:text-gray-400'}`}>
+                                <span className={`text-sm sm:text-base font-bold ${isActive('fire') ? 'text-white' : 'text-gray-500 group-hover:text-gray-400'}`}>
                                     Fires
                                 </span>
                             </div>
-                            <span className={`font-black text-2xl ${isActive('fire') ? 'text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]' : 'text-gray-600'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>
+                            <span
+                                className={`font-black text-2xl sm:text-3xl shrink-0 text-right ${isActive('fire') ? 'text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]' : 'text-gray-600'}`}
+                                style={{ fontVariantNumeric: 'tabular-nums', minWidth: '72px' }}
+                            >
                                 {counts.fires.toLocaleString()}
                             </span>
                         </button>
@@ -139,7 +145,7 @@ export default function MapLegend({
                                 }`}
                             style={{ transform: isActive('earthquake') ? 'scale(1.05)' : 'scale(1)' }}
                         >
-                            <div className="flex items-center gap-4">
+                            <div className="flex items-center gap-3 sm:gap-4">
                                 <div className={`relative w-4 h-4 rounded-full transition-all duration-300 ${isActive('earthquake')
                                     ? 'bg-orange-500 shadow-[0_0_16px_rgba(255,140,0,1)] scale-125'
                                     : 'bg-gray-600 group-hover:bg-gray-500'
@@ -149,11 +155,14 @@ export default function MapLegend({
                                     )}
                                 </div>
                                 <Waves size={18} className={isActive('earthquake') ? 'text-orange-300' : 'text-gray-500 group-hover:text-gray-400'} />
-                                <span className={`text-sm font-bold ${isActive('earthquake') ? 'text-white' : 'text-gray-500 group-hover:text-gray-400'}`}>
+                                <span className={`text-sm sm:text-base font-bold ${isActive('earthquake') ? 'text-white' : 'text-gray-500 group-hover:text-gray-400'}`}>
                                     Earthquakes
                                 </span>
                             </div>
-                            <span className={`font-black text-2xl ${isActive('earthquake') ? 'text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]' : 'text-gray-600'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>
+                            <span
+                                className={`font-black text-2xl sm:text-3xl shrink-0 text-right ${isActive('earthquake') ? 'text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]' : 'text-gray-600'}`}
+                                style={{ fontVariantNumeric: 'tabular-nums', minWidth: '72px' }}
+                            >
                                 {counts.earthquakes.toLocaleString()}
                             </span>
                         </button>
@@ -166,7 +175,7 @@ export default function MapLegend({
                                 }`}
                             style={{ transform: isActive('volcano') ? 'scale(1.05)' : 'scale(1)' }}
                         >
-                            <div className="flex items-center gap-4">
+                            <div className="flex items-center gap-3 sm:gap-4">
                                 <div className={`relative w-4 h-4 rounded-full transition-all duration-300 ${isActive('volcano')
                                     ? 'bg-orange-600 shadow-[0_0_16px_rgba(255,107,53,1)] scale-125'
                                     : 'bg-gray-600 group-hover:bg-gray-500'
@@ -176,11 +185,14 @@ export default function MapLegend({
                                     )}
                                 </div>
                                 <Mountain size={18} className={isActive('volcano') ? 'text-orange-300' : 'text-gray-500 group-hover:text-gray-400'} />
-                                <span className={`text-sm font-bold ${isActive('volcano') ? 'text-white' : 'text-gray-500 group-hover:text-gray-400'}`}>
+                                <span className={`text-sm sm:text-base font-bold ${isActive('volcano') ? 'text-white' : 'text-gray-500 group-hover:text-gray-400'}`}>
                                     Volcanoes
                                 </span>
                             </div>
-                            <span className={`font-black text-2xl ${isActive('volcano') ? 'text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]' : 'text-gray-600'}`} style={{ fontVariantNumeric: 'tabular-nums' }}>
+                            <span
+                                className={`font-black text-2xl sm:text-3xl shrink-0 text-right ${isActive('volcano') ? 'text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]' : 'text-gray-600'}`}
+                                style={{ fontVariantNumeric: 'tabular-nums', minWidth: '72px' }}
+                            >
                                 {counts.volcanoes.toLocaleString()}
                             </span>
                         </button>
