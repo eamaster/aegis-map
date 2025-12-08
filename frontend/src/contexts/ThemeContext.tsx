@@ -13,8 +13,13 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
     const [theme, setTheme] = useState<Theme>(() => {
-        // Check localStorage or default to dark
+        // FORCE dark mode on first load, then check localStorage
         const saved = localStorage.getItem('aegis-theme') as Theme;
+        // Remove any stored 'light' theme preference on app load
+        if (!saved || saved === 'light') {
+            localStorage.setItem('aegis-theme', 'dark');
+            return 'dark';
+        }
         return saved || 'dark';
     });
 

@@ -50,52 +50,97 @@ function App() {
 
   return (
     <div className="w-screen h-screen relative overflow-hidden bg-black flex flex-col">
-      {/* Header - Theme-Aware */}
+      {/* Header - Professional Glassmorphism Design */}
       <header
-        className="flex items-center justify-between px-6 py-3 backdrop-blur-xl border-b z-50 relative"
+        className="relative flex items-center justify-between px-6 py-3.5 border-b z-50"
         style={{
-          background: theme === 'dark' ? 'rgba(17, 24, 39, 0.9)' : 'rgba(255, 255, 255, 0.9)',
-          borderColor: theme === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'
+          background: 'linear-gradient(135deg, rgba(17, 24, 39, 0.95) 0%, rgba(31, 41, 55, 0.95) 100%)',
+          backdropFilter: 'blur(24px)',
+          WebkitBackdropFilter: 'blur(24px)',
+          borderColor: theme === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+          boxShadow: '0 4px 24px rgba(0, 0, 0, 0.3)'
         }}
       >
-        {/* Logo */}
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
-            <Globe size={20} className="text-white" />
+        {/* Subtle gradient overlay */}
+        <div
+          className="absolute inset-0 opacity-50"
+          style={{
+            background: 'radial-gradient(circle at top right, rgba(59, 130, 246, 0.1), transparent 50%), radial-gradient(circle at bottom left, rgba(168, 85, 247, 0.1), transparent 50%)',
+            pointerEvents: 'none'
+          }}
+        />
+
+        {/* Logo - Enhanced with glassmorphism badge */}
+        <div className="relative flex items-center gap-3">
+          <div
+            className="w-10 h-10 rounded-xl flex items-center justify-center relative overflow-hidden"
+            style={{
+              background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.8), rgba(147, 51, 234, 0.8))',
+              boxShadow: '0 4px 16px rgba(59, 130, 246, 0.3), inset 0 1px 1px rgba(255, 255, 255, 0.2)'
+            }}
+          >
+            <Globe size={20} className="text-white relative z-10" />
+            {/* Shine effect */}
+            <div
+              className="absolute inset-0 opacity-40"
+              style={{
+                background: 'linear-gradient(135deg, transparent 40%, rgba(255, 255, 255, 0.4) 50%, transparent 60%)',
+              }}
+            />
           </div>
           <div>
             <h1
-              className="text-lg font-bold"
-              style={{ color: theme === 'dark' ? '#fff' : '#111827' }}
+              className="text-lg font-black tracking-tight"
+              style={{
+                color: theme === 'dark' ? '#fff' : '#111827',
+                textShadow: theme === 'dark' ? '0 1px 3px rgba(0,0,0,0.5)' : 'none'
+              }}
             >
               AegisMap
             </h1>
             <p
-              className="text-xs"
-              style={{ color: theme === 'dark' ? '#9ca3af' : '#6b7280' }}
+              className="text-xs font-semibold"
+              style={{
+                color: theme === 'dark' ? '#9ca3af' : '#6b7280',
+                letterSpacing: '0.025em'
+              }}
             >
               Disaster Monitoring
             </p>
           </div>
         </div>
 
-        {/* Right Buttons */}
-        <div className="flex items-center gap-2">
+        {/* Right Buttons - Enhanced with glassmorphism */}
+        <div className="relative flex items-center gap-2">
           {/* Theme Toggle */}
           <ThemeToggle />
 
-          {/* Help Button */}
+          {/* Help Button - Glassmorphism style */}
           <button
             onClick={() => setShowTutorial(true)}
-            className="p-2 rounded-lg transition-all"
-            style={{ color: theme === 'dark' ? '#9ca3af' : '#6b7280' }}
+            className="relative p-2.5 rounded-xl transition-all duration-200 hover:scale-105"
+            style={{
+              background: theme === 'dark'
+                ? 'rgba(255, 255, 255, 0.05)'
+                : 'rgba(0, 0, 0, 0.05)',
+              border: theme === 'dark'
+                ? '1px solid rgba(255, 255, 255, 0.1)'
+                : '1px solid rgba(0, 0, 0, 0.1)',
+              backdropFilter: 'blur(12px)',
+              color: theme === 'dark' ? '#9ca3af' : '#6b7280',
+              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)'
+            }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = theme === 'dark'
-                ? 'rgba(255,255,255,0.1)'
-                : 'rgba(0,0,0,0.1)';
+              e.currentTarget.style.background = theme === 'dark'
+                ? 'rgba(255, 255, 255, 0.1)'
+                : 'rgba(0, 0, 0, 0.1)';
+              e.currentTarget.style.color = theme === 'dark' ? '#fff' : '#111827';
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = 'transparent';
+              e.currentTarget.style.background = theme === 'dark'
+                ? 'rgba(255, 255, 255, 0.05)'
+                : 'rgba(0, 0, 0, 0.05)';
+              e.currentTarget.style.color = theme === 'dark' ? '#9ca3af' : '#6b7280';
             }}
             title="Help (Press ?)"
             aria-label="Show help"

@@ -60,7 +60,17 @@ export default function MapLegend({
 
     return (
         <div className="absolute top-4 right-4 z-30">
-            <div className="relative bg-gradient-to-br from-gray-900/50 via-gray-800/50 to-gray-900/50 backdrop-blur-2xl border border-white/20 rounded-3xl shadow-[0_20px_60px_rgba(0,0,0,0.6)] overflow-hidden w-80">
+            <div
+                className="relative overflow-hidden rounded-3xl"
+                style={{
+                    width: '352px', // Increased from 320px (w-80) to 352px to prevent number cutoff
+                    background: 'linear-gradient(135deg, rgba(17, 24, 39, 0.5) 0%, rgba(31, 41, 55, 0.5) 50%, rgba(17, 24, 39, 0.5) 100%)',
+                    backdropFilter: 'blur(40px)',
+                    WebkitBackdropFilter: 'blur(40px)', // Safari support
+                    border: '1px solid rgba(255, 255, 255, 0.2)',
+                    boxShadow: '0 20px 60px rgba(0, 0, 0, 0.6)'
+                }}
+            >
                 <div className="absolute top-0 right-0 w-48 h-48 bg-gradient-to-br from-blue-500/10 via-purple-500/10 to-transparent rounded-full blur-3xl" />
                 <div className="absolute bottom-0 left-0 w-48 h-48 bg-gradient-to-tr from-purple-500/10 via-blue-500/10 to-transparent rounded-full blur-3xl" />
 
