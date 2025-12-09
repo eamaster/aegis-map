@@ -92,14 +92,14 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
         return;
       }
 
-      const hotspots: FireHotspot[] = data.hotspots.filter((h: any) => h.confidence !== 'l');
+      const hotspots: FireHotspot[] = data.hotspots.filter((h: any) => h.confidence !== 'l' && h.confidence !== 'low');
 
       console.log(`✅ Found ${hotspots.length} fire hotspots`);
       setFireHotspots(hotspots);
 
       // Calculate statistics
       if (hotspots.length > 0) {
-        const highConf = hotspots.filter(h => h.confidence === 'h').length;
+        const highConf = hotspots.filter(h => h.confidence === 'h' || h.confidence === 'high').length;
         const avgTemp = hotspots.reduce((sum, h) => sum + h.bright_ti4, 0) / hotspots.length;
         const maxFRP = Math.max(...hotspots.map(h => h.frp));
 

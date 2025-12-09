@@ -272,7 +272,7 @@ app.get('/api/fire-hotspots', async (c) => {
 
 		// Calculate statistics
 		const totalCount = hotspots.length;
-		const highConfidence = hotspots.filter(h => h.confidence === 'h').length;
+		const highConfidence = hotspots.filter(h => h.confidence === 'h' || h.confidence === 'high').length;
 		const maxBrightness = Math.max(...hotspots.map(h => h.bright_ti4)); // ✅ FIXED: Use bright_ti4
 		const maxPower = Math.max(...hotspots.map(h => h.frp));
 
