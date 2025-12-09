@@ -33,6 +33,8 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
     maxFRP: number;
   } | null>(null);
 
+  const [fetchingFire, setFetchingFire] = useState(false);
+
   useEffect(() => {
     const dateStr = date ? new Date(date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
 
@@ -67,6 +69,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
     // Reset state before fetching
     setFireHotspots([]);
     setFireStats(null);
+    setFetchingFire(true);
 
     try {
       // Use our backend proxy to hide the API key and avoid CORS issues
@@ -112,6 +115,8 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
       }
     } catch (error) {
       console.error('Error fetching FIRMS data:', error);
+    } finally {
+      setFetchingFire(false);
     }
   };
 
@@ -172,35 +177,56 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
       </div>
 
       {/* Fire Statistics (Wildfires Only) */}
-      {disasterType === 'fire' && fireStats && (
-        <div className="bg-gradient-to-br from-red-900/30 to-orange-900/20 border border-red-800/40 rounded-lg p-3 space-y-3">
-          <div className="flex items-center gap-2">
-            <Flame className="text-red-400" size={16} />
-            <span className="text-red-300 font-semibold text-sm">Active Fire Hotspots (7 days)</span>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="bg-black/30 rounded-lg p-2">
-              <div className="text-3xl font-bold text-white">{fireStats.total}</div>
-              <div className="text-xs text-gray-400">Total Hotspots</div>
-              <div className="mt-1 text-xs text-red-400">{fireStats.highConfidence} high confidence</div>
+      {/* Fire Statistics (Wildfires Only) */}
+      {disasterType === 'fire' && (
+        <div className="min-h-[120px] transition-all duration-300">
+          {fetchingFire ? (
+            <div className="h-full flex flex-col items-center justify-center p-6 space-y-3 bg-gray-900/20 rounded-lg border border-gray-800/50">
+              <div className="animate-spin rounded-full h-6 w-6 border-2 border-orange-500 border-t-transparent" />
+              <p className="text-xs text-orange-400 font-medium animate-pulse">Scanning thermal sensors...</p>
             </div>
-
-            <div className="bg-black/30 rounded-lg p-2">
-              <div className={`text-3xl font-bold ${getSeverityLevel(fireStats.avgTemp).color}`}>
-                {getSeverityLevel(fireStats.avgTemp).label}
+          ) : fireStats ? (
+            <div className="bg-gradient-to-br from-red-900/30 to-orange-900/20 border border-red-800/40 rounded-lg p-3 space-y-3 animate-in fade-in duration-500">
+              <div className="flex items-center gap-2">
+                <Flame className="text-red-400" size={16} />
+                <span className="text-red-300 font-semibold text-sm">Active Fire Hotspots (7 days)</span>
               </div>
-              <div className="text-xs text-gray-400">Fire Intensity</div>
-              <div className="mt-1 text-xs text-gray-400">{fireStats.avgTemp.toFixed(0)}K / {(fireStats.avgTemp - 273.15).toFixed(0)}°C</div>
-            </div>
-          </div>
 
-          <div className="flex items-center gap-2 text-xs">
-            <AlertCircle className="text-orange-400" size={14} />
-            <span className="text-gray-300">
-              Max Fire Power: <span className="text-orange-300 font-semibold">{fireStats.maxFRP.toFixed(1)} MW</span>
-            </span>
-          </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-black/30 rounded-lg p-2">
+                  <div className="text-3xl font-bold text-white">{fireStats.total}</div>
+                  <div className="text-xs text-gray-400">Total Hotspots</div>
+                  <div className="mt-1 flex flex-col gap-0.5 text-[10px] font-medium">
+                    <span className="text-red-400">{fireStats.highConfidence} High Confidence</span>
+                    <span className="text-orange-300/80">{fireStats.total - fireStats.highConfidence} Nominal</span>
+                  </div>
+                </div>
+
+                <div className="bg-black/30 rounded-lg p-2">
+                  <div className={`text-3xl font-bold ${getSeverityLevel(fireStats.avgTemp).color}`}>
+                    {getSeverityLevel(fireStats.avgTemp).label}
+                  </div>
+                  <div className="text-xs text-gray-400">Fire Intensity</div>
+                  <div className="mt-1 text-xs text-gray-400">{fireStats.avgTemp.toFixed(0)}K / {(fireStats.avgTemp - 273.15).toFixed(0)}°C</div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 text-xs">
+                <AlertCircle className="text-orange-400" size={14} />
+                <span className="text-gray-300">
+                  Max Fire Power: <span className="text-orange-300 font-semibold">{fireStats.maxFRP.toFixed(1)} MW</span>
+                </span>
+              </div>
+            </div>
+          ) : (
+            <div className="h-full flex flex-col items-center justify-center p-5 bg-gray-800/20 border border-gray-700/30 rounded-lg text-center">
+              <Flame className="text-gray-600 mb-2" size={24} />
+              <p className="text-sm text-gray-400 font-medium">No Active Hotspots</p>
+              <p className="text-xs text-gray-500 mt-1 max-w-[200px]">
+                Satellite thermal sensors have not detected significant heat anomalies in this area recently.
+              </p>
+            </div>
+          )}
         </div>
       )}
 
