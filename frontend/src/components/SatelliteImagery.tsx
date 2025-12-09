@@ -64,6 +64,10 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
   };
 
   const fetchFireHotspots = async (lat: number, lng: number) => {
+    // Reset state before fetching
+    setFireHotspots([]);
+    setFireStats(null);
+
     try {
       // Use our backend proxy to hide the API key and avoid CORS issues
       const url = `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787'}/api/fire-hotspots?lat=${lat}&lng=${lng}`;
