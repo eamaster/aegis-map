@@ -199,6 +199,7 @@ app.get('/api/fire-hotspots', async (c) => {
 		return c.json({ error: 'Missing lat/lng parameters' }, 400 as any);
 	}
 
+
 	try {
 		// Check if FIRMS_MAP_KEY is configured
 		const FIRMS_MAP_KEY = c.env.FIRMS_MAP_KEY;
@@ -248,12 +249,14 @@ app.get('/api/fire-hotspots', async (c) => {
 			});
 		}
 
+		// ✅ CORRECTED: Parse VIIRS CSV format with correct field names
+		// CSV columns: latitude,longitude,bright_ti4,scan,track,acq_date,acq_time,satellite,confidence,version,bright_ti5,frp,daynight
 		const hotspots = lines.map(line => {
 			const parts = line.split(',');
 			return {
 				latitude: parseFloat(parts[0]),
 				longitude: parseFloat(parts[1]),
-				brightness: parseFloat(parts[2]), // Kelvin
+				bright_ti4: parseFloat(parts[2]), // ✅ FIXED: VIIRS I-4 brightness temperature (Kelvin)
 				scan: parseFloat(parts[3]),
 				track: parseFloat(parts[4]),
 				acq_date: parts[5],
@@ -261,7 +264,7 @@ app.get('/api/fire-hotspots', async (c) => {
 				satellite: parts[7],
 				confidence: parts[8], // 'l' = low, 'n' = nominal, 'h' = high
 				version: parts[9],
-				bright_t31: parseFloat(parts[10]), // Background brightness
+				bright_ti5: parseFloat(parts[10]), // ✅ VIIRS I-5 brightness (background)
 				frp: parseFloat(parts[11]), // Fire Radiative Power (MW)
 				daynight: parts[12],
 			};
@@ -270,7 +273,7 @@ app.get('/api/fire-hotspots', async (c) => {
 		// Calculate statistics
 		const totalCount = hotspots.length;
 		const highConfidence = hotspots.filter(h => h.confidence === 'h').length;
-		const maxBrightness = Math.max(...hotspots.map(h => h.brightness));
+		const maxBrightness = Math.max(...hotspots.map(h => h.bright_ti4)); // ✅ FIXED: Use bright_ti4
 		const maxPower = Math.max(...hotspots.map(h => h.frp));
 
 		console.log(`✅ FIRMS: ${totalCount} hotspots, ${highConfidence} high confidence, max brightness: ${maxBrightness}K, max power: ${maxPower}MW`);
