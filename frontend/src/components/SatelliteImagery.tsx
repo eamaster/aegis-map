@@ -299,12 +299,28 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
             {disasterType === 'fire' && selectedLayer === 'fire' && fireHotspots.length > 0 && (
               <div className="absolute inset-0 pointer-events-none">
                 {fireHotspots.slice(0, 20).map((hotspot, idx) => {
-                  // Calculate position relative to image center
-                  const relLng = ((hotspot.longitude - lng) / 1) * 100 + 50;
-                  const relLat = ((lat - hotspot.latitude) / 1) * 100 + 50;
+                  // ✅ FIXED: Match the image bbox size (±0.1° from fire overlay line 136)
+                  const imgBboxSize = 0.2; // Total range: 0.2° (from lat-0.1 to lat+0.1)
 
-                  // Only show if within bounds
-                  if (relLng < 0 || relLng > 100 || relLat < 0 || relLat > 100) return null;
+                  // Calculate position relative to image center
+                  const relLng = ((hotspot.longitude - lng) / imgBboxSize) * 100 + 50;
+                  const relLat = ((lat - hotspot.latitude) / imgBboxSize) * 100 + 50;
+
+                  // Debug logging (remove after testing)
+                  if (idx === 0) {
+                    console.log('🔥 Hotspot position calculation:', {
+                      hotspot: { lat: hotspot.latitude, lng: hotspot.longitude },
+                      center: { lat, lng },
+                      relativePos: { relLng, relLat },
+                      imgBboxSize
+                    });
+                  }
+
+                  // Only show if within bounds (with small margin for edge cases)
+                  if (relLng < -5 || relLng > 105 || relLat < -5 || relLat > 105) {
+                    if (idx === 0) console.log('⚠️ Hotspot outside visible bounds, skipping');
+                    return null;
+                  }
 
                   return (
                     <div
@@ -314,9 +330,10 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
                         left: `${relLng}%`,
                         top: `${relLat}%`,
                         transform: 'translate(-50%, -50%)',
-                        boxShadow: '0 0 15px rgba(239, 68, 68, 0.9)'
+                        boxShadow: '0 0 15px rgba(239, 68, 68, 0.9)',
+                        zIndex: 10
                       }}
-                      title={`${hotspot.bright_ti4}K, ${hotspot.frp}MW`}
+                      title={`${hotspot.bright_ti4}K, ${hotspot.frp}MW, Conf: ${hotspot.confidence}`}
                     />
                   );
                 })}
