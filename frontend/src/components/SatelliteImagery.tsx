@@ -65,25 +65,8 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
 
   const fetchFireHotspots = async (lat: number, lng: number) => {
     try {
-      // NASA FIRMS API - Loaded from environment variable for security
-      // Transaction Limit: 5000 requests / 10 minutes
-      const MAP_KEY = import.meta.env.VITE_FIRMS_API_KEY;
-
-      if (!MAP_KEY) {
-        console.warn('⚠️ FIRMS API key not configured - fire hotspot data unavailable');
-        setFireStats({
-          total: 0,
-          highConfidence: 0,
-          avgTemp: 0,
-          maxFRP: 0
-        });
-        return;
-      }
-      const source = 'VIIRS_NOAA20_NRT'; // Near Real-Time VIIRS data
-      const dayRange = 7;
-      const area = `${lat},${lng},50`; // 50km radius
-
-      const url = `https://firms.modaps.eosdis.nasa.gov/api/area/csv/${MAP_KEY}/${source}/${area}/${dayRange}`;
+      // Use our backend proxy to hide the API key and avoid CORS issues
+      const url = `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787'}/api/fire-hotspots?lat=${lat}&lng=${lng}`;
 
       console.log('🔥 Fetching FIRMS fire data:', url);
 
@@ -93,31 +76,19 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
         return;
       }
 
-      const csvText = await response.text();
-      const lines = csvText.split('\n');
+      const data = await response.json();
 
-      if (lines.length < 2) {
+      if (data.error) {
+        console.warn(`Backend API error: ${data.error}`);
+        return;
+      }
+
+      if (!data.hotspots || data.hotspots.length === 0) {
         console.log('No fire hotspots found in area');
         return;
       }
 
-      // Parse CSV (skip header)
-      // VIIRS NOAA20 CSV Format: lat,lng,bright_ti4,scan,track,acq_date,acq_time,satellite,confidence,version,bright_ti5,frp,daynight
-      const hotspots: FireHotspot[] = lines.slice(1)
-        .filter(line => line.trim())
-        .map(line => {
-          const fields = line.split(',');
-          return {
-            latitude: parseFloat(fields[0]),     // Column 0: latitude
-            longitude: parseFloat(fields[1]),    // Column 1: longitude
-            bright_ti4: parseFloat(fields[2]),   // Column 2: brightness temperature (Kelvin)
-            confidence: fields[8],               // Column 8: confidence ('l'/'n'/'h') ✅ FIXED
-            frp: parseFloat(fields[11]),         // Column 11: Fire Radiative Power (MW) ✅ FIXED
-            acq_date: fields[5],                 // Column 5: acquisition date
-            acq_time: fields[6]                  // Column 6: acquisition time
-          };
-        })
-        .filter(h => !isNaN(h.latitude) && h.confidence !== 'l'); // Exclude low confidence
+      const hotspots: FireHotspot[] = data.hotspots.filter((h: any) => h.confidence !== 'l');
 
       console.log(`✅ Found ${hotspots.length} fire hotspots`);
       setFireHotspots(hotspots);

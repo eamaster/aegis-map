@@ -281,7 +281,12 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
 
             // Find cloud cover closest to pass time
             const closestIndex = data.hourly.time.findIndex(
-                (time) => new Date(time) >= passTime
+                (time) => {
+                    // Open-Meteo returns time as "YYYY-MM-DDTHH:MM" (ISO 8601 without offset)
+                    // We must treat it as UTC to match satellite pass times (which are in UTC)
+                    const weatherTime = new Date(time + 'Z');
+                    return weatherTime >= passTime;
+                }
             );
 
             if (closestIndex >= 0) {

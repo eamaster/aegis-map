@@ -28,4 +28,7 @@
 	 */
 	// Note: Use .dev.vars for local development secrets
 	// Use secrets for production: wrangler secret put GEMINI_API_KEY
+	"vars": {
+		"FIRMS_MAP_KEY": ""
+	}
 }
