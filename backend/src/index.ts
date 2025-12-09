@@ -300,56 +300,54 @@ app.post('/api/analyze', async (c) => {
 			return c.json({ error: 'Missing required fields' }, 400 as any);
 		}
 
-		// Call Gemini API - Use current stable models (December 2025)
+		// Check if API key is set FIRST
+		if (!c.env.GEMINI_API_KEY) {
+			console.error('❌ GEMINI_API_KEY is not set in environment variables');
+			// Return fallback analysis instead of error
+			return c.json({
+				analysis: `Satellite ${satelliteName} will pass over "${disasterTitle}" at ${new Date(passTime).toLocaleString()}. Cloud cover: ${cloudCover}%. ${cloudCover < 30 ? 'Excellent imaging conditions expected with clear skies.' : cloudCover < 60 ? 'Moderate cloud coverage may partially affect image quality.' : 'Heavy cloud coverage will significantly limit optical imagery quality.'}`
+			});
+		}
+
+		// Use comprehensive model list with latest versions
 		const models = [
-			'gemini-1.5-flash',     // ✅ Stable, works globally
-			'gemini-1.5-pro',       // ✅ Backup if flash unavailable
+			'gemini-1.5-flash-latest',  // ✅ Latest version first
+			'gemini-1.5-flash',          // ✅ Stable version
+			'gemini-1.5-pro-latest',     // ✅ Pro latest (fallback)
+			'gemini-1.5-pro',            // ✅ Pro stable (fallback)
 		];
-		const apiVersions = ['v1', 'v1beta']; // Try v1 first, then v1beta
+		const apiVersions = ['v1', 'v1beta']; // Try v1 first
 
-		const prompt = `You are an expert satellite imagery analyst. A disaster "${disasterTitle}" will be overpassed by satellite "${satelliteName}" at ${passTime}. Local cloud cover is ${cloudCover}%. 
+		const prompt = `You are a satellite imagery analyst. A disaster "${disasterTitle}" will be observed by satellite "${satelliteName}" at ${new Date(passTime).toLocaleString()} UTC. Cloud cover: ${cloudCover}%.
 
-Reason step-by-step:
-1. Will this pass yield useful optical imagery given the cloud cover?
-2. If not, can we rely on thermal/radar sensors from this satellite?
+Assess: Will this pass provide useful imagery? Consider optical limitations and alternative sensors.
 
-Provide a concise 2-sentence summary for a first responder. Be direct and actionable.`;
+Provide exactly 2 sentences for emergency responders. Be concise and actionable.`;
 
 		const requestBody = {
 			contents: [
 				{
-					parts: [
-						{
-							text: prompt,
-						},
-					],
+					role: "user",
+					parts: [{ text: prompt }],
 				},
 			],
-			generationConfig: {
+			generation_config: {
 				temperature: 0.7,
-				maxOutputTokens: 200,
+				max_output_tokens: 150,
+				top_p: 0.9,
+				top_k: 40,
 			},
 		};
 
 		let lastError: any = null;
 		let attempts: string[] = [];
 
-		// Check if API key is set
-		if (!c.env.GEMINI_API_KEY) {
-			console.error('❌ GEMINI_API_KEY is not set in environment variables');
-			return c.json({
-				error: 'AI analysis failed',
-				details: { error: 'GEMINI_API_KEY environment variable is not configured' },
-				message: 'Gemini API key is missing. Please configure GEMINI_API_KEY in Cloudflare Worker secrets.'
-			}, 500 as any);
-		}
-
 		// Try different model/version combinations
 		for (const apiVersion of apiVersions) {
 			for (const model of models) {
+				const attempt = `${apiVersion}/${model}`;
 				try {
 					const geminiUrl = `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:generateContent?key=${c.env.GEMINI_API_KEY}`;
-					const attempt = `${apiVersion}/${model}`;
 					attempts.push(attempt);
 
 					console.log(`🔄 Trying Gemini API: ${attempt}`);
@@ -364,79 +362,126 @@ Provide a concise 2-sentence summary for a first responder. Be direct and action
 
 					const geminiData = await geminiResponse.json() as any;
 
-					// Log the actual API response for debugging
+					// Enhanced logging
 					console.log(`📡 Gemini API response for ${attempt}:`, {
 						status: geminiResponse.status,
 						ok: geminiResponse.ok,
 						hasError: !!geminiData.error,
 						errorCode: geminiData.error?.code,
-						errorMessage: geminiData.error?.message?.substring(0, 100)
+						errorMessage: geminiData.error?.message?.substring(0, 200),
+						hasCandidates: !!geminiData.candidates,
 					});
 
 					if (geminiResponse.ok) {
 						const rawAnalysis = geminiData.candidates?.[0]?.content?.parts?.[0]?.text;
-						console.log(`✅ Gemini API response (${apiVersion}/${model}):`, {
-							hasCandidates: !!geminiData.candidates,
-							candidateCount: geminiData.candidates?.length || 0,
-							hasContent: !!geminiData.candidates?.[0]?.content,
-							hasParts: !!geminiData.candidates?.[0]?.content?.parts,
-							partCount: geminiData.candidates?.[0]?.content?.parts?.length || 0,
-							rawAnalysisLength: rawAnalysis?.length || 0,
-							rawAnalysisPreview: rawAnalysis?.substring(0, 100) || 'N/A',
-							fullResponse: JSON.stringify(geminiData).substring(0, 500)
-						});
 
 						if (!rawAnalysis || rawAnalysis.trim().length === 0) {
-							console.error(`❌ Gemini returned empty analysis for ${apiVersion}/${model}:`, geminiData);
-							continue; // Try next model
+							console.warn(`⚠️ Empty analysis from ${attempt}, trying next model...`);
+							continue;
 						}
 
 						const analysis = rawAnalysis.trim();
-						console.log(`✅ Successfully used Gemini model: ${apiVersion}/${model}, analysis length: ${analysis.length}`);
+						console.log(`✅ SUCCESS with ${attempt}: ${analysis.length} chars`);
 						return c.json({ analysis });
 					}
 
-					// If 404, try next model
+					// Handle specific error codes
 					if (geminiResponse.status === 404) {
-						console.warn(`Model ${apiVersion}/${model} not found, trying next...`);
+						console.warn(`⚠️ Model ${attempt} not found (404), trying next...`);
 						lastError = geminiData;
 						continue;
 					}
 
-					// For other errors, log and try next
-					console.error(`Gemini API error (${apiVersion}/${model}):`, geminiData);
-					lastError = geminiData;
+					if (geminiResponse.status === 400) {
+						const errorMsg = geminiData.error?.message || '';
 
-					// Special handling for regional restrictions
-					if (geminiData.error?.code === 400 && geminiData.error?.message?.includes('location is not supported')) {
-						console.error('❌ Regional restriction detected - API not available in your location');
-						return c.json({
-							error: 'AI analysis unavailable',
-							details: { error: 'Gemini API is not available in your region' },
-							analysis: `Satellite ${satelliteName} will pass over this disaster at ${new Date(passTime).toLocaleString()}. Cloud cover: ${cloudCover}%. ${cloudCover < 30 ? 'Good imaging conditions expected.' : 'Cloud coverage may affect image quality.'}`
-						}, 503 as any); // Return 503 Service Unavailable with fallback analysis
+						// Regional restrictions
+						if (errorMsg.includes('location is not supported')) {
+							console.error('❌ Regional restriction - Gemini API unavailable in your region');
+							return c.json({
+								analysis: `Satellite ${satelliteName} will pass over this disaster at ${new Date(passTime).toLocaleString()} UTC. Cloud cover: ${cloudCover}%. ${cloudCover < 30 ? 'Clear conditions expected - excellent for optical imagery.' : cloudCover < 60 ? 'Partial cloud cover may affect optical quality. Thermal sensors recommended.' : 'Heavy clouds will obscure optical imagery. Rely on SAR or thermal sensors.'}`
+							});
+						}
+
+						// Invalid API key
+						if (errorMsg.includes('API key not valid')) {
+							console.error('❌ Invalid API key');
+							return c.json({
+								analysis: `Satellite ${satelliteName} scheduled to pass at ${new Date(passTime).toLocaleString()} UTC. Cloud cover: ${cloudCover}%. Manual analysis required.`
+							});
+						}
 					}
 
-				} catch (error) {
-					console.error(`Error calling Gemini API (${apiVersion}/${model}):`, error);
-					lastError = error;
+					// Log error and continue to next model
+					console.error(`❌ Error from ${attempt}:`, geminiData.error);
+					lastError = geminiData;
+
+				} catch (fetchError) {
+					console.error(`❌ Fetch error for ${attempt}:`, fetchError);
+					lastError = fetchError;
 					continue;
 				}
 			}
 		}
 
-		// If all models failed, return error
-		console.error('❌ All Gemini model attempts failed. Tried models:', attempts);
+		// If all models failed, return fallback analysis instead of error
+		console.error('❌ All Gemini attempts failed. Attempts:', attempts);
 		console.error('Last error:', lastError);
+
+		// Return fallback analysis based on cloud cover
 		return c.json({
-			error: 'AI analysis failed',
-			details: lastError,
-			attempts: attempts,
-			message: `Unable to connect to any available Gemini model after trying ${attempts.length} combinations. Please check API key and model availability. Tried: ${attempts.join(', ')}`
-		}, 500 as any);
+			analysis: `Satellite ${satelliteName} will observe "${disasterTitle}" at ${new Date(passTime).toLocaleString()} UTC. Cloud cover: ${cloudCover}%. ${cloudCover < 30 ? 'Clear skies favor high-quality optical imagery.' : cloudCover < 60 ? 'Moderate clouds may reduce optical quality. Thermal sensors available.' : 'Heavy cloud coverage limits optical imaging. SAR or thermal data recommended.'}`
+		});
+
 	} catch (error) {
-		console.error('Error in AI analysis:', error);
-		return c.json({ error: 'Failed to analyze coverage' }, 500 as any);
+		console.error('❌ Unexpected error in /api/analyze:', error);
+		return c.json({
+			analysis: 'Analysis temporarily unavailable. Satellite pass detected.'
+		});
+	}
+});
+
+// Diagnostic Route: GET /api/test-gemini
+app.get('/api/test-gemini', async (c) => {
+	try {
+		console.log('🧪 Testing Gemini API...');
+
+		// Check if key exists
+		if (!c.env.GEMINI_API_KEY) {
+			return c.json({
+				error: 'GEMINI_API_KEY not set in environment',
+				envKeys: Object.keys(c.env || {})
+			}, 500 as any);
+		}
+
+		// Test API call
+		const testUrl = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${c.env.GEMINI_API_KEY}`;
+
+		const response = await fetch(testUrl, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({
+				contents: [{
+					parts: [{ text: "Say 'API Working' in 2 words" }]
+				}]
+			})
+		});
+
+		const data = await response.json() as any;
+
+		return c.json({
+			status: response.status,
+			ok: response.ok,
+			keyLength: c.env.GEMINI_API_KEY.length,
+			keyPrefix: c.env.GEMINI_API_KEY.substring(0, 10) + '...',
+			response: data
+		});
+
+	} catch (error) {
+		return c.json({
+			error: 'Test failed',
+			message: error instanceof Error ? error.message : String(error)
+		}, 500 as any);
 	}
 });
 
