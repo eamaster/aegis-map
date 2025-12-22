@@ -75,31 +75,14 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                 const tles = responseText;
 
                 // Log raw response for debugging
-                console.log('📥 Raw TLE response:', {
-                    length: tles.length,
-                    firstChars: tles.substring(0, 200),
-                    lastChars: tles.substring(Math.max(0, tles.length - 200)),
-                    hasNewlines: tles.includes('\n'),
-                    lineCount: tles.split('\n').length
-                });
-
-                if (!tles || tles.trim().length === 0) {
+                                if (!tles || tles.trim().length === 0) {
                     throw new Error('TLE data is empty - no data received from API');
                 }
 
                 const tleLines = tles.trim().split('\n').filter(line => line.trim().length > 0);
                 const satelliteCount = Math.floor(tleLines.length / 3);
 
-                console.log('✅ TLEs parsed:', {
-                    rawLength: tles.length,
-                    lines: tleLines.length,
-                    satelliteCount: satelliteCount,
-                    firstSatellite: tleLines[0]?.substring(0, 80) || 'N/A',
-                    firstLine1: tleLines[1]?.substring(0, 80) || 'N/A',
-                    firstLine2: tleLines[2]?.substring(0, 80) || 'N/A'
-                });
-
-                if (tleLines.length < 3) {
+                                if (tleLines.length < 3) {
                     console.error('❌ Invalid TLE data details:', {
                         receivedLength: tles.length,
                         lineCount: tleLines.length,
@@ -134,21 +117,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                 const latNum = typeof lat === 'number' ? lat : parseFloat(String(lat || '0'));
                 const lngNum = typeof lng === 'number' ? lng : parseFloat(String(lng || '0'));
 
-                console.log('🌐 Sidebar processing coordinates:', {
-                    lat, lng, latNum, lngNum,
-                    disasterKeys: Object.keys(disasterAny),
-                    disaster: {
-                        id: disasterAny.id,
-                        title: disasterAny.title,
-                        type: disasterAny.type,
-                        lat: disasterAny.lat,
-                        lng: disasterAny.lng,
-                        Lat: disasterAny.Lat,
-                        Lng: disasterAny.Lng
-                    }
-                });
-
-                // Validate coordinates - allow 0 for equator/prime meridian, but not both
+                                // Validate coordinates - allow 0 for equator/prime meridian, but not both
                 if (isNaN(latNum) || isNaN(lngNum) || (latNum === 0 && lngNum === 0)) {
                     console.error('❌ Invalid coordinates in sidebar:', { lat, lng, latNum, lngNum, disaster: disasterAny });
                     setAiAnalysis("Invalid coordinates. Unable to calculate satellite passes.");
@@ -206,13 +175,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                     return;
                 } else {
                     const timeUntil = (pass.time.getTime() - new Date().getTime()) / 1000 / 60; // minutes
-                    console.log('✅ Satellite pass found:', {
-                        satellite: pass.satelliteName,
-                        time: pass.time.toISOString(),
-                        timeUntil: Math.round(timeUntil) + ' minutes',
-                        elevation: pass.elevation.toFixed(1) + '°'
-                    });
-                    (window as any).aegisDebug?.log(
+                                        (window as any).aegisDebug?.log(
                         'orbital',
                         `Next pass: ${pass.satelliteName} at ${pass.time.toLocaleString()} (in ${Math.round(timeUntil)} min) - Elevation: ${pass.elevation.toFixed(1)}°`,
                         'success',
@@ -223,8 +186,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                 setNextPass(pass);
 
                 // Fetch weather data
-                console.log('🌤️ Fetching weather data for pass time:', pass.time.toISOString());
-                fetchWeather(latNum, lngNum, pass.time);
+                                fetchWeather(latNum, lngNum, pass.time);
             } catch (error) {
                 console.error('❌ Error fetching data in sidebar:', error);
                 const errorMessage = error instanceof Error ? error.message : String(error);
@@ -262,13 +224,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                 throw new Error(`Weather API error: ${response.status} ${response.statusText}`);
             }
             const data: WeatherData = await response.json();
-            console.log('🌤️ Weather data received:', {
-                hasHourly: !!data.hourly,
-                hasCloudCover: !!(data.hourly?.cloud_cover),
-                timeCount: data.hourly?.time?.length || 0
-            });
-
-            // DEBUG: Validate weather response
+                        // DEBUG: Validate weather response
             if (!data.hourly || !data.hourly.cloud_cover) {
                 (window as any).aegisDebug?.log(
                     'weather',
@@ -291,12 +247,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
 
             if (closestIndex >= 0) {
                 const cloudValue = data.hourly.cloud_cover[closestIndex];
-                console.log('✅ Cloud cover found:', {
-                    cloudValue,
-                    time: data.hourly.time[closestIndex],
-                    status: cloudValue < 20 ? 'Clear' : 'Cloudy'
-                });
-                setCloudCover(cloudValue);
+                                setCloudCover(cloudValue);
 
                 // DEBUG: Log weather result
                 (window as any).aegisDebug?.log(
@@ -353,23 +304,14 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
 
     // Trigger AI analysis automatically when data is ready
     useEffect(() => {
-        console.log('🤖 AI Analysis trigger check:', {
-            hasDisaster: !!disaster,
-            hasNextPass: !!nextPass,
-            cloudCover,
-            hasAiAnalysis: !!aiAnalysis,
-            loadingAnalysis
-        });
-
-        // Trigger AI analysis if we have all required data OR if we have disaster but no pass (fallback)
+                // Trigger AI analysis if we have all required data OR if we have disaster but no pass (fallback)
         if (disaster && !loadingAnalysis) {
             if (nextPass && cloudCover !== null && !aiAnalysis) {
 
                 analyzePass();
             } else if (!nextPass && cloudCover !== null && !aiAnalysis) {
                 // Fallback: trigger AI analysis even without satellite pass
-                console.log('✅ Triggering AI analysis without satellite pass (fallback)...');
-                // Create a fallback pass for AI analysis
+                                // Create a fallback pass for AI analysis
                 const fallbackPass = {
                     satelliteName: 'Landsat-9',
                     time: new Date(Date.now() + 2 * 60 * 60 * 1000), // 2 hours from now
@@ -488,14 +430,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
 
             // Response is OK, parse JSON normally
             const data: AIAnalysisResponse = await response.json();
-            console.log('✅ Gemini API response received:', {
-                hasAnalysis: !!data.analysis,
-                analysisLength: data.analysis?.length || 0,
-                analysisText: data.analysis?.substring(0, 100) || 'N/A',
-                fullResponse: data
-            });
-
-            // DEBUG: Validate Gemini response
+                        // DEBUG: Validate Gemini response
             if (!data.analysis || data.analysis.trim().length === 0) {
                 console.error('❌ AI analysis is empty or whitespace only:', data);
                 (window as any).aegisDebug?.log(
@@ -520,12 +455,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
 
             // Trim and set the analysis
             const trimmedAnalysis = data.analysis.trim();
-            console.log('✅ Setting AI analysis:', {
-                length: trimmedAnalysis.length,
-                preview: trimmedAnalysis.substring(0, 200)
-            });
-
-            // Check if analysis mentions the disaster
+                        // Check if analysis mentions the disaster
             const mentionsDisaster = trimmedAnalysis.toLowerCase().includes(disaster.title.toLowerCase().split(' ')[0]);
             (window as any).aegisDebug?.log(
                 'gemini',
@@ -535,12 +465,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
             );
 
             setAiAnalysis(trimmedAnalysis);
-            console.log('✅ AI analysis state updated:', {
-                trimmedAnalysis,
-                length: trimmedAnalysis.length,
-                firstChars: trimmedAnalysis.substring(0, 100)
-            });
-        } catch (error) {
+                    } catch (error) {
             console.error('❌ Error getting AI analysis:', error);
             const errorMessage = error instanceof Error ? error.message : String(error);
             console.error('AI analysis error details:', { error, errorMessage, stack: error instanceof Error ? error.stack : undefined });
@@ -572,6 +497,9 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
             className="fixed right-0 top-[73px] bottom-0 z-[100] w-[440px] flex flex-col overflow-hidden"
             style={{
                 height: 'calc(100vh - 73px)',
+                right: 0,
+                left: 'auto',
+                position: 'fixed',
                 background: 'linear-gradient(135deg, rgba(17, 24, 39, 0.98) 0%, rgba(31, 41, 55, 0.98) 100%)',
                 backdropFilter: 'blur(32px)',
                 WebkitBackdropFilter: 'blur(32px)',
@@ -747,3 +675,4 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
         </div>
     );
 }
+

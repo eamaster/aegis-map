@@ -87,9 +87,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
       // Use our backend proxy to hide the API key and avoid CORS issues
       const url = `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787'}/api/fire-hotspots?lat=${lat}&lng=${lng}`;
 
-      console.log('🔥 Fetching FIRMS fire data:', url);
-
-      const response = await fetch(url);
+            const response = await fetch(url);
       if (!response.ok) {
         console.warn(`FIRMS API error: ${response.status}`);
         return;
@@ -103,14 +101,12 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
       }
 
       if (!data.hotspots || data.hotspots.length === 0) {
-        console.log('No fire hotspots found in area');
-        return;
+                return;
       }
 
       const hotspots: FireHotspot[] = data.hotspots.filter((h: any) => h.confidence !== 'l' && h.confidence !== 'low');
 
-      console.log(`✅ Found ${hotspots.length} fire hotspots`);
-      setFireHotspots(hotspots);
+            setFireHotspots(hotspots);
 
       // Calculate statistics
       if (hotspots.length > 0) {
@@ -461,3 +457,4 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
     </div>
   );
 }
+
