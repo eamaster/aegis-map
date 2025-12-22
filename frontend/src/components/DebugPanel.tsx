@@ -6,7 +6,6 @@
 
 import { useEffect, useState } from 'react';
 import { Activity, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
-import { useDesignSystem } from '../hooks/useDesignSystem';
 
 interface DebugInfo {
     timestamp: string;
@@ -132,16 +131,8 @@ export default function DebugPanel() {
         }
     };
 
-    const ds = useDesignSystem();
-
     return (
-        <div
-            className="fixed bottom-0 right-0 w-full md:w-[600px] h-[400px] border-l border-t z-[9999] flex flex-col"
-            style={{
-                ...ds.glass.panel,
-                borderColor: ds.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
-            }}
-        >
+        <div className="fixed bottom-0 right-0 w-full md:w-[600px] h-[400px] bg-gray-900/95 backdrop-blur-xl border-l border-t border-white/10 z-[9999] flex flex-col shadow-2xl">
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
                 <div className="flex items-center gap-2">

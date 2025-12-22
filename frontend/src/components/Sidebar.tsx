@@ -8,16 +8,13 @@ import { X, Sparkles, Cloud } from 'lucide-react';
 import type { Disaster, WeatherData, AIAnalysisResponse } from '../types';
 import { getNextPass, predictPasses, type SatellitePass } from '../utils/orbitalEngine';
 import SatelliteImagery from './SatelliteImagery';
-import { useDesignSystem } from '../hooks/useDesignSystem';
 
 interface SidebarProps {
     disaster: Disaster | null;
     onClose: () => void;
-    isOpen?: boolean;
 }
 
-export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarProps) {
-    const ds = useDesignSystem();
+export default function Sidebar({ disaster, onClose }: SidebarProps) {
     const [nextPass, setNextPass] = useState<SatellitePass | null>(null);
     const [cloudCover, setCloudCover] = useState<number | null>(null);
     const [aiAnalysis, setAiAnalysis] = useState<string>('');
@@ -497,47 +494,33 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
 
     return (
         <div
-            className={`
-                fixed right-0 top-[56px] md:top-[64px] bottom-0 z-[100] 
-                w-full md:w-[420px] lg:w-[480px] 
-                flex flex-col overflow-hidden sidebar-responsive
-                transition-transform duration-300 ease-out
-                ${isOpen ? 'translate-x-0' : 'translate-x-full'}
-                md:translate-x-0
-            `}
+            className="fixed right-0 top-[64px] bottom-0 z-[100] w-[420px] flex flex-col overflow-hidden"
             style={{
-                ...ds.glass.panel,
-                borderLeft: `1px solid ${ds.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'}`,
+                height: 'calc(100vh - 64px)',
+                right: 0,
+                left: 'auto',
+                position: 'fixed',
+                background: 'var(--glass-bg)',
+                backdropFilter: 'blur(32px)',
+                WebkitBackdropFilter: 'blur(32px)',
+                borderLeft: '1px solid var(--color-border)',
+                boxShadow: 'var(--shadow-xl)'
             }}
-            role="complementary"
-            aria-label="Disaster coverage analysis"
         >
             {/* Header */}
-            <div
-                className="px-4 md:px-6 py-4 md:py-5 flex items-center justify-between border-b flex-shrink-0"
-                style={{ borderColor: ds.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }}
-            >
+            <div className="px-6 py-5 flex items-center justify-between border-b border-white/10 flex-shrink-0">
                 <div>
-                    <h2
-                        className="text-xl md:text-2xl font-black tracking-tight mb-0.5"
-                        style={{ color: ds.isDark ? '#ffffff' : '#111827' }}
-                    >
+                    <h2 className="text-2xl font-black text-white tracking-tight mb-0.5">
                         Coverage Analysis
                     </h2>
-                    <p
-                        className="text-[10px] md:text-[11px] font-medium"
-                        style={{ color: ds.isDark ? 'rgb(107, 114, 128)' : 'rgb(156, 163, 175)' }}
-                    >
+                    <p className="text-[11px] text-gray-500 font-medium">
                         Satellite intelligence & AI insights
                     </p>
                 </div>
                 <button
                     onClick={onClose}
-                    className="p-2.5 rounded-xl group transition-all touch-target"
-                    style={{
-                        color: ds.isDark ? 'rgb(156, 163, 175)' : 'rgb(107, 114, 128)',
-                    }}
-                    aria-label="Close sidebar"
+                    className="text-gray-400 hover:text-white transition-all p-2.5 hover:bg-white/10 rounded-xl group"
+                    aria-label="Close"
                 >
                     <X size={18} className="group-hover:rotate-90 transition-transform duration-300" />
                 </button>
@@ -548,10 +531,12 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
 
                 {/* AI Insight Card */}
                 <div
-                    className="rounded-2xl p-4 md:p-5 relative overflow-hidden group transition-all duration-300"
+                    className="rounded-2xl p-5 border relative overflow-hidden group transition-all duration-300"
                     style={{
-                        ...ds.glass.accent,
-                        borderLeft: `4px solid ${ds.colors.accent.blue}`,
+                        background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, rgba(147, 51, 234, 0.08) 100%)',
+                        borderLeft: '4px solid rgb(59, 130, 246)',
+                        border: '1px solid rgba(59, 130, 246, 0.2)',
+                        boxShadow: '0 8px 32px rgba(59, 130, 246, 0.1)'
                     }}
                 >
                     {/* Decorative gradient */}
@@ -567,20 +552,11 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                             <div className="p-2 rounded-lg bg-blue-500/20">
                                 <Sparkles className="text-blue-400" size={16} />
                             </div>
-                            <h3
-                                className="font-black text-sm tracking-tight"
-                                style={{ color: ds.isDark ? '#ffffff' : '#111827' }}
-                            >
+                            <h3 className="font-black text-white text-sm tracking-tight">
                                 AI Insight
                             </h3>
                         </div>
-                        <span
-                            className="text-[9px] uppercase tracking-widest font-bold px-2 py-1 rounded-md"
-                            style={{
-                                color: ds.isDark ? 'rgb(107, 114, 128)' : 'rgb(156, 163, 175)',
-                                background: ds.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)'
-                            }}
-                        >
+                        <span className="text-[9px] uppercase tracking-widest text-gray-500 font-bold px-2 py-1 rounded-md bg-white/5">
                             Google Gemini
                         </span>
                     </div>
