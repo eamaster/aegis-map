@@ -36,10 +36,12 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
   const [fetchingFire, setFetchingFire] = useState(false);
 
   useEffect(() => {
-    const dateStr = date ? new Date(date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0];
+    // ✅ FIXED: Always use current date for real-time disaster monitoring
+    const dateStr = new Date().toISOString().split('T')[0];
 
     // Set NASA Worldview URL with disaster-specific layers
     const layers = getWorldviewLayers(disasterType);
+    // ✅ FIXED: Use current date for Worldview link (matches displayed imagery)
     const worldview = `https://worldview.earthdata.nasa.gov/?v=${lng - 1.5},${lat - 1.5},${lng + 1.5},${lat + 1.5}&t=${dateStr}&l=${layers}`;
     setWorldviewUrl(worldview);
 
@@ -231,6 +233,26 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
           )}
         </div>
       )}
+
+      {/* Historical Event Warning Banner */}
+      {(() => {
+        const disasterDate = date ? new Date(date) : new Date();
+        const daysSinceDetection = Math.floor((Date.now() - disasterDate.getTime()) / (1000 * 60 * 60 * 24));
+        const isHistorical = daysSinceDetection > 7;
+        return isHistorical ? (
+          <div className="bg-yellow-900/30 border border-yellow-700/50 rounded-lg p-2 mb-3 flex items-start gap-2">
+            <AlertCircle className="text-yellow-400 flex-shrink-0 mt-0.5" size={16} />
+            <div>
+              <p className="text-xs text-yellow-200 font-medium">
+                <strong>Historical Event:</strong> First detected {daysSinceDetection} days ago.
+              </p>
+              <p className="text-xs text-yellow-300/80 mt-1">
+                Showing current satellite imagery and fire hotspots (last 7 days). Conditions may differ from initial detection.
+              </p>
+            </div>
+          </div>
+        ) : null;
+      })()}
 
       {/* Layer Selector */}
       <div className="flex gap-2">

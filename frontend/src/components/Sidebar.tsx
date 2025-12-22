@@ -669,7 +669,11 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                         </p>
                         {nextPass && (
                             <p className="text-xs text-gray-400 mt-2">
-                                Forecast for {nextPass.time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} UTC
+                                Forecast for {nextPass.time.toLocaleTimeString([], {
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                    timeZone: 'UTC'  // ✅ FIXED: Force UTC display
+                                })} UTC
                             </p>
                         )}
                     </div>
