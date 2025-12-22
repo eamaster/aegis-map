@@ -569,54 +569,87 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
 
     return (
         <div
-            className="fixed right-0 top-[73px] bottom-0 z-[100] w-[420px] flex flex-col shadow-2xl overflow-hidden border-l border-white/10 backdrop-blur-xl"
+            className="fixed right-0 top-[73px] bottom-0 z-[100] w-[440px] flex flex-col overflow-hidden"
             style={{
-                display: 'flex',
                 height: 'calc(100vh - 73px)',
-                right: 0,
-                left: 'auto',
-                position: 'fixed',
-                background: 'rgba(13, 18, 30, 0.85)',
-                backdropFilter: 'blur(24px)',
-                WebkitBackdropFilter: 'blur(24px)',
-                borderLeft: '1px solid rgba(255, 255, 255, 0.1)',
-                boxShadow: '-4px 0 20px rgba(0, 0, 0, 0.5)'
+                background: 'linear-gradient(135deg, rgba(17, 24, 39, 0.98) 0%, rgba(31, 41, 55, 0.98) 100%)',
+                backdropFilter: 'blur(32px)',
+                WebkitBackdropFilter: 'blur(32px)',
+                borderLeft: '1px solid rgba(255, 255, 255, 0.12)',
+                boxShadow: '-8px 0 32px rgba(0, 0, 0, 0.6)'
             }}
         >
             {/* Header */}
-            <div className="p-5 flex items-center justify-between border-b border-white/10 flex-shrink-0">
-                <h2 className="text-xl font-bold text-white">Coverage Analysis</h2>
+            <div className="px-6 py-5 flex items-center justify-between border-b border-white/10 flex-shrink-0">
+                <div>
+                    <h2 className="text-2xl font-black text-white tracking-tight mb-0.5">
+                        Coverage Analysis
+                    </h2>
+                    <p className="text-[11px] text-gray-500 font-medium">
+                        Satellite intelligence & AI insights
+                    </p>
+                </div>
                 <button
                     onClick={onClose}
-                    className="text-gray-400 hover:text-white transition-colors p-1 hover:bg-white/10 rounded-full"
-                    aria-label="Close sidebar"
+                    className="text-gray-400 hover:text-white transition-all p-2.5 hover:bg-white/10 rounded-xl group"
+                    aria-label="Close"
                 >
-                    <X size={20} />
+                    <X size={18} className="group-hover:rotate-90 transition-transform duration-300" />
                 </button>
             </div>
 
-            {/* Content */}
-            <div className="p-5 space-y-4 overflow-y-auto custom-scrollbar flex-1">
+            {/* Scrollable Content */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar px-6 py-5 space-y-5">
 
                 {/* AI Insight Card */}
-                <div className="glass-card rounded-xl p-4 border-l-4 border-blue-500 relative overflow-hidden group">
-                    <div className="absolute top-0 right-0 p-2 opacity-10 group-hover:opacity-20 transition-opacity">
-                        <Sparkles size={60} />
+                <div
+                    className="rounded-2xl p-5 border relative overflow-hidden group transition-all duration-300"
+                    style={{
+                        background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, rgba(147, 51, 234, 0.08) 100%)',
+                        borderLeft: '4px solid rgb(59, 130, 246)',
+                        border: '1px solid rgba(59, 130, 246, 0.2)',
+                        boxShadow: '0 8px 32px rgba(59, 130, 246, 0.1)'
+                    }}
+                >
+                    {/* Decorative gradient */}
+                    <div
+                        className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
+                        style={{
+                            background: 'radial-gradient(circle at top right, rgba(59, 130, 246, 0.1), transparent 50%)'
+                        }}
+                    />
+
+                    {/* Icon background */}
+                    <div className="absolute top-2 right-2 opacity-5 group-hover:opacity-10 transition-opacity duration-300">
+                        <Sparkles size={70} />
                     </div>
-                    <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                            <Sparkles className="text-blue-400" size={18} />
-                            <h3 className="font-bold text-white text-sm">AI Insight</h3>
+
+                    {/* Header */}
+                    <div className="flex items-center justify-between mb-3 relative z-10">
+                        <div className="flex items-center gap-2.5">
+                            <div className="p-2 rounded-lg bg-blue-500/20">
+                                <Sparkles className="text-blue-400" size={16} />
+                            </div>
+                            <h3 className="font-black text-white text-sm tracking-tight">
+                                AI Insight
+                            </h3>
                         </div>
-                        <span className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold">Google Gemini</span>
+                        <span className="text-[9px] uppercase tracking-widest text-gray-500 font-bold px-2 py-1 rounded-md bg-white/5">
+                            Google Gemini
+                        </span>
                     </div>
-                    <p className="text-gray-300 text-sm leading-relaxed">
+
+                    {/* Content */}
+                    <p className="text-gray-300 text-[13px] leading-relaxed relative z-10">
                         {loadingAnalysis ? (
-                            <span className="animate-pulse text-blue-300 font-medium">Analyzing satellite telemetry...</span>
+                            <span className="flex items-center gap-2">
+                                <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                                <span className="text-blue-300 font-medium">Analyzing satellite telemetry...</span>
+                            </span>
                         ) : aiAnalysis && aiAnalysis.trim().length > 0 ? (
-                            <span>{aiAnalysis}</span>
+                            aiAnalysis
                         ) : (
-                            <span className="text-gray-500 italic">Waiting for analysis...</span>
+                            <span className="text-gray-600 italic">Waiting for analysis...</span>
                         )}
                     </p>
                 </div>
@@ -632,49 +665,75 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                     />
                 )}
 
-                {/* Countdown Widget */}
-                {nextPass && (
-                    <div className="glass-card rounded-xl p-6 text-center relative overflow-hidden">
-                        <div className="absolute inset-0 bg-gradient-to-b from-blue-500/5 to-transparent pointer-events-none" />
-                        <h3 className="text-gray-400 text-xs uppercase tracking-widest mb-2">
-                            {nextPass.satelliteName} scan in
-                        </h3>
-                        <div className="text-5xl font-mono font-bold text-white tracking-tight tabular-nums">
-                            {timeUntilPass || '00:00:00'}
-                        </div>
-                    </div>
-                )}
+                {/* Two-Column Grid: Countdown + Cloud Forecast */}
+                <div className="grid grid-cols-2 gap-4">
+                    {/* Countdown Timer */}
+                    {nextPass && (
+                        <div
+                            className="rounded-2xl p-5 text-center relative overflow-hidden"
+                            style={{
+                                background: 'rgba(255, 255, 255, 0.03)',
+                                border: '1px solid rgba(255, 255, 255, 0.08)',
+                                boxShadow: '0 4px 16px rgba(0, 0, 0, 0.2)'
+                            }}
+                        >
+                            <div className="absolute inset-0 bg-gradient-to-b from-blue-500/5 to-transparent pointer-events-none" />
 
-                {/* Cloud-Clear Validator - Full Width */}
-                <div className="glass-card rounded-xl p-4 flex flex-col justify-between min-h-[120px]">
-                    <div className="flex justify-between items-start">
-                        <Cloud className="text-sky-400" size={24} />
-                        <div className="h-2 w-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
-                    </div>
-                    <div>
-                        <h4 className="text-gray-400 text-xs font-bold uppercase mb-1">
-                            Cloud Forecast at Pass Time
-                        </h4>
-                        <p className="text-white text-sm leading-tight">
-                            {cloudCover !== null ? (
-                                <>
-                                    <span className="text-2xl font-bold tabular-nums">{cloudCover}%</span>
-                                    <span className="text-gray-400 ml-2">
-                                        ({cloudCover < 20 ? 'Clear' : cloudCover < 60 ? 'Partly Cloudy' : 'Overcast'})
-                                    </span>
-                                </>
-                            ) : (
-                                'Loading forecast...'
-                            )}
+                            <p className="text-[10px] uppercase tracking-widest text-gray-500 font-bold mb-3">
+                                {nextPass.satelliteName.replace(/[-_]/g, ' ')}
+                            </p>
+
+                            <div className="relative z-10">
+                                <div className="text-3xl font-black font-mono text-white tracking-tight tabular-nums mb-1">
+                                    {timeUntilPass || '00:00:00'}
+                                </div>
+                                <div className="h-0.5 w-10 mx-auto rounded-full bg-gradient-to-r from-transparent via-blue-500 to-transparent" />
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Cloud Forecast */}
+                    <div
+                        className="rounded-2xl p-5 relative overflow-hidden"
+                        style={{
+                            background: 'rgba(255, 255, 255, 0.03)',
+                            border: '1px solid rgba(255, 255, 255, 0.08)',
+                            boxShadow: '0 4px 16px rgba(0, 0, 0, 0.2)'
+                        }}
+                    >
+                        <div className="flex items-start justify-between mb-2">
+                            <Cloud className="text-sky-400" size={18} />
+                            <div className="w-1.5 h-1.5 rounded-full bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.8)]" />
+                        </div>
+
+                        <p className="text-[10px] uppercase tracking-widest text-gray-500 font-bold mb-2">
+                            Cloud Forecast
                         </p>
+
+                        {cloudCover !== null ? (
+                            <>
+                                <div className="flex items-baseline gap-1 mb-1">
+                                    <span className="text-2xl font-black text-white tabular-nums">
+                                        {cloudCover}
+                                    </span>
+                                    <span className="text-gray-500 font-bold text-sm">%</span>
+                                </div>
+                                <p className="text-[11px] text-gray-400 font-medium">
+                                    {cloudCover < 20 ? 'Clear ☀️' : cloudCover < 60 ? 'Partly Cloudy ⛅' : 'Overcast ☁️'}
+                                </p>
+                            </>
+                        ) : (
+                            <p className="text-gray-600 text-xs">Loading...</p>
+                        )}
+
                         {nextPass && (
-                            <p className="text-xs text-gray-400 mt-2">
-                                Forecast for {nextPass.time.toLocaleTimeString([], {
+                            <p className="text-[9px] text-gray-600 font-medium mt-3 pt-2 border-t border-white/5">
+                                {nextPass.time.toLocaleTimeString([], {
                                     hour: '2-digit',
                                     minute: '2-digit',
                                     timeZone: 'UTC'
                                 })} UTC
-                                <span className="text-gray-500 ml-1">
+                                <span className="text-gray-700 ml-1">
                                     ({nextPass.time.toLocaleTimeString([], {
                                         hour: '2-digit',
                                         minute: '2-digit'

@@ -1,3 +1,8 @@
+/**
+ * MapLegend Component - Professional Dashboard Design
+ * Features: Bold typography, modern glass-morphism, expandable panel
+ */
+
 import { useState } from 'react';
 import { Flame, Mountain, Waves, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
 
@@ -36,135 +41,225 @@ export default function MapLegend({
         if (diffMins < 60) return `${diffMins}m ago`;
         const diffHours = Math.floor(diffMins / 60);
         if (diffHours < 24) return `${diffHours}h ago`;
-        return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+        return date.toLocaleString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
     };
 
     const isActive = (type: string) => activeFilters.has(type);
 
+    // Collapsed state - minimalist pill
     if (!isExpanded) {
         return (
-            <div className="absolute top-4 right-4 z-30">
+            <div className="absolute top-6 left-6 z-30">
                 <button
                     onClick={() => setIsExpanded(true)}
-                    className="flex items-center gap-3 bg-gray-900/90 backdrop-blur-xl border border-white/10 rounded-2xl px-5 py-3 shadow-lg hover:bg-gray-800 transition-all duration-300"
+                    className="flex items-center gap-3 px-6 py-4 rounded-2xl transition-all duration-300 hover:scale-105 active:scale-95"
+                    style={{
+                        background: 'linear-gradient(135deg, rgba(17, 24, 39, 0.95) 0%, rgba(31, 41, 55, 0.95) 100%)',
+                        backdropFilter: 'blur(24px)',
+                        WebkitBackdropFilter: 'blur(24px)',
+                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.1)'
+                    }}
                 >
-                    <div className="w-2.5 h-2.5 rounded-full bg-green-400 animate-pulse shadow-[0_0_8px_rgba(74,222,128,0.8)]" />
-                    <span className="text-white font-bold text-lg tabular-nums tracking-tight">{counts.total.toLocaleString()}</span>
-                    <ChevronDown size={16} className="text-gray-400" />
+                    <div className="w-2.5 h-2.5 rounded-full bg-green-400 animate-pulse shadow-[0_0_12px_rgba(74,222,128,0.8)]" />
+                    <span className="text-white font-black text-xl tabular-nums tracking-tight">
+                        {counts.total.toLocaleString()}
+                    </span>
+                    <ChevronDown size={18} className="text-gray-400" />
                 </button>
             </div>
         );
     }
 
+    // Expanded state - full panel
     return (
-        <div className="absolute top-4 right-4 z-30">
+        <div className="absolute top-6 left-6 z-30">
             <div
-                className="relative overflow-hidden rounded-3xl transition-all duration-300 ease-out"
+                className="w-[280px] rounded-3xl overflow-hidden transition-all duration-300"
                 style={{
-                    width: 'clamp(300px, 90vw, 380px)',
-                    background: 'rgba(17, 24, 39, 0.95)', // High opacity dark background
-                    backdropFilter: 'blur(20px)',
-                    WebkitBackdropFilter: 'blur(20px)',
-                    border: '1px solid rgba(255, 255, 255, 0.1)',
-                    boxShadow: '0 20px 40px rgba(0, 0, 0, 0.5)'
+                    background: 'linear-gradient(135deg, rgba(17, 24, 39, 0.95) 0%, rgba(31, 41, 55, 0.95) 100%)',
+                    backdropFilter: 'blur(32px)',
+                    WebkitBackdropFilter: 'blur(32px)',
+                    border: '1px solid rgba(255, 255, 255, 0.12)',
+                    boxShadow: '0 24px 48px rgba(0, 0, 0, 0.6), inset 0 1px 1px rgba(255, 255, 255, 0.1)'
                 }}
             >
-                {/* Simplified Header / Collapse */}
-                <div className="flex items-center justify-between px-5 pt-4 pb-2">
-                    <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                        <span className="text-gray-400 text-xs font-bold uppercase tracking-wider">Live Monitor</span>
+                {/* Header */}
+                <div className="px-5 pt-4 pb-3 flex items-center justify-between border-b border-white/10">
+                    <div className="flex items-center gap-2.5">
+                        <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse shadow-[0_0_12px_rgba(74,222,128,0.8)]" />
+                        <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">
+                            Live Monitor
+                        </span>
                     </div>
                     <button
                         onClick={() => setIsExpanded(false)}
-                        className="text-gray-500 hover:text-white transition-colors p-1"
+                        className="text-gray-500 hover:text-white transition-colors p-1.5 hover:bg-white/5 rounded-lg"
                         aria-label="Collapse"
                     >
-                        <ChevronUp size={18} />
+                        <ChevronUp size={14} />
                     </button>
                 </div>
 
-                <div className="px-5 pb-5 space-y-5">
-                    {/* Total Count - Clean & Big */}
-                    <div className="flex items-baseline gap-2">
-                        <span className="text-5xl font-black text-white tracking-tighter drop-shadow-lg tabular-nums">
-                            {counts.total.toLocaleString()}
-                        </span>
-                        <span className="text-gray-400 font-medium text-sm">active events</span>
+                {/* Main Content */}
+                <div className="px-5 pt-5 pb-5 space-y-5">
+                    {/* Total Count - Hero Number */}
+                    <div>
+                        <div className="flex items-baseline gap-2 mb-1">
+                            <span
+                                className="text-5xl font-black text-white tracking-tighter tabular-nums"
+                                style={{
+                                    textShadow: '0 2px 16px rgba(59, 130, 246, 0.3)'
+                                }}
+                            >
+                                {counts.total.toLocaleString()}
+                            </span>
+                            <div className="flex flex-col">
+                                <span className="text-gray-400 font-semibold text-xs">active</span>
+                                <span className="text-gray-500 font-medium text-[10px]">events</span>
+                            </div>
+                        </div>
+                        <div className="h-0.5 w-16 rounded-full bg-gradient-to-r from-blue-500 to-purple-600 shadow-[0_0_12px_rgba(59,130,246,0.5)]" />
                     </div>
 
-                    {/* Filter List - Compact */}
+                    {/* Disaster Type Filters */}
                     <div className="space-y-2">
-                        {/* Fire */}
+                        {/* Wildfires */}
                         <button
                             onClick={() => onFilterToggle('fire')}
-                            className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all duration-200 ${isActive('fire')
-                                    ? 'bg-red-500/10 border-red-500/30'
-                                    : 'bg-white/5 border-transparent hover:bg-white/10'
-                                }`}
+                            className="w-full group transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
                         >
-                            <div className="flex items-center gap-3">
-                                <div className={`p-2 rounded-lg ${isActive('fire') ? 'bg-red-500 text-white' : 'bg-gray-700 text-gray-400'}`}>
-                                    <Flame size={16} />
+                            <div
+                                className={`flex items-center justify-between p-3 rounded-xl border transition-all ${isActive('fire')
+                                        ? 'bg-gradient-to-r from-red-500/15 to-transparent border-red-500/30 shadow-[0_0_20px_rgba(239,68,68,0.15)]'
+                                        : 'bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06]'
+                                    }`}
+                            >
+                                <div className="flex items-center gap-3">
+                                    <div
+                                        className={`p-2 rounded-lg transition-all ${isActive('fire')
+                                                ? 'bg-red-500 shadow-[0_0_16px_rgba(239,68,68,0.5)]'
+                                                : 'bg-gray-800/50'
+                                            }`}
+                                    >
+                                        <Flame
+                                            size={16}
+                                            className={isActive('fire') ? 'text-white' : 'text-gray-500'}
+                                        />
+                                    </div>
+                                    <span className={`font-bold text-sm ${isActive('fire') ? 'text-white' : 'text-gray-500'}`}>
+                                        Wildfires
+                                    </span>
                                 </div>
-                                <span className={`font-semibold ${isActive('fire') ? 'text-white' : 'text-gray-400'}`}>Wildfires</span>
+                                <span
+                                    className={`font-black text-xl tabular-nums ${isActive('fire') ? 'text-red-400' : 'text-gray-600'
+                                        }`}
+                                >
+                                    {counts.fires.toLocaleString()}
+                                </span>
                             </div>
-                            <span className={`font-bold tabular-nums ${isActive('fire') ? 'text-red-400' : 'text-gray-500'}`}>
-                                {counts.fires.toLocaleString()}
-                            </span>
                         </button>
 
-                        {/* Volcano */}
+                        {/* Volcanoes */}
                         <button
                             onClick={() => onFilterToggle('volcano')}
-                            className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all duration-200 ${isActive('volcano')
-                                    ? 'bg-orange-500/10 border-orange-500/30'
-                                    : 'bg-white/5 border-transparent hover:bg-white/10'
-                                }`}
+                            className="w-full group transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
                         >
-                            <div className="flex items-center gap-3">
-                                <div className={`p-2 rounded-lg ${isActive('volcano') ? 'bg-orange-500 text-white' : 'bg-gray-700 text-gray-400'}`}>
-                                    <Mountain size={16} />
+                            <div
+                                className={`flex items-center justify-between p-3 rounded-xl border transition-all ${isActive('volcano')
+                                        ? 'bg-gradient-to-r from-orange-500/15 to-transparent border-orange-500/30 shadow-[0_0_20px_rgba(249,115,22,0.15)]'
+                                        : 'bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06]'
+                                    }`}
+                            >
+                                <div className="flex items-center gap-3">
+                                    <div
+                                        className={`p-2 rounded-lg transition-all ${isActive('volcano')
+                                                ? 'bg-orange-500 shadow-[0_0_16px_rgba(249,115,22,0.5)]'
+                                                : 'bg-gray-800/50'
+                                            }`}
+                                    >
+                                        <Mountain
+                                            size={16}
+                                            className={isActive('volcano') ? 'text-white' : 'text-gray-500'}
+                                        />
+                                    </div>
+                                    <span className={`font-bold text-sm ${isActive('volcano') ? 'text-white' : 'text-gray-500'}`}>
+                                        Volcanoes
+                                    </span>
                                 </div>
-                                <span className={`font-semibold ${isActive('volcano') ? 'text-white' : 'text-gray-400'}`}>Volcanoes</span>
+                                <span
+                                    className={`font-black text-xl tabular-nums ${isActive('volcano') ? 'text-orange-400' : 'text-gray-600'
+                                        }`}
+                                >
+                                    {counts.volcanoes.toLocaleString()}
+                                </span>
                             </div>
-                            <span className={`font-bold tabular-nums ${isActive('volcano') ? 'text-orange-400' : 'text-gray-500'}`}>
-                                {counts.volcanoes.toLocaleString()}
-                            </span>
                         </button>
 
-                        {/* Earthquake */}
+                        {/* Earthquakes */}
                         <button
                             onClick={() => onFilterToggle('earthquake')}
-                            className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all duration-200 ${isActive('earthquake')
-                                    ? 'bg-amber-500/10 border-amber-500/30'
-                                    : 'bg-white/5 border-transparent hover:bg-white/10'
-                                }`}
+                            className="w-full group transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
                         >
-                            <div className="flex items-center gap-3">
-                                <div className={`p-2 rounded-lg ${isActive('earthquake') ? 'bg-amber-500 text-white' : 'bg-gray-700 text-gray-400'}`}>
-                                    <Waves size={16} />
+                            <div
+                                className={`flex items-center justify-between p-3 rounded-xl border transition-all ${isActive('earthquake')
+                                        ? 'bg-gradient-to-r from-amber-500/15 to-transparent border-amber-500/30 shadow-[0_0_20px_rgba(245,158,11,0.15)]'
+                                        : 'bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06]'
+                                    }`}
+                            >
+                                <div className="flex items-center gap-3">
+                                    <div
+                                        className={`p-2 rounded-lg transition-all ${isActive('earthquake')
+                                                ? 'bg-amber-500 shadow-[0_0_16px_rgba(245,158,11,0.5)]'
+                                                : 'bg-gray-800/50'
+                                            }`}
+                                    >
+                                        <Waves
+                                            size={16}
+                                            className={isActive('earthquake') ? 'text-white' : 'text-gray-500'}
+                                        />
+                                    </div>
+                                    <span className={`font-bold text-sm ${isActive('earthquake') ? 'text-white' : 'text-gray-500'}`}>
+                                        Earthquakes
+                                    </span>
                                 </div>
-                                <span className={`font-semibold ${isActive('earthquake') ? 'text-white' : 'text-gray-400'}`}>Earthquakes</span>
+                                <span
+                                    className={`font-black text-xl tabular-nums ${isActive('earthquake') ? 'text-amber-400' : 'text-gray-600'
+                                        }`}
+                                >
+                                    {counts.earthquakes.toLocaleString()}
+                                </span>
                             </div>
-                            <span className={`font-bold tabular-nums ${isActive('earthquake') ? 'text-amber-400' : 'text-gray-500'}`}>
-                                {counts.earthquakes.toLocaleString()}
-                            </span>
                         </button>
                     </div>
 
-                    {/* Footer / Refresh */}
+                    {/* Footer - Last Updated */}
                     <div className="pt-3 border-t border-white/5 flex items-center justify-between">
-                        <span className="text-xs text-gray-500 font-medium">
-                            Updated {lastUpdated ? formatTime(lastUpdated) : '...'}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] text-gray-500 font-medium">
+                                Updated
+                            </span>
+                            <span className="text-[10px] text-gray-400 font-semibold">
+                                {lastUpdated ? formatTime(lastUpdated) : 'Just now'}
+                            </span>
+                        </div>
                         {onRefresh && (
                             <button
                                 onClick={onRefresh}
                                 disabled={isRefreshing}
-                                className="text-blue-400 hover:text-white transition-colors disabled:opacity-50"
+                                className="p-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-all disabled:opacity-40 disabled:cursor-not-allowed group"
+                                title="Refresh data"
                             >
-                                <RefreshCw size={14} className={isRefreshing ? 'animate-spin' : ''} />
+                                <RefreshCw
+                                    size={12}
+                                    className={`text-blue-400 group-hover:text-white transition-colors ${isRefreshing ? 'animate-spin' : ''
+                                        }`}
+                                />
                             </button>
                         )}
                     </div>
