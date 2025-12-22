@@ -164,7 +164,7 @@ export default function MapLegend({
                                     <div
                                         className={`p-2 rounded-lg transition-all duration-500 ease-in-out transform ${isActive('fire')
                                             ? 'bg-red-500 shadow-[0_0_16px_rgba(239,68,68,0.5)] scale-110'
-                                            : 'bg-gray-800/50 scale-100'
+                                            : 'bg-transparent scale-100'
                                             }`}
                                     >
                                         <Flame
@@ -200,7 +200,7 @@ export default function MapLegend({
                                     <div
                                         className={`p-2 rounded-lg transition-all duration-500 ease-in-out transform ${isActive('volcano')
                                             ? 'bg-orange-500 shadow-[0_0_16px_rgba(249,115,22,0.5)] scale-110'
-                                            : 'bg-gray-800/50 scale-100'
+                                            : 'bg-transparent scale-100'
                                             }`}
                                     >
                                         <Mountain
@@ -236,7 +236,7 @@ export default function MapLegend({
                                     <div
                                         className={`p-2 rounded-lg transition-all duration-500 ease-in-out transform ${isActive('earthquake')
                                             ? 'bg-amber-500 shadow-[0_0_16px_rgba(245,158,11,0.5)] scale-110'
-                                            : 'bg-gray-800/50 scale-100'
+                                            : 'bg-transparent scale-100'
                                             }`}
                                     >
                                         <Waves
