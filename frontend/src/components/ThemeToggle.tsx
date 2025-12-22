@@ -1,21 +1,17 @@
 import { Moon, Sun } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
+import { useDesignSystem } from '../hooks/useDesignSystem';
 
 export default function ThemeToggle() {
-    // ✅ USE THE EXISTING THEME CONTEXT - don't create separate state!
     const { theme, toggleTheme } = useTheme();
+    const ds = useDesignSystem();
 
     return (
         <button
             onClick={toggleTheme}
-            className="p-2 rounded-lg transition-all hover:bg-opacity-80"
+            className="p-2.5 rounded-xl transition-all duration-200 hover:scale-105 active:scale-95 touch-target"
             style={{
-                background: theme === 'dark'
-                    ? 'rgba(255, 255, 255, 0.1)'
-                    : 'rgba(0, 0, 0, 0.05)',
-                border: theme === 'dark'
-                    ? '1px solid rgba(255, 255, 255, 0.2)'
-                    : '1px solid rgba(0, 0, 0, 0.1)'
+                ...ds.glass.accent,
             }}
             aria-label="Toggle theme"
             title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}

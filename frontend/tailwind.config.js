@@ -22,6 +22,25 @@ export default {
                 '2xl': '40px',
                 '3xl': '64px',
             },
+            animation: {
+                'glass-shimmer': 'shimmer 3s ease-in-out infinite',
+                'slide-in-right': 'slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+                'slide-in-bottom': 'slideInBottom 0.3s cubic-bezier(0.16, 1, 0.3, 1)',
+            },
+            keyframes: {
+                shimmer: {
+                    '0%, 100%': { opacity: '0.5' },
+                    '50%': { opacity: '1' },
+                },
+                slideInRight: {
+                    '0%': { transform: 'translateX(100%)' },
+                    '100%': { transform: 'translateX(0)' },
+                },
+                slideInBottom: {
+                    '0%': { transform: 'translateY(100%)' },
+                    '100%': { transform: 'translateY(0)' },
+                },
+            },
         },
     },
     plugins: [],

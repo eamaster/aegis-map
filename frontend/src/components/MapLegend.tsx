@@ -1,10 +1,11 @@
 /**
  * MapLegend Component - Professional Dashboard Design
- * Features: Bold typography, modern glass-morphism, expandable panel
+ * Features: Bold typography, modern glass-morphism, expandable panel, responsive mobile bottom sheet
  */
 
 import { useState } from 'react';
 import { Flame, Mountain, Waves, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
+import { useDesignSystem } from '../hooks/useDesignSystem';
 
 interface DisasterCounts {
     fires: number;
@@ -30,6 +31,7 @@ export default function MapLegend({
     activeFilters,
     onFilterToggle
 }: MapLegendProps) {
+    const ds = useDesignSystem();
     const [isExpanded, setIsExpanded] = useState(true);
 
     const formatTime = (date: Date) => {
@@ -54,60 +56,67 @@ export default function MapLegend({
     // Collapsed state - minimalist pill
     if (!isExpanded) {
         return (
-            <div className="absolute top-6 left-6 z-30">
+            <div className="legend-responsive">
                 <button
                     onClick={() => setIsExpanded(true)}
-                    className="flex items-center gap-3 px-6 py-4 transition-all duration-300 hover:scale-105 active:scale-95"
+                    className="flex items-center gap-3 px-5 md:px-6 py-3 md:py-4 transition-all duration-300 hover:scale-105 active:scale-95 touch-target"
                     style={{
-                        background: 'var(--glass-bg)',
-                        backdropFilter: 'blur(24px)',
-                        WebkitBackdropFilter: 'blur(24px)',
-                        border: '1px solid var(--color-border)',
-                        boxShadow: 'var(--shadow-lg)'
+                        ...ds.glass.panel,
+                        borderRadius: ds.borderRadius.md,
                     }}
                 >
-                    <div className="w-2.5 h-2.5 rounded-full bg-green-400 animate-pulse shadow-[0_0_12px_rgba(74,222,128,0.8)]" />
-                    <span className="text-white font-black text-xl tabular-nums tracking-tight">
+                    <div
+                        className="w-2.5 h-2.5 rounded-full animate-pulse"
+                        style={{
+                            background: ds.colors.status.success,
+                            boxShadow: `0 0 12px ${ds.colors.status.success}CC`
+                        }}
+                    />
+                    <span
+                        className="font-black text-lg md:text-xl tabular-nums tracking-tight"
+                        style={{ color: ds.isDark ? '#ffffff' : '#111827' }}
+                    >
                         {counts.total.toLocaleString()}
                     </span>
-                    <ChevronDown size={18} className="text-gray-400" />
+                    <ChevronDown
+                        size={18}
+                        style={{ color: ds.isDark ? 'rgb(156, 163, 175)' : 'rgb(107, 114, 128)' }}
+                    />
                 </button>
             </div>
         );
     }
 
-    // Expanded state - Professional Dashboard Design
+    // Expanded state - Professional Dashboard Design with responsive mobile bottom sheet
     return (
-        <div className="absolute top-6 left-6 z-30">
+        <div className="legend-responsive">
             <div
-                className="w-[320px] transition-all duration-300"
+                className="w-full md:w-[320px] transition-all duration-300"
                 style={{
-                    borderRadius: '0',
-                    background: 'linear-gradient(135deg, rgba(10, 15, 28, 0.95) 0%, rgba(17, 24, 39, 0.95) 100%)',
-                    backdropFilter: 'blur(32px)',
-                    WebkitBackdropFilter: 'blur(32px)',
-                    border: '1px solid rgba(59, 130, 246, 0.2)',
-                    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6), 0 0 1px rgba(59, 130, 246, 0.4)'
+                    ...ds.glass.panel,
+                    borderColor: ds.headerBorderColor,
+                    boxShadow: `0 8px 32px rgba(0, 0, 0, ${ds.isDark ? '0.6' : '0.15'}), 0 0 1px ${ds.colors.accent.blue}66`,
                 }}
             >
                 {/* Header - Prominent Live Indicator */}
                 <div
-                    className="px-6 pt-5 pb-4 flex items-center justify-between"
+                    className="px-5 md:px-6 pt-4 md:pt-5 pb-3 md:pb-4 flex items-center justify-between"
                     style={{
-                        borderBottom: '1px solid rgba(59, 130, 246, 0.15)'
+                        borderBottom: `1px solid ${ds.headerBorderColor}`
                     }}
                 >
                     <div className="flex items-center gap-3">
                         <div
-                            className="w-2.5 h-2.5 rounded-full bg-green-400 animate-pulse"
+                            className="w-2.5 h-2.5 rounded-full animate-pulse"
                             style={{
-                                boxShadow: '0 0 16px rgba(74, 222, 128, 0.9), 0 0 4px rgba(74, 222, 128, 0.5)'
+                                background: ds.colors.status.success,
+                                boxShadow: `0 0 16px ${ds.colors.status.success}E6, 0 0 4px ${ds.colors.status.success}80`
                             }}
                         />
                         <span
-                            className="text-sm font-black uppercase tracking-widest"
+                            className="text-xs md:text-sm font-black uppercase tracking-widest"
                             style={{
-                                color: 'rgb(209, 213, 219)',
+                                color: ds.isDark ? 'rgb(209, 213, 219)' : 'rgb(75, 85, 99)',
                                 letterSpacing: '0.1em'
                             }}
                         >
@@ -116,32 +125,41 @@ export default function MapLegend({
                     </div>
                     <button
                         onClick={() => setIsExpanded(false)}
-                        className="text-gray-500 hover:text-white transition-colors p-1.5 hover:bg-white/5 rounded-lg"
+                        className="p-1.5 rounded-lg transition-colors touch-target"
+                        style={{
+                            color: ds.isDark ? 'rgb(107, 114, 128)' : 'rgb(156, 163, 175)',
+                        }}
                     >
                         <ChevronUp size={16} />
                     </button>
                 </div>
 
                 {/* Main Content - Professional Hierarchy */}
-                <div className="px-6 pt-6 pb-6 space-y-6">
+                <div className="px-5 md:px-6 pt-5 md:pt-6 pb-5 md:pb-6 space-y-5 md:space-y-6">
                     {/* Hero Number - Primary Focus */}
                     <div>
                         <span
-                            className="block text-6xl font-black text-white tracking-tighter tabular-nums"
+                            className="block text-5xl md:text-6xl font-black tracking-tighter tabular-nums"
                             style={{
+                                color: ds.isDark ? '#ffffff' : '#111827',
                                 lineHeight: '1',
-                                textShadow: '0 4px 24px rgba(59, 130, 246, 0.4)'
+                                textShadow: ds.isDark ? `0 4px 24px ${ds.colors.accent.blue}66` : 'none'
                             }}
                         >
                             {counts.total.toLocaleString()}
                         </span>
                         <div className="flex items-baseline gap-2 mt-2">
-                            <span className="text-base font-bold text-gray-300">Active Events</span>
+                            <span
+                                className="text-sm md:text-base font-bold"
+                                style={{ color: ds.isDark ? 'rgb(209, 213, 219)' : 'rgb(75, 85, 99)' }}
+                            >
+                                Active Events
+                            </span>
                             <div
                                 className="h-1 flex-1 rounded-full"
                                 style={{
-                                    background: 'linear-gradient(90deg, rgba(59, 130, 246, 0.6), transparent)',
-                                    boxShadow: '0 0 12px rgba(59, 130, 246, 0.4)'
+                                    background: `linear-gradient(90deg, ${ds.colors.accent.blue}99, transparent)`,
+                                    boxShadow: `0 0 12px ${ds.colors.accent.blue}66`
                                 }}
                             />
                         </div>
@@ -152,13 +170,16 @@ export default function MapLegend({
                         {/* Wildfires */}
                         <button
                             onClick={() => onFilterToggle('fire')}
-                            className="w-full group transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
+                            className="w-full group transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] touch-target"
                         >
                             <div
                                 className={`flex items-center justify-between p-3 border-b transition-all duration-500 ease-in-out transform ${isActive('fire')
                                     ? 'bg-gradient-to-r from-red-500/15 to-transparent border-red-500/30'
-                                    : 'border-white/[0.05] opacity-60 hover:opacity-80 hover:bg-white/[0.03]'
+                                    : 'opacity-60 hover:opacity-80'
                                     }`}
+                                style={{
+                                    borderColor: isActive('fire') ? undefined : (ds.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)')
+                                }}
                             >
                                 <div className="flex items-center gap-3">
                                     <div
@@ -169,16 +190,21 @@ export default function MapLegend({
                                     >
                                         <Flame
                                             size={16}
-                                            className={`transition-all duration-500 ${isActive('fire') ? 'text-white' : 'text-gray-500'}`}
+                                            className={`transition-all duration-500 ${isActive('fire') ? 'text-white' : ''}`}
+                                            style={{ color: isActive('fire') ? undefined : (ds.isDark ? 'rgb(107, 114, 128)' : 'rgb(156, 163, 175)') }}
                                         />
                                     </div>
-                                    <span className={`font-bold text-sm transition-all duration-500 ${isActive('fire') ? 'text-white' : 'text-gray-500'}`}>
+                                    <span
+                                        className={`font-bold text-sm transition-all duration-500`}
+                                        style={{ color: isActive('fire') ? (ds.isDark ? '#ffffff' : '#111827') : (ds.isDark ? 'rgb(107, 114, 128)' : 'rgb(156, 163, 175)') }}
+                                    >
                                         Wildfires
                                     </span>
                                 </div>
                                 <span
-                                    className={`font-black text-xl tabular-nums transition-all duration-500 ease-in-out transform ${isActive('fire') ? 'text-red-400 scale-110' : 'text-gray-600 scale-100'
+                                    className={`font-black text-lg md:text-xl tabular-nums transition-all duration-500 ease-in-out transform ${isActive('fire') ? 'text-red-400 scale-110' : 'scale-100'
                                         }`}
+                                    style={{ color: isActive('fire') ? undefined : (ds.isDark ? 'rgb(75, 85, 99)' : 'rgb(156, 163, 175)') }}
                                 >
                                     {counts.fires.toLocaleString()}
                                 </span>
@@ -188,13 +214,16 @@ export default function MapLegend({
                         {/* Volcanoes */}
                         <button
                             onClick={() => onFilterToggle('volcano')}
-                            className="w-full group transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
+                            className="w-full group transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] touch-target"
                         >
                             <div
                                 className={`flex items-center justify-between p-3 border-b transition-all duration-500 ease-in-out transform ${isActive('volcano')
                                     ? 'bg-gradient-to-r from-orange-500/15 to-transparent border-orange-500/30'
-                                    : 'border-white/[0.05] opacity-60 hover:opacity-80 hover:bg-white/[0.03]'
+                                    : 'opacity-60 hover:opacity-80'
                                     }`}
+                                style={{
+                                    borderColor: isActive('volcano') ? undefined : (ds.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)')
+                                }}
                             >
                                 <div className="flex items-center gap-3">
                                     <div
@@ -205,16 +234,21 @@ export default function MapLegend({
                                     >
                                         <Mountain
                                             size={16}
-                                            className={`transition-all duration-500 ${isActive('volcano') ? 'text-white' : 'text-gray-500'}`}
+                                            className={`transition-all duration-500 ${isActive('volcano') ? 'text-white' : ''}`}
+                                            style={{ color: isActive('volcano') ? undefined : (ds.isDark ? 'rgb(107, 114, 128)' : 'rgb(156, 163, 175)') }}
                                         />
                                     </div>
-                                    <span className={`font-bold text-sm transition-all duration-500 ${isActive('volcano') ? 'text-white' : 'text-gray-500'}`}>
+                                    <span
+                                        className={`font-bold text-sm transition-all duration-500`}
+                                        style={{ color: isActive('volcano') ? (ds.isDark ? '#ffffff' : '#111827') : (ds.isDark ? 'rgb(107, 114, 128)' : 'rgb(156, 163, 175)') }}
+                                    >
                                         Volcanoes
                                     </span>
                                 </div>
                                 <span
-                                    className={`font-black text-xl tabular-nums transition-all duration-500 ease-in-out transform ${isActive('volcano') ? 'text-orange-400 scale-110' : 'text-gray-600 scale-100'
+                                    className={`font-black text-lg md:text-xl tabular-nums transition-all duration-500 ease-in-out transform ${isActive('volcano') ? 'text-orange-400 scale-110' : 'scale-100'
                                         }`}
+                                    style={{ color: isActive('volcano') ? undefined : (ds.isDark ? 'rgb(75, 85, 99)' : 'rgb(156, 163, 175)') }}
                                 >
                                     {counts.volcanoes.toLocaleString()}
                                 </span>
@@ -224,13 +258,16 @@ export default function MapLegend({
                         {/* Earthquakes */}
                         <button
                             onClick={() => onFilterToggle('earthquake')}
-                            className="w-full group transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
+                            className="w-full group transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] touch-target"
                         >
                             <div
                                 className={`flex items-center justify-between p-3 border-b transition-all duration-500 ease-in-out transform ${isActive('earthquake')
                                     ? 'bg-gradient-to-r from-amber-500/15 to-transparent border-amber-500/30'
-                                    : 'border-white/[0.05] opacity-60 hover:opacity-80 hover:bg-white/[0.03]'
+                                    : 'opacity-60 hover:opacity-80'
                                     }`}
+                                style={{
+                                    borderColor: isActive('earthquake') ? undefined : (ds.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)')
+                                }}
                             >
                                 <div className="flex items-center gap-3">
                                     <div
@@ -241,16 +278,21 @@ export default function MapLegend({
                                     >
                                         <Waves
                                             size={16}
-                                            className={`transition-all duration-500 ${isActive('earthquake') ? 'text-white' : 'text-gray-500'}`}
+                                            className={`transition-all duration-500 ${isActive('earthquake') ? 'text-white' : ''}`}
+                                            style={{ color: isActive('earthquake') ? undefined : (ds.isDark ? 'rgb(107, 114, 128)' : 'rgb(156, 163, 175)') }}
                                         />
                                     </div>
-                                    <span className={`font-bold text-sm transition-all duration-500 ${isActive('earthquake') ? 'text-white' : 'text-gray-500'}`}>
+                                    <span
+                                        className={`font-bold text-sm transition-all duration-500`}
+                                        style={{ color: isActive('earthquake') ? (ds.isDark ? '#ffffff' : '#111827') : (ds.isDark ? 'rgb(107, 114, 128)' : 'rgb(156, 163, 175)') }}
+                                    >
                                         Earthquakes
                                     </span>
                                 </div>
                                 <span
-                                    className={`font-black text-xl tabular-nums transition-all duration-500 ease-in-out transform ${isActive('earthquake') ? 'text-amber-400 scale-110' : 'text-gray-600 scale-100'
+                                    className={`font-black text-lg md:text-xl tabular-nums transition-all duration-500 ease-in-out transform ${isActive('earthquake') ? 'text-amber-400 scale-110' : 'scale-100'
                                         }`}
+                                    style={{ color: isActive('earthquake') ? undefined : (ds.isDark ? 'rgb(75, 85, 99)' : 'rgb(156, 163, 175)') }}
                                 >
                                     {counts.earthquakes.toLocaleString()}
                                 </span>
@@ -259,12 +301,21 @@ export default function MapLegend({
                     </div>
 
                     {/* Footer - Last Updated */}
-                    <div className="pt-3 border-t border-white/5 flex items-center justify-between">
+                    <div
+                        className="pt-3 border-t flex items-center justify-between"
+                        style={{ borderColor: ds.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }}
+                    >
                         <div className="flex items-center gap-1.5">
-                            <span className="text-[10px] text-gray-500 font-medium">
+                            <span
+                                className="text-[10px] font-medium"
+                                style={{ color: ds.isDark ? 'rgb(107, 114, 128)' : 'rgb(156, 163, 175)' }}
+                            >
                                 Updated
                             </span>
-                            <span className="text-[10px] text-gray-400 font-semibold">
+                            <span
+                                className="text-[10px] font-semibold"
+                                style={{ color: ds.isDark ? 'rgb(156, 163, 175)' : 'rgb(107, 114, 128)' }}
+                            >
                                 {lastUpdated ? formatTime(lastUpdated) : 'Just now'}
                             </span>
                         </div>
@@ -272,13 +323,17 @@ export default function MapLegend({
                             <button
                                 onClick={onRefresh}
                                 disabled={isRefreshing}
-                                className="p-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-all disabled:opacity-40 disabled:cursor-not-allowed group"
+                                className="p-2 rounded-lg border transition-all disabled:opacity-40 disabled:cursor-not-allowed group touch-target"
+                                style={{
+                                    background: ds.isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)',
+                                    borderColor: ds.isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)',
+                                }}
                                 title="Refresh data"
                             >
                                 <RefreshCw
                                     size={12}
-                                    className={`text-blue-400 group-hover:text-white transition-colors ${isRefreshing ? 'animate-spin' : ''
-                                        }`}
+                                    className={`transition-colors ${isRefreshing ? 'animate-spin' : ''}`}
+                                    style={{ color: ds.colors.accent.blue }}
                                 />
                             </button>
                         )}
