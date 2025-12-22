@@ -37,7 +37,7 @@ const removeDisasterLayers = (mapInstance: mapboxgl.Map | null) => {
         if (mapInstance.getLayer(layerId)) {
             try {
                 mapInstance.removeLayer(layerId);
-                            } catch (e) {
+            } catch (e) {
                 console.warn(`  ⚠️ Could not remove layer ${layerId}:`, e);
             }
         }
@@ -94,7 +94,7 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
                 container: mapContainer.current,
                 style: 'mapbox://styles/mapbox/standard-satellite',
                 center: [0, 20], // ✅ Global center (Africa/Europe visible)
-                zoom: 1.5, // ✅ Wider global view showing all continents
+                zoom: 1.3, // ✅ Full globe view showing all continents
                 projection: { name: 'globe' } as any,
                 pitch: 0, // Flat view for better overview
                 bearing: 0, // North-up orientation

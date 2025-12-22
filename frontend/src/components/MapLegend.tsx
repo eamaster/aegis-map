@@ -57,7 +57,7 @@ export default function MapLegend({
             <div className="absolute top-6 left-6 z-30">
                 <button
                     onClick={() => setIsExpanded(true)}
-                    className="flex items-center gap-3 px-6 py-4 rounded-2xl transition-all duration-300 hover:scale-105 active:scale-95"
+                    className="flex items-center gap-3 px-6 py-4 rounded-[20px] transition-all duration-300 hover:scale-105 active:scale-95"
                     style={{
                         background: 'var(--glass-bg)',
                         backdropFilter: 'blur(24px)',
@@ -80,7 +80,7 @@ export default function MapLegend({
     return (
         <div className="absolute top-6 left-6 z-30">
             <div
-                className="w-[280px] rounded-3xl overflow-hidden transition-all duration-300"
+                className="w-[280px] rounded-[28px] overflow-hidden transition-all duration-300"
                 style={{
                     background: 'var(--glass-bg)',
                     backdropFilter: 'blur(32px)',
@@ -132,32 +132,32 @@ export default function MapLegend({
                         {/* Wildfires */}
                         <button
                             onClick={() => onFilterToggle('fire')}
-                            className="w-full group transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+                            className="w-full group transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
                         >
                             <div
-                                className={`flex items-center justify-between p-3 rounded-xl border transition-all ${isActive('fire')
-                                    ? 'bg-gradient-to-r from-red-500/15 to-transparent border-red-500/30 shadow-[0_0_20px_rgba(239,68,68,0.15)]'
-                                    : 'bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06]'
+                                className={`flex items-center justify-between p-3 rounded-xl border transition-all duration-500 ease-in-out transform ${isActive('fire')
+                                        ? 'bg-gradient-to-r from-red-500/15 to-transparent border-red-500/30 shadow-[0_0_20px_rgba(239,68,68,0.15)] scale-[1.01]'
+                                        : 'bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06] opacity-60 hover:opacity-80'
                                     }`}
                             >
                                 <div className="flex items-center gap-3">
                                     <div
-                                        className={`p-2 rounded-lg transition-all ${isActive('fire')
-                                            ? 'bg-red-500 shadow-[0_0_16px_rgba(239,68,68,0.5)]'
-                                            : 'bg-gray-800/50'
+                                        className={`p-2 rounded-lg transition-all duration-500 ease-in-out transform ${isActive('fire')
+                                                ? 'bg-red-500 shadow-[0_0_16px_rgba(239,68,68,0.5)] scale-110'
+                                                : 'bg-gray-800/50 scale-100'
                                             }`}
                                     >
                                         <Flame
                                             size={16}
-                                            className={isActive('fire') ? 'text-white' : 'text-gray-500'}
+                                            className={`transition-all duration-500 ${isActive('fire') ? 'text-white' : 'text-gray-500'}`}
                                         />
                                     </div>
-                                    <span className={`font-bold text-sm ${isActive('fire') ? 'text-white' : 'text-gray-500'}`}>
+                                    <span className={`font-bold text-sm transition-all duration-500 ${isActive('fire') ? 'text-white' : 'text-gray-500'}`}>
                                         Wildfires
                                     </span>
                                 </div>
                                 <span
-                                    className={`font-black text-xl tabular-nums ${isActive('fire') ? 'text-red-400' : 'text-gray-600'
+                                    className={`font-black text-xl tabular-nums transition-all duration-500 ease-in-out transform ${isActive('fire') ? 'text-red-400 scale-110' : 'text-gray-600 scale-100'
                                         }`}
                                 >
                                     {counts.fires.toLocaleString()}
@@ -168,32 +168,32 @@ export default function MapLegend({
                         {/* Volcanoes */}
                         <button
                             onClick={() => onFilterToggle('volcano')}
-                            className="w-full group transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+                            className="w-full group transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
                         >
                             <div
-                                className={`flex items-center justify-between p-3 rounded-xl border transition-all ${isActive('volcano')
-                                    ? 'bg-gradient-to-r from-orange-500/15 to-transparent border-orange-500/30 shadow-[0_0_20px_rgba(249,115,22,0.15)]'
-                                    : 'bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06]'
+                                className={`flex items-center justify-between p-3 rounded-xl border transition-all duration-500 ease-in-out transform ${isActive('volcano')
+                                        ? 'bg-gradient-to-r from-orange-500/15 to-transparent border-orange-500/30 shadow-[0_0_20px_rgba(249,115,22,0.15)] scale-[1.01]'
+                                        : 'bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06] opacity-60 hover:opacity-80'
                                     }`}
                             >
                                 <div className="flex items-center gap-3">
                                     <div
-                                        className={`p-2 rounded-lg transition-all ${isActive('volcano')
-                                            ? 'bg-orange-500 shadow-[0_0_16px_rgba(249,115,22,0.5)]'
-                                            : 'bg-gray-800/50'
+                                        className={`p-2 rounded-lg transition-all duration-500 ease-in-out transform ${isActive('volcano')
+                                                ? 'bg-orange-500 shadow-[0_0_16px_rgba(249,115,22,0.5)] scale-110'
+                                                : 'bg-gray-800/50 scale-100'
                                             }`}
                                     >
                                         <Mountain
                                             size={16}
-                                            className={isActive('volcano') ? 'text-white' : 'text-gray-500'}
+                                            className={`transition-all duration-500 ${isActive('volcano') ? 'text-white' : 'text-gray-500'}`}
                                         />
                                     </div>
-                                    <span className={`font-bold text-sm ${isActive('volcano') ? 'text-white' : 'text-gray-500'}`}>
+                                    <span className={`font-bold text-sm transition-all duration-500 ${isActive('volcano') ? 'text-white' : 'text-gray-500'}`}>
                                         Volcanoes
                                     </span>
                                 </div>
                                 <span
-                                    className={`font-black text-xl tabular-nums ${isActive('volcano') ? 'text-orange-400' : 'text-gray-600'
+                                    className={`font-black text-xl tabular-nums transition-all duration-500 ease-in-out transform ${isActive('volcano') ? 'text-orange-400 scale-110' : 'text-gray-600 scale-100'
                                         }`}
                                 >
                                     {counts.volcanoes.toLocaleString()}
@@ -204,32 +204,32 @@ export default function MapLegend({
                         {/* Earthquakes */}
                         <button
                             onClick={() => onFilterToggle('earthquake')}
-                            className="w-full group transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
+                            className="w-full group transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
                         >
                             <div
-                                className={`flex items-center justify-between p-3 rounded-xl border transition-all ${isActive('earthquake')
-                                    ? 'bg-gradient-to-r from-amber-500/15 to-transparent border-amber-500/30 shadow-[0_0_20px_rgba(245,158,11,0.15)]'
-                                    : 'bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06]'
+                                className={`flex items-center justify-between p-3 rounded-xl border transition-all duration-500 ease-in-out transform ${isActive('earthquake')
+                                        ? 'bg-gradient-to-r from-amber-500/15 to-transparent border-amber-500/30 shadow-[0_0_20px_rgba(245,158,11,0.15)] scale-[1.01]'
+                                        : 'bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06] opacity-60 hover:opacity-80'
                                     }`}
                             >
                                 <div className="flex items-center gap-3">
                                     <div
-                                        className={`p-2 rounded-lg transition-all ${isActive('earthquake')
-                                            ? 'bg-amber-500 shadow-[0_0_16px_rgba(245,158,11,0.5)]'
-                                            : 'bg-gray-800/50'
+                                        className={`p-2 rounded-lg transition-all duration-500 ease-in-out transform ${isActive('earthquake')
+                                                ? 'bg-amber-500 shadow-[0_0_16px_rgba(245,158,11,0.5)] scale-110'
+                                                : 'bg-gray-800/50 scale-100'
                                             }`}
                                     >
                                         <Waves
                                             size={16}
-                                            className={isActive('earthquake') ? 'text-white' : 'text-gray-500'}
+                                            className={`transition-all duration-500 ${isActive('earthquake') ? 'text-white' : 'text-gray-500'}`}
                                         />
                                     </div>
-                                    <span className={`font-bold text-sm ${isActive('earthquake') ? 'text-white' : 'text-gray-500'}`}>
+                                    <span className={`font-bold text-sm transition-all duration-500 ${isActive('earthquake') ? 'text-white' : 'text-gray-500'}`}>
                                         Earthquakes
                                     </span>
                                 </div>
                                 <span
-                                    className={`font-black text-xl tabular-nums ${isActive('earthquake') ? 'text-amber-400' : 'text-gray-600'
+                                    className={`font-black text-xl tabular-nums transition-all duration-500 ease-in-out transform ${isActive('earthquake') ? 'text-amber-400 scale-110' : 'text-gray-600 scale-100'
                                         }`}
                                 >
                                     {counts.earthquakes.toLocaleString()}

@@ -90,19 +90,19 @@ function App() {
           </div>
           <div>
             <h1
-              className="text-sm font-bold tracking-tight leading-none"
+              className="text-[15px] font-bold tracking-tight leading-none"
               style={{
                 color: 'var(--color-text-primary)',
-                letterSpacing: '-0.02em'
+                letterSpacing: '-0.015em'
               }}
             >
               AegisMap
             </h1>
             <p
-              className="text-[10px] font-medium leading-none mt-0.5"
+              className="text-[11px] font-semibold leading-none mt-0.5"
               style={{
                 color: 'var(--color-text-tertiary)',
-                letterSpacing: '0.03em'
+                letterSpacing: '0.02em'
               }}
             >
               Disaster Monitor
