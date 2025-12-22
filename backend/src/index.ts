@@ -293,7 +293,7 @@ app.get('/api/fire-hotspots', async (c) => {
 });
 
 // Route 3: POST /api/analyze
-// AI-powered satellite coverage analysis using Gemini
+// AI-powered satellite coverage analysis using Gemini (WITH SMART CACHING)
 app.post('/api/analyze', async (c) => {
 	try {
 		const body = await c.req.json();
@@ -302,6 +302,54 @@ app.post('/api/analyze', async (c) => {
 		if (!disasterTitle || !satelliteName || !passTime || cloudCover === undefined) {
 			return c.json({ error: 'Missing required fields' }, 400 as any);
 		}
+
+		// ✅ SMART CACHE KEY GENERATION
+		const disasterType = disasterTitle.toLowerCase().includes('fire') ? 'fire' :
+			disasterTitle.toLowerCase().includes('volcano') ? 'volcano' :
+				disasterTitle.toLowerCase().includes('earthquake') ? 'earthquake' : 'disaster';
+
+		const satelliteType = satelliteName.toUpperCase().includes('LANDSAT') ? 'LANDSAT' :
+			satelliteName.toUpperCase().includes('SENTINEL') ? 'SENTINEL' :
+				satelliteName.toUpperCase().includes('TERRA') ? 'TERRA' :
+					satelliteName.toUpperCase().includes('AQUA') ? 'AQUA' :
+						satelliteName.replace(/[^A-Z0-9]/gi, '').substring(0, 10);
+
+		// Bucket cloud cover by 5% intervals
+		const cloudBucket = Math.floor(cloudCover / 5) * 5;
+
+		// Create cache key
+		const cacheKey = `gemini_v1:${disasterType}:${satelliteType}:${cloudBucket}`;
+
+		console.log(`🔍 Cache lookup: ${cacheKey}`);
+
+		// ✅ CHECK CACHE FIRST
+		if (c.env.AEGIS_CACHE) {
+			const cached = await c.env.AEGIS_CACHE.get(cacheKey);
+			if (cached) {
+				console.log(`✅ CACHE HIT: Returning cached analysis`);
+
+				// Personalize cached template
+				const passDate = new Date(passTime);
+				const timeStr = passDate.toLocaleTimeString('en-US', {
+					hour: '2-digit',
+					minute: '2-digit',
+					timeZone: 'UTC'
+				}) + ' UTC';
+
+				const personalizedAnalysis = cached
+					.replace(/SATELLITE_NAME/g, satelliteName)
+					.replace(/DISASTER_TITLE/g, `"${disasterTitle}"`)
+					.replace(/PASS_TIME/g, timeStr)
+					.replace(/CLOUD_COVER/g, cloudCover.toString());
+
+				return c.json({
+					analysis: personalizedAnalysis,
+					cached: true
+				});
+			}
+		}
+
+		console.log(`❌ CACHE MISS: Calling Gemini API`);
 
 		// Check if API key is set FIRST
 		if (!c.env.GEMINI_API_KEY) {
@@ -385,7 +433,33 @@ Provide exactly 2 sentences for emergency responders. Be concise and actionable.
 
 						const analysis = rawAnalysis.trim();
 						console.log(`✅ SUCCESS with ${attempt}: ${analysis.length} chars`);
-						return c.json({ analysis });
+
+						// ✅ CREATE CACHEABLE TEMPLATE
+						const passDate = new Date(passTime);
+						const timeStr = passDate.toLocaleTimeString('en-US', {
+							hour: '2-digit',
+							minute: '2-digit',
+							timeZone: 'UTC'
+						}) + ' UTC';
+
+						const template = analysis
+							.replace(new RegExp(satelliteName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), 'SATELLITE_NAME')
+							.replace(new RegExp(`"${disasterTitle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`, 'g'), 'DISASTER_TITLE')
+							.replace(new RegExp(timeStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), 'PASS_TIME')
+							.replace(new RegExp(`\\b${cloudCover}%`, 'g'), 'CLOUD_COVER%');
+
+						// ✅ CACHE THE TEMPLATE
+						if (c.env.AEGIS_CACHE) {
+							await c.env.AEGIS_CACHE.put(cacheKey, template, {
+								expirationTtl: 7200 // 2 hours
+							});
+							console.log(`✅ Cached template: ${cacheKey}`);
+						}
+
+						return c.json({
+							analysis,
+							cached: false
+						});
 					}
 
 					// Handle specific error codes

@@ -128,15 +128,15 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
       const baseUrl = `https://api.mapbox.com/styles/v1/mapbox/satellite-v9/static/${lng},${lat},14,0/800x600@2x?access_token=${mapboxToken}`;
       setImageUrl(baseUrl);
 
-      // ✅ Fire overlay: Use MODERATE bbox (±0.1° = ~11km) to avoid pixelation
-      // VIIRS is 375m resolution, so need at least 30 pixels across = 0.1° minimum
-      const fireOverlay = `https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=VIIRS_NOAA20_Thermal_Anomalies_375m_All&TIME=${dateStr}&CRS=EPSG:4326&WIDTH=800&HEIGHT=600&BBOX=${lat - 0.1},${lng - 0.1},${lat + 0.1},${lng + 0.1}&FORMAT=image/png&TRANSPARENT=true`;
+      // ✅ FIXED: Use 0.5° bbox to match FIRMS data range (prevents off-screen markers)
+      const bboxSize = 0.5; // ±0.5° = ~55km radius
+      const fireOverlay = `https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=VIIRS_NOAA20_Thermal_Anomalies_375m_All&TIME=${dateStr}&CRS=EPSG:4326&WIDTH=800&HEIGHT=600&BBOX=${lat - bboxSize},${lng - bboxSize},${lat + bboxSize},${lng + bboxSize}&FORMAT=image/png&TRANSPARENT=true`;
       setOverlayUrl(fireOverlay);
 
     } else if (selectedLayer === 'thermal') {
-      // ✅ Thermal: Use MODIS with WIDER bbox to match its 250m-1km resolution
-      // MODIS looks good at ±0.15° (~16km radius) - matches sensor resolution
-      const thermalUrl = `https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=MODIS_Terra_CorrectedReflectance_Bands721&TIME=${dateStr}&CRS=EPSG:4326&WIDTH=800&HEIGHT=600&BBOX=${lat - 0.15},${lng - 0.15},${lat + 0.15},${lng + 0.15}&FORMAT=image/jpeg`;
+      // MODIS 250m resolution - use 0.3° for optimal balance
+      const thermalBbox = 0.3; // ±0.3° = ~33km radius (good for MODIS resolution)
+      const thermalUrl = `https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=MODIS_Terra_CorrectedReflectance_Bands721&TIME=${dateStr}&CRS=EPSG:4326&WIDTH=800&HEIGHT=600&BBOX=${lat - thermalBbox},${lng - thermalBbox},${lat + thermalBbox},${lng + thermalBbox}&FORMAT=image/jpeg`;
       setImageUrl(thermalUrl);
       setOverlayUrl('');
 
@@ -173,7 +173,9 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
             {disasterType === 'fire' ? '🔥 Fire Intelligence' : '🛰️ Satellite Imagery'}
           </h3>
         </div>
-        <span className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold">NASA GIBS</span>
+        <span className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold">
+          {selectedLayer === 'thermal' ? 'NASA GIBS' : selectedLayer === 'fire' ? 'NASA GIBS + Mapbox' : 'Mapbox Satellite'}
+        </span>
       </div>
 
       {/* Fire Statistics (Wildfires Only) */}
@@ -298,21 +300,22 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
             {/* Fire Hotspot Markers */}
             {disasterType === 'fire' && selectedLayer === 'fire' && fireHotspots.length > 0 && (
               <div className="absolute inset-0 pointer-events-none">
-                {fireHotspots.slice(0, 20).map((hotspot, idx) => {
-                  // ✅ FIXED: Match the image bbox size (±0.1° from fire overlay line 136)
-                  const imgBboxSize = 0.2; // Total range: 0.2° (from lat-0.1 to lat+0.1)
+                {fireHotspots.slice(0, 30).map((hotspot, idx) => {
+                  // ✅ SYNCHRONIZED: Match GIBS overlay bbox (±0.5° range)
+                  const bboxSize = 0.5; // Must match GIBS overlay bbox
+                  const imgBboxSize = bboxSize * 2; // Total range: 1.0° (from lat-0.5 to lat+0.5)
 
-                  // Calculate position relative to image center
+                  // Calculate position relative to image center (50% = center)
                   const relLng = ((hotspot.longitude - lng) / imgBboxSize) * 100 + 50;
                   const relLat = ((lat - hotspot.latitude) / imgBboxSize) * 100 + 50;
 
-                  // Debug logging (remove after testing)
-                  if (idx === 0) {
-                    console.log('🔥 Hotspot position calculation:', {
+                  // Debug first hotspot positioning (can remove after testing)
+                  if (idx === 0 && hotspot.confidence !== 'l') {
+                    console.log('🔥 Hotspot positioning:', {
                       hotspot: { lat: hotspot.latitude, lng: hotspot.longitude },
                       center: { lat, lng },
-                      relativePos: { relLng, relLat },
-                      imgBboxSize
+                      bbox: { size: bboxSize, total: imgBboxSize },
+                      position: { left: relLng.toFixed(1) + '%', top: relLat.toFixed(1) + '%' }
                     });
                   }
 
@@ -342,9 +345,9 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
 
             {/* Layer Label */}
             <div className="absolute top-2 left-2 bg-black/80 px-3 py-1.5 rounded-full text-xs text-white font-medium backdrop-blur-sm">
-              {selectedLayer === 'fire' ? '🔥 Fire Detections (Real-Time)' :
-                selectedLayer === 'thermal' ? '🌡️ Thermal Infrared (Bands 7-2-1)' :
-                  '📸 True Color Satellite'}
+              {selectedLayer === 'fire' ? '🔥 NASA Fire Data + Mapbox Base' :
+                selectedLayer === 'thermal' ? '🌡️ NASA MODIS Thermal (Bands 7-2-1)' :
+                  '📸 Mapbox Satellite Imagery'}
             </div>
 
             {/* Coordinates */}
@@ -355,7 +358,13 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
 
             {/* Data Timestamp */}
             <div className="absolute bottom-2 right-2 bg-black/80 px-2 py-1 rounded text-xs text-gray-300 backdrop-blur-sm">
-              {date ? new Date(date).toLocaleDateString() : 'Latest'}
+              {selectedLayer === 'thermal' ? (
+                <span>NASA: {date ? new Date(date).toLocaleDateString() : 'Latest'}</span>
+              ) : (
+                <span title="Mapbox imagery date may differ from disaster date">
+                  Base: Commercial
+                </span>
+              )}
             </div>
           </div>
         )}
@@ -385,7 +394,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
       <div className="text-xs text-gray-400 leading-relaxed bg-gray-900/30 p-2 rounded border border-gray-800">
         {disasterType === 'fire' && selectedLayer === 'fire' && (
           <p>
-            🔴 <strong>Real-time fire detection</strong> from NASA VIIRS satellites. Red dots show active burning areas detected within last 7 days. Updates every 3-4 hours. Brightness indicates fire intensity.
+            🔴 <strong>Fire overlay:</strong> NASA VIIRS satellite detections (red dots = active fires, last 7 days). <strong>Base imagery:</strong> Mapbox commercial satellite (high resolution but may be weeks old). Click NASA Worldview for official time-synced imagery.
           </p>
         )}
         {disasterType === 'fire' && selectedLayer === 'thermal' && (

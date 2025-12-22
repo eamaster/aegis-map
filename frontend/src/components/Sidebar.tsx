@@ -4,7 +4,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { X, Sparkles, Cloud, Wifi, Satellite } from 'lucide-react';
+import { X, Sparkles, Cloud } from 'lucide-react';
 import type { Disaster, WeatherData, AIAnalysisResponse } from '../types';
 import { getNextPass, predictPasses, type SatellitePass } from '../utils/orbitalEngine';
 import SatelliteImagery from './SatelliteImagery';
@@ -645,34 +645,33 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                     </div>
                 )}
 
-                {/* Grid Widgets */}
-                <div className="grid grid-cols-2 gap-4">
-                    {/* Cloud-Clear Validator */}
-                    <div className="glass-card rounded-xl p-4 flex flex-col justify-between min-h-[120px]">
-                        <div className="flex justify-between items-start">
-                            <Cloud className="text-sky-400" size={24} />
-                            <div className="h-2 w-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
-                        </div>
-                        <div>
-                            <h4 className="text-gray-400 text-xs font-bold uppercase mb-1">Cloud-Clear Validator</h4>
-                            <p className="text-white text-sm leading-tight">
-                                {cloudCover !== null ? `Current Cloud Cover: ${cloudCover}% (${cloudCover < 20 ? 'Clear' : 'Cloudy'})` : 'Loading...'}
-                            </p>
-                        </div>
+                {/* Cloud-Clear Validator - Full Width */}
+                <div className="glass-card rounded-xl p-4 flex flex-col justify-between min-h-[120px]">
+                    <div className="flex justify-between items-start">
+                        <Cloud className="text-sky-400" size={24} />
+                        <div className="h-2 w-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
                     </div>
-
-                    {/* Connectivity Radar */}
-                    <div className="glass-card rounded-xl p-4 flex flex-col justify-between min-h-[120px]">
-                        <div className="flex justify-between items-start">
-                            <Wifi className="text-purple-400" size={24} />
-                            <Satellite className="text-gray-600" size={16} />
-                        </div>
-                        <div>
-                            <h4 className="text-gray-400 text-xs font-bold uppercase mb-1">Connectivity Radar</h4>
-                            <p className="text-white text-xs leading-tight">
-                                Starlink-3452 overhead in 10 mins
+                    <div>
+                        <h4 className="text-gray-400 text-xs font-bold uppercase mb-1">
+                            Cloud Forecast at Pass Time
+                        </h4>
+                        <p className="text-white text-sm leading-tight">
+                            {cloudCover !== null ? (
+                                <>
+                                    <span className="text-2xl font-bold tabular-nums">{cloudCover}%</span>
+                                    <span className="text-gray-400 ml-2">
+                                        ({cloudCover < 20 ? 'Clear' : cloudCover < 60 ? 'Partly Cloudy' : 'Overcast'})
+                                    </span>
+                                </>
+                            ) : (
+                                'Loading forecast...'
+                            )}
+                        </p>
+                        {nextPass && (
+                            <p className="text-xs text-gray-400 mt-2">
+                                Forecast for {nextPass.time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} UTC
                             </p>
-                        </div>
+                        )}
                     </div>
                 </div>
             </div>

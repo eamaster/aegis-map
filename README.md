@@ -9,9 +9,34 @@ Professional-grade disaster monitoring with satellite pass predictions and AI-po
 - **Backend:** Cloudflare Workers + Hono Framework
 - **Caching:** Cloudflare KV
 - **Orbital Math:** Satellite.js (Client-side calculations)
-- **AI Analysis:** Google Gemini 1.5 Pro
+- **AI Analysis:** Google Gemini 1.5 Pro (with smart caching)
 - **Weather:** Open-Meteo API (Free)
 - **Disaster Data:** NASA EONET + USGS
+
+## 🔥 Recent Fixes (December 2024)
+
+### Removed Features
+- ❌ **Starlink Connectivity Radar** - Removed hardcoded fake widget
+
+### Fixed Bugs
+- ✅ **Fire Hotspot Markers** - Synchronized GIBS overlay and FIRMS bbox to 0.5° radius
+- ✅ **Cloud Forecast Label** - Changed to "Cloud Forecast at Pass Time" with timestamp
+- ✅ **Image Source Labels** - Clarified which layers use NASA GIBS vs. Mapbox
+
+### Performance Improvements
+- ⚡ **Gemini Smart Caching** - Responses cached by disaster type/satellite/cloud bucket (2hr TTL)
+
+### API Usage Summary
+| API | Purpose | Cost |
+|-----|---------|------|
+| NASA EONET | Wildfire/volcano events | FREE |
+| USGS Earthquakes | Seismic activity | FREE |
+| NASA FIRMS | Fire hotspot detection | FREE |
+| CelesTrak TLEs | Satellite orbital data | FREE |
+| Open-Meteo | Weather forecast | FREE |
+| NASA GIBS | Thermal satellite imagery | FREE |
+| Mapbox | Base map & high-res satellite | FREE (50k loads/mo) |
+| Google Gemini | AI analysis (cached) | ~$0/mo with caching |
 
 ## 📦 Project Structure
 
