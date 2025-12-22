@@ -57,7 +57,7 @@ export default function MapLegend({
             <div className="absolute top-6 left-6 z-30">
                 <button
                     onClick={() => setIsExpanded(true)}
-                    className="flex items-center gap-3 px-6 py-4 rounded-[20px] transition-all duration-300 hover:scale-105 active:scale-95"
+                    className="flex items-center gap-3 px-6 py-4 transition-all duration-300 hover:scale-105 active:scale-95"
                     style={{
                         background: 'var(--glass-bg)',
                         backdropFilter: 'blur(24px)',
@@ -80,9 +80,9 @@ export default function MapLegend({
     return (
         <div className="absolute top-6 left-6 z-30">
             <div
-                className="w-[320px] overflow-hidden transition-all duration-300"
+                className="w-[320px] transition-all duration-300"
                 style={{
-                    borderRadius: '24px',
+                    borderRadius: '0',
                     background: 'linear-gradient(135deg, rgba(10, 15, 28, 0.95) 0%, rgba(17, 24, 39, 0.95) 100%)',
                     backdropFilter: 'blur(32px)',
                     WebkitBackdropFilter: 'blur(32px)',
