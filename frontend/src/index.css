@@ -5,40 +5,77 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ===== THEME CSS VARIABLES ===== */
+/* ===== COMPREHENSIVE THEME SYSTEM ===== */
 :root,
 [data-theme="dark"] {
-    /* Dark theme (default) */
-    --bg-primary: #0a0f1c;
-    --bg-secondary: rgba(17, 24, 39, 0.95);
-    --text-primary: #ffffff;
-    --text-secondary: #9ca3af;
-    --border-color: rgba(255, 255, 255, 0.1);
-    --glassmorphism-bg: linear-gradient(135deg, rgba(17, 24, 39, 0.5), rgba(31, 41, 55, 0.5));
-    --glassmorphism-border: rgba(255, 255, 255, 0.2);
+    /* Colors */
+    --color-bg-primary: #0a0f1c;
+    --color-bg-secondary: #1e293b;
+    --color-text-primary: #ffffff;
+    --color-text-secondary: #9ca3af;
+    --color-text-tertiary: #6b7280;
+    --color-border: rgba(255, 255, 255, 0.1);
+    
+    /* Glass Effects */
+    --glass-bg: rgba(17, 24, 39, 0.9);
+    --glass-border: rgba(255, 255, 255, 0.1);
+    --glass-blur: blur(24px);
+    
+    /* Shadows */
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 10px 20px rgba(0, 0, 0, 0.5);
+    --shadow-xl: 0 20px 40px rgba(0, 0, 0, 0.6);
+    
+    /* Logo/Brand */
+    --logo-bg: linear-gradient(135deg, rgba(59, 130, 246, 0.12), rgba(147, 51, 234, 0.12));
+    --logo-border: rgba(59, 130, 246, 0.25);
+    --logo-icon-color: rgb(96, 165, 250);
+    --logo-shadow: 0 4px 16px rgba(59, 130, 246, 0.2);
 }
 
 [data-theme="light"] {
-    /* Light theme */
-    --bg-primary: #f9fafb;
-    --bg-secondary: rgba(255, 255, 255, 0.95);
-    --text-primary: #111827;
-    --text-secondary: #6b7280;
-    --border-color: rgba(0, 0, 0, 0.1);
-    --glassmorphism-bg: linear-gradient(135deg, rgba(255, 255, 255, 0.7), rgba(249, 250, 251, 0.7));
-    --glassmorphism-border: rgba(0, 0, 0, 0.15);
+    /* Colors */
+    --color-bg-primary: #f9fafb;
+    --color-bg-secondary: #ffffff;
+    --color-text-primary: #111827;
+    --color-text-secondary: #6b7280;
+    --color-text-tertiary: #9ca3af;
+    --color-border: rgba(0, 0, 0, 0.1);
+    
+    /* Glass Effects */
+    --glass-bg: rgba(255, 255, 255, 0.9);
+    --glass-border: rgba(0, 0, 0, 0.1);
+    --glass-blur: blur(24px);
+    
+    /* Shadows */
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+    --shadow-md: 0 2px 4px rgba(0, 0, 0, 0.1);
+    --shadow-lg: 0 4px 8px rgba(0, 0, 0, 0.15);
+    --shadow-xl: 0 8px 16px rgba(0, 0, 0, 0.2);
+    
+    /* Logo/Brand */
+    --logo-bg: linear-gradient(135deg, rgba(59, 130, 246, 0.08), rgba(147, 51, 234, 0.08));
+    --logo-border: rgba(59, 130, 246, 0.2);
+    --logo-icon-color: rgb(37, 99, 235);
+    --logo-shadow: 0 2px 8px rgba(59, 130, 246, 0.15);
 }
 
-/* Ensure body uses theme variables */
+/* Apply theme colors to body */
 body {
-    background-color: var(--bg-primary);
-    color: var(--text-primary);
-    transition: background-color 0.3s ease, color 0.3s ease;
+    background-color: var(--color-bg-primary);
+    color: var(--color-text-primary);
+    transition: background-color 200ms ease, color 200ms ease;
+}
+
+/* Theme transition class */
+.theme-transition * {
+    transition: background-color 200ms ease, border-color 200ms ease, color 200ms ease !important;
 }
 
 .glass-card {
     background: var(--glass-bg);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--color-border);
 }
 
 

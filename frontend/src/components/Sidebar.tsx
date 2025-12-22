@@ -494,17 +494,17 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
 
     return (
         <div
-            className="fixed right-0 top-[73px] bottom-0 z-[100] w-[440px] flex flex-col overflow-hidden"
+            className="fixed right-0 top-[56px] bottom-0 z-[100] w-[420px] flex flex-col overflow-hidden"
             style={{
-                height: 'calc(100vh - 73px)',
+                height: 'calc(100vh - 56px)',
                 right: 0,
                 left: 'auto',
                 position: 'fixed',
-                background: 'linear-gradient(135deg, rgba(17, 24, 39, 0.98) 0%, rgba(31, 41, 55, 0.98) 100%)',
+                background: 'var(--glass-bg)',
                 backdropFilter: 'blur(32px)',
                 WebkitBackdropFilter: 'blur(32px)',
-                borderLeft: '1px solid rgba(255, 255, 255, 0.12)',
-                boxShadow: '-8px 0 32px rgba(0, 0, 0, 0.6)'
+                borderLeft: '1px solid var(--color-border)',
+                boxShadow: 'var(--shadow-xl)'
             }}
         >
             {/* Header */}

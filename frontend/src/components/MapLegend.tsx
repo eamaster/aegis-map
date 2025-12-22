@@ -59,11 +59,11 @@ export default function MapLegend({
                     onClick={() => setIsExpanded(true)}
                     className="flex items-center gap-3 px-6 py-4 rounded-2xl transition-all duration-300 hover:scale-105 active:scale-95"
                     style={{
-                        background: 'linear-gradient(135deg, rgba(17, 24, 39, 0.95) 0%, rgba(31, 41, 55, 0.95) 100%)',
+                        background: 'var(--glass-bg)',
                         backdropFilter: 'blur(24px)',
                         WebkitBackdropFilter: 'blur(24px)',
-                        border: '1px solid rgba(255, 255, 255, 0.1)',
-                        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.1)'
+                        border: '1px solid var(--color-border)',
+                        boxShadow: 'var(--shadow-lg)'
                     }}
                 >
                     <div className="w-2.5 h-2.5 rounded-full bg-green-400 animate-pulse shadow-[0_0_12px_rgba(74,222,128,0.8)]" />
@@ -82,11 +82,11 @@ export default function MapLegend({
             <div
                 className="w-[280px] rounded-3xl overflow-hidden transition-all duration-300"
                 style={{
-                    background: 'linear-gradient(135deg, rgba(17, 24, 39, 0.95) 0%, rgba(31, 41, 55, 0.95) 100%)',
+                    background: 'var(--glass-bg)',
                     backdropFilter: 'blur(32px)',
                     WebkitBackdropFilter: 'blur(32px)',
-                    border: '1px solid rgba(255, 255, 255, 0.12)',
-                    boxShadow: '0 24px 48px rgba(0, 0, 0, 0.6), inset 0 1px 1px rgba(255, 255, 255, 0.1)'
+                    border: '1px solid var(--color-border)',
+                    boxShadow: 'var(--shadow-xl)'
                 }}
             >
                 {/* Header */}
@@ -136,15 +136,15 @@ export default function MapLegend({
                         >
                             <div
                                 className={`flex items-center justify-between p-3 rounded-xl border transition-all ${isActive('fire')
-                                        ? 'bg-gradient-to-r from-red-500/15 to-transparent border-red-500/30 shadow-[0_0_20px_rgba(239,68,68,0.15)]'
-                                        : 'bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06]'
+                                    ? 'bg-gradient-to-r from-red-500/15 to-transparent border-red-500/30 shadow-[0_0_20px_rgba(239,68,68,0.15)]'
+                                    : 'bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06]'
                                     }`}
                             >
                                 <div className="flex items-center gap-3">
                                     <div
                                         className={`p-2 rounded-lg transition-all ${isActive('fire')
-                                                ? 'bg-red-500 shadow-[0_0_16px_rgba(239,68,68,0.5)]'
-                                                : 'bg-gray-800/50'
+                                            ? 'bg-red-500 shadow-[0_0_16px_rgba(239,68,68,0.5)]'
+                                            : 'bg-gray-800/50'
                                             }`}
                                     >
                                         <Flame
@@ -172,15 +172,15 @@ export default function MapLegend({
                         >
                             <div
                                 className={`flex items-center justify-between p-3 rounded-xl border transition-all ${isActive('volcano')
-                                        ? 'bg-gradient-to-r from-orange-500/15 to-transparent border-orange-500/30 shadow-[0_0_20px_rgba(249,115,22,0.15)]'
-                                        : 'bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06]'
+                                    ? 'bg-gradient-to-r from-orange-500/15 to-transparent border-orange-500/30 shadow-[0_0_20px_rgba(249,115,22,0.15)]'
+                                    : 'bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06]'
                                     }`}
                             >
                                 <div className="flex items-center gap-3">
                                     <div
                                         className={`p-2 rounded-lg transition-all ${isActive('volcano')
-                                                ? 'bg-orange-500 shadow-[0_0_16px_rgba(249,115,22,0.5)]'
-                                                : 'bg-gray-800/50'
+                                            ? 'bg-orange-500 shadow-[0_0_16px_rgba(249,115,22,0.5)]'
+                                            : 'bg-gray-800/50'
                                             }`}
                                     >
                                         <Mountain
@@ -208,15 +208,15 @@ export default function MapLegend({
                         >
                             <div
                                 className={`flex items-center justify-between p-3 rounded-xl border transition-all ${isActive('earthquake')
-                                        ? 'bg-gradient-to-r from-amber-500/15 to-transparent border-amber-500/30 shadow-[0_0_20px_rgba(245,158,11,0.15)]'
-                                        : 'bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06]'
+                                    ? 'bg-gradient-to-r from-amber-500/15 to-transparent border-amber-500/30 shadow-[0_0_20px_rgba(245,158,11,0.15)]'
+                                    : 'bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06]'
                                     }`}
                             >
                                 <div className="flex items-center gap-3">
                                     <div
                                         className={`p-2 rounded-lg transition-all ${isActive('earthquake')
-                                                ? 'bg-amber-500 shadow-[0_0_16px_rgba(245,158,11,0.5)]'
-                                                : 'bg-gray-800/50'
+                                            ? 'bg-amber-500 shadow-[0_0_16px_rgba(245,158,11,0.5)]'
+                                            : 'bg-gray-800/50'
                                             }`}
                                     >
                                         <Waves

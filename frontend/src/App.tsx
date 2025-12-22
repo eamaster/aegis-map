@@ -56,62 +56,56 @@ function App() {
         color: 'var(--text-primary)',
       }}
     >
-      {/* Header - Professional Glassmorphism Design */}
+      {/* Header - Professional Design using CSS Variables */}
       <header
-        className="relative flex items-center justify-between px-6 py-2.5 border-b z-50"
+        className="relative flex items-center justify-between px-6 py-2 border-b z-50 transition-all duration-200"
         style={{
-          background: theme === 'dark'
-            ? 'linear-gradient(135deg, rgba(17, 24, 39, 0.95) 0%, rgba(31, 41, 55, 0.95) 100%)'
-            : 'linear-gradient(135deg, rgba(255, 255, 255, 0.95) 0%, rgba(241, 245, 249, 0.95) 100%)',
+          height: '56px',
+          background: 'var(--glass-bg)',
           backdropFilter: 'blur(24px)',
           WebkitBackdropFilter: 'blur(24px)',
-          borderColor: theme === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
-          boxShadow: '0 4px 24px rgba(0, 0, 0, 0.2)'
+          borderColor: 'var(--color-border)',
+          boxShadow: 'var(--shadow-md)'
         }}
       >
-
-        {/* Logo - Softer design */}
-        <div className="relative flex items-center gap-3">
+        {/* Logo - Softer design using CSS Variables */}
+        <div className="relative flex items-center gap-2.5">
           <div
-            className="w-9 h-9 rounded-2xl flex items-center justify-center relative overflow-hidden group transition-all duration-300"
+            className="w-8 h-8 flex items-center justify-center relative overflow-hidden group transition-all duration-300 hover:scale-105"
             style={{
-              background: theme === 'dark'
-                ? 'linear-gradient(135deg, rgba(59, 130, 246, 0.15), rgba(147, 51, 234, 0.15))'
-                : 'linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(147, 51, 234, 0.1))',
-              border: theme === 'dark'
-                ? '1.5px solid rgba(59, 130, 246, 0.3)'
-                : '1.5px solid rgba(59, 130, 246, 0.2)',
-              boxShadow: theme === 'dark'
-                ? '0 4px 12px rgba(59, 130, 246, 0.2)'
-                : '0 2px 8px rgba(59, 130, 246, 0.15)'
+              borderRadius: '12px',
+              background: 'var(--logo-bg)',
+              border: '1.5px solid var(--logo-border)',
+              boxShadow: 'var(--logo-shadow)'
             }}
           >
             <Globe
-              size={18}
-              className="relative z-10 transition-transform group-hover:scale-110 duration-300"
+              size={16}
+              className="relative z-10 transition-transform group-hover:rotate-12 duration-500"
               style={{
-                color: theme === 'dark' ? 'rgb(96, 165, 250)' : 'rgb(37, 99, 235)'
+                color: 'var(--logo-icon-color)',
+                strokeWidth: 2.5
               }}
             />
           </div>
           <div>
             <h1
-              className="text-base font-bold tracking-tight"
+              className="text-sm font-bold tracking-tight leading-none"
               style={{
-                color: theme === 'dark' ? '#fff' : '#111827',
-                letterSpacing: '-0.01em'
+                color: 'var(--color-text-primary)',
+                letterSpacing: '-0.02em'
               }}
             >
               AegisMap
             </h1>
             <p
-              className="text-xs font-semibold"
+              className="text-[10px] font-medium leading-none mt-0.5"
               style={{
-                color: theme === 'dark' ? '#9ca3af' : '#6b7280',
-                letterSpacing: '0.025em'
+                color: 'var(--color-text-tertiary)',
+                letterSpacing: '0.03em'
               }}
             >
-              Disaster Monitoring
+              Disaster Monitor
             </p>
           </div>
         </div>
