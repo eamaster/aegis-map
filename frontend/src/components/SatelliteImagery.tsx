@@ -48,8 +48,6 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
     modisDate.setDate(modisDate.getDate() - 4);
     thermalDateStr = modisDate.toISOString().split('T')[0];
 
-    console.log(`📅 Dates: FIRMS=${dateStr}, MODIS=${thermalDateStr}`);
-
     // Set NASA Worldview URL with disaster-specific layers
     const layers = getWorldviewLayers(disasterType);
     // Use thermal date for Worldview if thermal layer selected
@@ -223,7 +221,10 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
                     {getSeverityLevel(fireStats.avgTemp).label}
                   </div>
                   <div className="text-xs text-gray-400">Fire Intensity</div>
-                  <div className="mt-1 text-xs text-gray-400">{fireStats.avgTemp.toFixed(0)}K / {(fireStats.avgTemp - 273.15).toFixed(0)}°C</div>
+                  <div className="mt-1 text-xs text-gray-400">
+                    {(fireStats.avgTemp - 273.15).toFixed(0)}°C
+                    <span className="text-gray-500 ml-1">({fireStats.avgTemp.toFixed(0)}K)</span>
+                  </div>
                 </div>
               </div>
 
@@ -231,6 +232,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
                 <AlertCircle className="text-orange-400" size={14} />
                 <span className="text-gray-300">
                   Max Fire Power: <span className="text-orange-300 font-semibold">{fireStats.maxFRP.toFixed(1)} MW</span>
+                  <span className="text-gray-500 text-[10px] ml-1">(industrial-scale heat)</span>
                 </span>
               </div>
             </div>
@@ -256,7 +258,18 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
             <AlertCircle className="text-yellow-400 flex-shrink-0 mt-0.5" size={16} />
             <div>
               <p className="text-xs text-yellow-200 font-medium">
-                <strong>Historical Event:</strong> First detected {daysSinceDetection} days ago.
+                <strong>Historical Event:</strong> First detected {(() => {
+                  if (daysSinceDetection >= 365) {
+                    const years = Math.floor(daysSinceDetection / 365);
+                    const months = Math.floor((daysSinceDetection % 365) / 30);
+                    return months > 0 ? `${years} year${years > 1 ? 's' : ''} and ${months} month${months > 1 ? 's' : ''} ago` : `${years} year${years > 1 ? 's' : ''} ago`;
+                  } else if (daysSinceDetection >= 30) {
+                    const months = Math.floor(daysSinceDetection / 30);
+                    const days = daysSinceDetection % 30;
+                    return days > 0 ? `${months} month${months > 1 ? 's' : ''} and ${days} day${days > 1 ? 's' : ''} ago` : `${months} month${months > 1 ? 's' : ''} ago`;
+                  }
+                  return `${daysSinceDetection} day${daysSinceDetection > 1 ? 's' : ''} ago`;
+                })()}.
               </p>
               <p className="text-xs text-yellow-300/80 mt-1">
                 Showing current satellite imagery and fire hotspots (last 7 days). Conditions may differ from initial detection.
@@ -343,19 +356,8 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
                   const relLng = ((hotspot.longitude - lng) / imgBboxSize) * 100 + 50;
                   const relLat = ((lat - hotspot.latitude) / imgBboxSize) * 100 + 50;
 
-                  // Debug first hotspot positioning (can remove after testing)
-                  if (idx === 0 && hotspot.confidence !== 'l') {
-                    console.log('🔥 Hotspot positioning:', {
-                      hotspot: { lat: hotspot.latitude, lng: hotspot.longitude },
-                      center: { lat, lng },
-                      bbox: { size: bboxSize, total: imgBboxSize },
-                      position: { left: relLng.toFixed(1) + '%', top: relLat.toFixed(1) + '%' }
-                    });
-                  }
-
                   // Only show if within bounds (with small margin for edge cases)
                   if (relLng < -5 || relLng > 105 || relLat < -5 || relLat > 105) {
-                    if (idx === 0) console.log('⚠️ Hotspot outside visible bounds, skipping');
                     return null;
                   }
 
