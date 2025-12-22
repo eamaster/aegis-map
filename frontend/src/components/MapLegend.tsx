@@ -155,9 +155,9 @@ export default function MapLegend({
                             className="w-full group transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
                         >
                             <div
-                                className={`flex items-center justify-between p-3 rounded-xl border transition-all duration-500 ease-in-out transform ${isActive('fire')
-                                    ? 'bg-gradient-to-r from-red-500/15 to-transparent border-red-500/30 shadow-[0_0_20px_rgba(239,68,68,0.15)] scale-[1.01]'
-                                    : 'bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06] opacity-60 hover:opacity-80'
+                                className={`flex items-center justify-between p-3 border-b transition-all duration-500 ease-in-out transform ${isActive('fire')
+                                    ? 'bg-gradient-to-r from-red-500/15 to-transparent border-red-500/30'
+                                    : 'border-white/[0.05] opacity-60 hover:opacity-80 hover:bg-white/[0.03]'
                                     }`}
                             >
                                 <div className="flex items-center gap-3">
@@ -191,9 +191,9 @@ export default function MapLegend({
                             className="w-full group transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
                         >
                             <div
-                                className={`flex items-center justify-between p-3 rounded-xl border transition-all duration-500 ease-in-out transform ${isActive('volcano')
-                                    ? 'bg-gradient-to-r from-orange-500/15 to-transparent border-orange-500/30 shadow-[0_0_20px_rgba(249,115,22,0.15)] scale-[1.01]'
-                                    : 'bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06] opacity-60 hover:opacity-80'
+                                className={`flex items-center justify-between p-3 border-b transition-all duration-500 ease-in-out transform ${isActive('volcano')
+                                    ? 'bg-gradient-to-r from-orange-500/15 to-transparent border-orange-500/30'
+                                    : 'border-white/[0.05] opacity-60 hover:opacity-80 hover:bg-white/[0.03]'
                                     }`}
                             >
                                 <div className="flex items-center gap-3">
@@ -227,9 +227,9 @@ export default function MapLegend({
                             className="w-full group transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
                         >
                             <div
-                                className={`flex items-center justify-between p-3 rounded-xl border transition-all duration-500 ease-in-out transform ${isActive('earthquake')
-                                    ? 'bg-gradient-to-r from-amber-500/15 to-transparent border-amber-500/30 shadow-[0_0_20px_rgba(245,158,11,0.15)] scale-[1.01]'
-                                    : 'bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06] opacity-60 hover:opacity-80'
+                                className={`flex items-center justify-between p-3 border-b transition-all duration-500 ease-in-out transform ${isActive('earthquake')
+                                    ? 'bg-gradient-to-r from-amber-500/15 to-transparent border-amber-500/30'
+                                    : 'border-white/[0.05] opacity-60 hover:opacity-80 hover:bg-white/[0.03]'
                                     }`}
                             >
                                 <div className="flex items-center gap-3">
