@@ -12,9 +12,10 @@ import SatelliteImagery from './SatelliteImagery';
 interface SidebarProps {
     disaster: Disaster | null;
     onClose: () => void;
+    isOpen?: boolean;
 }
 
-export default function Sidebar({ disaster, onClose }: SidebarProps) {
+export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarProps) {
     const [nextPass, setNextPass] = useState<SatellitePass | null>(null);
     const [cloudCover, setCloudCover] = useState<number | null>(null);
     const [aiAnalysis, setAiAnalysis] = useState<string>('');
@@ -494,12 +495,9 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
 
     return (
         <div
-            className="fixed right-0 top-[64px] bottom-0 z-[100] w-[420px] flex flex-col overflow-hidden"
+            className={`fixed right-0 top-[56px] md:top-[64px] bottom-0 z-[100] w-full md:w-[420px] flex flex-col overflow-hidden transition-transform duration-300 ${isOpen ? 'translate-x-0' : 'translate-x-full md:translate-x-0'}`}
             style={{
-                height: 'calc(100vh - 64px)',
-                right: 0,
-                left: 'auto',
-                position: 'fixed',
+                height: 'calc(100vh - 56px)',
                 background: 'var(--glass-bg)',
                 backdropFilter: 'blur(32px)',
                 WebkitBackdropFilter: 'blur(32px)',
