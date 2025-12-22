@@ -36,13 +36,25 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
   const [fetchingFire, setFetchingFire] = useState(false);
 
   useEffect(() => {
-    // ✅ FIXED: Always use current date for real-time disaster monitoring
-    const dateStr = new Date().toISOString().split('T')[0];
+    // ✅ FIXED: Use appropriate date based on data source latency
+    let dateStr: string;
+    let thermalDateStr: string;
+
+    // Current date for FIRMS fire hotspots (3-hour latency)
+    dateStr = new Date().toISOString().split('T')[0];
+
+    // MODIS has 3-4 day processing delay - use 4 days ago for thermal layer
+    const modisDate = new Date();
+    modisDate.setDate(modisDate.getDate() - 4);
+    thermalDateStr = modisDate.toISOString().split('T')[0];
+
+    console.log(`📅 Dates: FIRMS=${dateStr}, MODIS=${thermalDateStr}`);
 
     // Set NASA Worldview URL with disaster-specific layers
     const layers = getWorldviewLayers(disasterType);
-    // ✅ FIXED: Use current date for Worldview link (matches displayed imagery)
-    const worldview = `https://worldview.earthdata.nasa.gov/?v=${lng - 1.5},${lat - 1.5},${lng + 1.5},${lat + 1.5}&t=${dateStr}&l=${layers}`;
+    // Use thermal date for Worldview if thermal layer selected
+    const worldviewDate = selectedLayer === 'thermal' ? thermalDateStr : dateStr;
+    const worldview = `https://worldview.earthdata.nasa.gov/?v=${lng - 1.5},${lat - 1.5},${lng + 1.5},${lat + 1.5}&t=${worldviewDate}&l=${layers}`;
     setWorldviewUrl(worldview);
 
     // Fetch fire data for wildfires
@@ -50,8 +62,8 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
       fetchFireHotspots(lat, lng);
     }
 
-    // Update imagery based on selected layer
-    updateImagery(lat, lng, dateStr);
+    // Update imagery based on selected layer (pass both dates)
+    updateImagery(lat, lng, selectedLayer === 'thermal' ? thermalDateStr : dateStr);
   }, [lat, lng, disasterType, date, selectedLayer]);
 
   const getWorldviewLayers = (type: string): string => {
@@ -381,7 +393,11 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
             {/* Data Timestamp */}
             <div className="absolute bottom-2 right-2 bg-black/80 px-2 py-1 rounded text-xs text-gray-300 backdrop-blur-sm">
               {selectedLayer === 'thermal' ? (
-                <span>NASA: {date ? new Date(date).toLocaleDateString() : 'Latest'}</span>
+                <span>NASA: {(() => {
+                  const d = new Date();
+                  d.setDate(d.getDate() - 4);
+                  return d.toLocaleDateString();
+                })()} (latest)</span>
               ) : (
                 <span title="Mapbox imagery date may differ from disaster date">
                   Base: Commercial
