@@ -36,7 +36,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
 
         const fetchData = async () => {
             try {
-                console.log('🚀 Starting data fetch for disaster:', disaster.title);
+
                 // DEBUG: Log TLE fetch
                 (window as any).aegisDebug?.log(
                     'tles',
@@ -45,7 +45,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                 );
 
                 // Fetch TLEs
-                console.log('📡 Fetching TLEs from:', `${API_BASE}/api/tles`);
+
                 const tleResponse = await fetch(`${API_BASE}/api/tles`);
 
                 // Check content type to determine if it's JSON (error) or text (TLE data)
@@ -156,7 +156,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                 }
 
                 // Calculate next pass
-                console.log('🛰️ Calculating satellite passes for:', { latNum, lngNum, tleLength: tles.length });
+
                 (window as any).aegisDebug?.log(
                     'orbital',
                     `Calculating satellite passes for disaster at (${latNum}, ${lngNum})`,
@@ -168,27 +168,27 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
 
                 // If no pass found with default 25°, try with lower threshold (15°)
                 if (!pass) {
-                    console.log('⚠️ No passes found with 25° threshold, trying 15°...');
+
                     const lowerPasses = predictPasses(tles, latNum, lngNum, 15);
-                    console.log('📊 Lower threshold passes:', { count: lowerPasses.length, passes: lowerPasses });
+
                     if (lowerPasses.length > 0) {
                         pass = lowerPasses[0];
-                        console.log('✅ Found pass with lower threshold:', pass);
+
                     }
                 }
 
                 // If still no pass, try even lower threshold (5°)
                 if (!pass) {
-                    console.log('⚠️ No passes found with 15° threshold, trying 5°...');
+
                     const evenLowerPasses = predictPasses(tles, latNum, lngNum, 5);
-                    console.log('📊 Even lower threshold passes:', { count: evenLowerPasses.length, passes: evenLowerPasses });
+
                     if (evenLowerPasses.length > 0) {
                         pass = evenLowerPasses[0];
-                        console.log('✅ Found pass with 5° threshold:', pass);
+
                     }
                 }
 
-                console.log('🛰️ Satellite pass result:', pass);
+
 
                 if (!pass) {
                     console.warn('⚠️ No satellite passes found in next 24 hours even with lower threshold');
@@ -249,7 +249,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
         try {
             const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&hourly=cloud_cover&forecast_days=2`;
 
-            console.log('🌤️ Fetching weather from:', url);
+
             // DEBUG: Log weather API call
             (window as any).aegisDebug?.log(
                 'weather',
@@ -364,7 +364,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
         // Trigger AI analysis if we have all required data OR if we have disaster but no pass (fallback)
         if (disaster && !loadingAnalysis) {
             if (nextPass && cloudCover !== null && !aiAnalysis) {
-                console.log('✅ Triggering AI analysis with satellite pass data...');
+
                 analyzePass();
             } else if (!nextPass && cloudCover !== null && !aiAnalysis) {
                 // Fallback: trigger AI analysis even without satellite pass
@@ -423,7 +423,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
             console.warn('⚠️ analyzePass called without cloudCover');
             return;
         }
-        console.log('🤖 analyzePass called with:', { disaster: disaster.title, nextPass, cloudCover });
+
 
         setLoadingAnalysis(true);
         try {
@@ -442,7 +442,7 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
                 requestBody
             );
 
-            console.log('🤖 Calling Gemini API:', { API_BASE, requestBody });
+
             const response = await fetch(`${API_BASE}/api/analyze`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -557,11 +557,11 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
     };
 
     useEffect(() => {
-        console.log('📋 Sidebar rendered with disaster:', disaster);
+
     }, [disaster]);
 
     if (!disaster) {
-        console.log('❌ Sidebar: No disaster provided, returning null');
+
         return null;
     }
 

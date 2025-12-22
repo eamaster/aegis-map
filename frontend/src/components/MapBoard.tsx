@@ -11,7 +11,6 @@ import MapLegend from './MapLegend';
 
 // Set Mapbox access token
 const accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
-console.log('Mapbox Token:', accessToken ? 'Token loaded' : 'ERROR: Token not found!');
 mapboxgl.accessToken = accessToken;
 
 interface MapBoardProps {
@@ -23,8 +22,6 @@ interface MapBoardProps {
 // Helper function to safely remove all disaster layers and sources
 const removeDisasterLayers = (mapInstance: mapboxgl.Map | null) => {
     if (!mapInstance) return;
-
-    console.log('🧹 Cleaning up existing layers and sources...');
 
     // Stop all animations first
     ['firesAnimationId', 'earthquakesAnimationId', 'volcanoesAnimationId'].forEach(animId => {
@@ -52,7 +49,6 @@ const removeDisasterLayers = (mapInstance: mapboxgl.Map | null) => {
         if (mapInstance.getSource(sourceId)) {
             try {
                 mapInstance.removeSource(sourceId);
-                console.log(`  ✅ Removed source: ${sourceId}`);
             } catch (e) {
                 console.warn(`  ⚠️ Could not remove source ${sourceId}:`, e);
             }
@@ -93,21 +89,30 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
             return;
         }
 
-        console.log('Initializing Mapbox map...');
-
         try {
             // Create map instance with Standard Satellite style
             map.current = new mapboxgl.Map({
                 container: mapContainer.current,
-                style: 'mapbox://styles/mapbox/standard-satellite', // ✅ High-quality satellite imagery
-                center: [-100, 40], // US West Coast focus
-                zoom: 3.5,
-                projection: { name: 'globe' } as any, // 3D globe
+                style: 'mapbox://styles/mapbox/standard-satellite',
+                center: [0, 20], // ✅ Global center (Africa/Europe visible)
+                zoom: 2, // ✅ Wider view to see full disaster distribution
+                projection: { name: 'globe' } as any,
+                pitch: 0, // Flat view for better overview
+                bearing: 0, // North-up orientation
+                attributionControl: false, // ✅ Remove default cluttered attribution
             });
+
+            // ✅ Add compact attribution in bottom-left
+            map.current.addControl(
+                new mapboxgl.AttributionControl({
+                    compact: true,
+                    customAttribution: '© Mapbox © OpenStreetMap'
+                }),
+                'bottom-left'
+            );
 
             // DEBUG: Expose map for console debugging
             (window as any).mapDebug = map.current;
-            console.log('Map instance created. Access via window.mapDebug');
 
             // Add navigation controls
             map.current.addControl(new mapboxgl.NavigationControl(), 'bottom-right');
@@ -132,7 +137,6 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
 
             // Load disaster data when map is ready
             map.current.on('load', () => {
-                console.log('Map loaded successfully!');
                 loadDisasters();
             });
         } catch (error) {
@@ -257,8 +261,6 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
     useEffect(() => {
         if (!map.current || disasters.length === 0) return;
 
-        console.log('🔄 Filters changed, re-rendering layers:', Array.from(activeFilters));
-
         // Use helper function to clean up
         removeDisasterLayers(map.current);
 
@@ -276,7 +278,6 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
 
         // ✅ Filter disasters based on active filters
         const visibleDisasters = disasters.filter(d => activeFilters.has(d.type));
-        console.log(`📍 Rendering ${visibleDisasters.length}/${disasters.length} disasters (filters:`, Array.from(activeFilters), ')');
 
         // Separate disasters by type
         const fires = visibleDisasters.filter((d) => d.type === 'fire');
@@ -361,7 +362,6 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
                 e.originalEvent?.stopPropagation();
                 if (e.features && e.features[0]) {
                     const props = e.features[0].properties as any;
-                    console.log('🔥 Fire marker clicked!', props);
                     // Handle both uppercase and lowercase coordinate properties
                     const lat = props.lat || props.Lat || props.latitude || props.Latitude || e.lngLat.lat;
                     const lng = props.lng || props.Lng || props.longitude || props.Longitude || e.lngLat.lng;
@@ -374,7 +374,6 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
                         date: props.date || props.start || new Date().toISOString(),
                         severity: props.severity || 'medium',
                     };
-                    console.log('Selected disaster:', disaster);
                     onDisasterSelect(disaster);
                 }
             });
@@ -487,7 +486,6 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
                 e.originalEvent?.stopPropagation();
                 if (e.features && e.features[0]) {
                     const props = e.features[0].properties as any;
-                    console.log('🌍 Earthquake marker clicked!', props);
                     // Handle both uppercase and lowercase coordinate properties
                     const latValue = props.lat || props.Lat || props.latitude || props.Latitude || e.lngLat.lat;
                     const lngValue = props.lng || props.Lng || props.longitude || props.Longitude || e.lngLat.lng;
@@ -511,7 +509,6 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
                         severity: props.severity || 'medium',
                         magnitude: props.magnitude ? parseFloat(props.magnitude) : undefined,
                     };
-                    console.log('✅ Selected disaster (validated):', disaster);
                     onDisasterSelect(disaster);
                 }
             });
@@ -625,7 +622,6 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
                 e.originalEvent?.stopPropagation();
                 if (e.features && e.features[0]) {
                     const props = e.features[0].properties as any;
-                    console.log('🌋 Volcano marker clicked!', props);
                     // Handle both uppercase and lowercase coordinate properties
                     const lat = props.lat || props.Lat || props.latitude || props.Latitude || e.lngLat.lat;
                     const lng = props.lng || props.Lng || props.longitude || props.Longitude || e.lngLat.lng;
@@ -638,7 +634,6 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
                         date: props.date || props.start || new Date().toISOString(),
                         severity: props.severity || 'medium',
                     };
-                    console.log('Selected disaster:', disaster);
                     onDisasterSelect(disaster);
                 }
             });
@@ -710,9 +705,21 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
 
             {/* Loading overlay */}
             {loading && !mapError && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 z-10">
-                    <div className="bg-gray-900 px-6 py-4 rounded-lg shadow-2xl">
-                        <p className="text-white text-lg">Loading disaster data...</p>
+                <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm z-10">
+                    <div className="glass-card rounded-2xl px-8 py-6 max-w-md text-center">
+                        {/* Animated globe */}
+                        <div className="mb-4 flex justify-center">
+                            <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center animate-pulse">
+                                <span className="text-3xl">🌐</span>
+                            </div>
+                        </div>
+                        <h3 className="text-xl font-bold text-white mb-2">Initializing AegisMap</h3>
+                        <p className="text-gray-300 text-sm">
+                            Loading global disaster data from NASA EONET...
+                        </p>
+                        <div className="mt-4 w-full bg-gray-700 rounded-full h-1.5 overflow-hidden">
+                            <div className="h-full bg-gradient-to-r from-blue-500 to-purple-600 animate-pulse" style={{ width: '60%' }} />
+                        </div>
                     </div>
                 </div>
             )}
