@@ -494,9 +494,9 @@ export default function Sidebar({ disaster, onClose }: SidebarProps) {
 
     return (
         <div
-            className="fixed right-0 top-[56px] bottom-0 z-[100] w-[420px] flex flex-col overflow-hidden"
+            className="fixed right-0 top-[64px] bottom-0 z-[100] w-[420px] flex flex-col overflow-hidden"
             style={{
-                height: 'calc(100vh - 56px)',
+                height: 'calc(100vh - 64px)',
                 right: 0,
                 left: 'auto',
                 position: 'fixed',

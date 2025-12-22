@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Globe, HelpCircle } from 'lucide-react';
-import { useTheme } from './contexts/ThemeContext';
+
 import { Toaster } from 'react-hot-toast';
 import MapBoard from './components/MapBoard';
 import Sidebar from './components/Sidebar';
@@ -13,8 +13,7 @@ function App() {
   const [selectedDisaster, setSelectedDisaster] = useState<Disaster | null>(null);
   const [showTutorial, setShowTutorial] = useState(false);
 
-  // Theme state
-  const { theme } = useTheme();
+  // Theme context imported for ThemeToggle component
 
   // Filter state - all disasters visible by default
   const [activeFilters, setActiveFilters] = useState<Set<string>>(
@@ -56,96 +55,98 @@ function App() {
         color: 'var(--text-primary)',
       }}
     >
-      {/* Header - Professional Design using CSS Variables */}
+      {/* Professional Header - Enterprise Design */}
       <header
-        className="relative flex items-center justify-between px-6 py-2 border-b z-50 transition-all duration-200"
+        className="relative flex items-center justify-between px-8 py-3.5 border-b z-50 transition-all duration-300"
         style={{
-          height: '56px',
-          background: 'var(--glass-bg)',
-          backdropFilter: 'blur(24px)',
-          WebkitBackdropFilter: 'blur(24px)',
-          borderColor: 'var(--color-border)',
-          boxShadow: 'var(--shadow-md)'
+          height: '64px',
+          background: 'linear-gradient(135deg, rgba(10, 15, 28, 0.98) 0%, rgba(17, 24, 39, 0.98) 100%)',
+          backdropFilter: 'blur(32px)',
+          WebkitBackdropFilter: 'blur(32px)',
+          borderColor: 'rgba(59, 130, 246, 0.2)',
+          boxShadow: '0 4px 24px rgba(0, 0, 0, 0.5), 0 0 1px rgba(59, 130, 246, 0.3)'
         }}
       >
-        {/* Logo - Softer design using CSS Variables */}
-        <div className="relative flex items-center gap-2.5">
+        {/* Logo - Professional Brand Identity */}
+        <div className="relative flex items-center gap-3.5">
+          {/* Globe Icon Badge */}
           <div
-            className="w-8 h-8 flex items-center justify-center relative overflow-hidden group transition-all duration-300 hover:scale-105"
+            className="w-11 h-11 flex items-center justify-center relative overflow-hidden group transition-all duration-300 hover:scale-105"
             style={{
-              borderRadius: '12px',
-              background: 'var(--logo-bg)',
-              border: '1.5px solid var(--logo-border)',
-              boxShadow: 'var(--logo-shadow)'
+              borderRadius: '16px',
+              background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(37, 99, 235, 0.15))',
+              border: '2px solid rgba(59, 130, 246, 0.4)',
+              boxShadow: '0 4px 16px rgba(59, 130, 246, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.1)'
             }}
           >
             <Globe
-              size={16}
+              size={22}
               className="relative z-10 transition-transform group-hover:rotate-12 duration-500"
               style={{
-                color: 'var(--logo-icon-color)',
-                strokeWidth: 2.5
+                color: 'rgb(96, 165, 250)',
+                strokeWidth: 2.5,
+                filter: 'drop-shadow(0 0 8px rgba(59, 130, 246, 0.5))'
+              }}
+            />
+            <div
+              className="absolute inset-0 rounded-[16px] opacity-0 group-hover:opacity-100 transition-opacity duration-500"
+              style={{
+                background: 'radial-gradient(circle at center, rgba(59, 130, 246, 0.3), transparent 70%)'
               }}
             />
           </div>
-          <div>
+
+          {/* Brand Text */}
+          <div className="flex flex-col">
             <h1
-              className="text-[15px] font-bold tracking-tight leading-none"
+              className="text-xl font-black tracking-tight leading-none"
               style={{
-                color: 'var(--color-text-primary)',
-                letterSpacing: '-0.015em'
+                color: '#ffffff',
+                letterSpacing: '-0.03em',
+                textShadow: '0 2px 8px rgba(59, 130, 246, 0.3)'
               }}
             >
               AegisMap
             </h1>
             <p
-              className="text-[11px] font-semibold leading-none mt-0.5"
+              className="text-xs font-semibold leading-none mt-1"
               style={{
-                color: 'var(--color-text-tertiary)',
-                letterSpacing: '0.02em'
+                color: 'rgb(156, 163, 175)',
+                letterSpacing: '0.05em',
+                textTransform: 'uppercase'
               }}
             >
-              Disaster Monitor
+              Disaster Monitoring System
             </p>
           </div>
         </div>
 
-        {/* Right Buttons - Enhanced with glassmorphism */}
-        <div className="relative flex items-center gap-2">
-          {/* Theme Toggle */}
+        {/* Right Controls */}
+        <div className="relative flex items-center gap-2.5">
           <ThemeToggle />
 
-          {/* Help Button - Glassmorphism style */}
+          {/* Help Button */}
           <button
             onClick={() => setShowTutorial(true)}
-            className="relative p-2.5 rounded-xl transition-all duration-200 hover:scale-105"
+            className="p-2.5 rounded-xl transition-all duration-200 hover:scale-105 active:scale-95"
             style={{
-              background: theme === 'dark'
-                ? 'rgba(255, 255, 255, 0.05)'
-                : 'rgba(0, 0, 0, 0.05)',
-              border: theme === 'dark'
-                ? '1px solid rgba(255, 255, 255, 0.1)'
-                : '1px solid rgba(0, 0, 0, 0.1)',
-              backdropFilter: 'blur(12px)',
-              color: theme === 'dark' ? '#9ca3af' : '#6b7280',
-              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)'
+              background: 'rgba(59, 130, 246, 0.1)',
+              border: '1px solid rgba(59, 130, 246, 0.3)',
+              color: 'rgb(156, 163, 175)',
+              boxShadow: '0 2px 8px rgba(0, 0, 0, 0.2)'
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.background = theme === 'dark'
-                ? 'rgba(255, 255, 255, 0.1)'
-                : 'rgba(0, 0, 0, 0.1)';
-              e.currentTarget.style.color = theme === 'dark' ? '#fff' : '#111827';
+              e.currentTarget.style.background = 'rgba(59, 130, 246, 0.2)';
+              e.currentTarget.style.color = '#ffffff';
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.background = theme === 'dark'
-                ? 'rgba(255, 255, 255, 0.05)'
-                : 'rgba(0, 0, 0, 0.05)';
-              e.currentTarget.style.color = theme === 'dark' ? '#9ca3af' : '#6b7280';
+              e.currentTarget.style.background = 'rgba(59, 130, 246, 0.1)';
+              e.currentTarget.style.color = 'rgb(156, 163, 175)';
             }}
             title="Help (Press ?)"
             aria-label="Show help"
           >
-            <HelpCircle size={18} />
+            <HelpCircle size={18} strokeWidth={2.5} />
           </button>
         </div>
       </header>

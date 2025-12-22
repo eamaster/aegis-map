@@ -76,55 +76,75 @@ export default function MapLegend({
         );
     }
 
-    // Expanded state - full panel
+    // Expanded state - Professional Dashboard Design
     return (
         <div className="absolute top-6 left-6 z-30">
             <div
-                className="w-[280px] rounded-[28px] overflow-hidden transition-all duration-300"
+                className="w-[320px] overflow-hidden transition-all duration-300"
                 style={{
-                    background: 'var(--glass-bg)',
+                    borderRadius: '24px',
+                    background: 'linear-gradient(135deg, rgba(10, 15, 28, 0.95) 0%, rgba(17, 24, 39, 0.95) 100%)',
                     backdropFilter: 'blur(32px)',
                     WebkitBackdropFilter: 'blur(32px)',
-                    border: '1px solid var(--color-border)',
-                    boxShadow: 'var(--shadow-xl)'
+                    border: '1px solid rgba(59, 130, 246, 0.2)',
+                    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6), 0 0 1px rgba(59, 130, 246, 0.4)'
                 }}
             >
-                {/* Header */}
-                <div className="px-5 pt-4 pb-3 flex items-center justify-between border-b border-white/10">
-                    <div className="flex items-center gap-2.5">
-                        <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse shadow-[0_0_12px_rgba(74,222,128,0.8)]" />
-                        <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">
+                {/* Header - Prominent Live Indicator */}
+                <div
+                    className="px-6 pt-5 pb-4 flex items-center justify-between"
+                    style={{
+                        borderBottom: '1px solid rgba(59, 130, 246, 0.15)'
+                    }}
+                >
+                    <div className="flex items-center gap-3">
+                        <div
+                            className="w-2.5 h-2.5 rounded-full bg-green-400 animate-pulse"
+                            style={{
+                                boxShadow: '0 0 16px rgba(74, 222, 128, 0.9), 0 0 4px rgba(74, 222, 128, 0.5)'
+                            }}
+                        />
+                        <span
+                            className="text-sm font-black uppercase tracking-widest"
+                            style={{
+                                color: 'rgb(209, 213, 219)',
+                                letterSpacing: '0.1em'
+                            }}
+                        >
                             Live Monitor
                         </span>
                     </div>
                     <button
                         onClick={() => setIsExpanded(false)}
                         className="text-gray-500 hover:text-white transition-colors p-1.5 hover:bg-white/5 rounded-lg"
-                        aria-label="Collapse"
                     >
-                        <ChevronUp size={14} />
+                        <ChevronUp size={16} />
                     </button>
                 </div>
 
-                {/* Main Content */}
-                <div className="px-5 pt-5 pb-5 space-y-5">
-                    {/* Total Count - Hero Number */}
+                {/* Main Content - Professional Hierarchy */}
+                <div className="px-6 pt-6 pb-6 space-y-6">
+                    {/* Hero Number - Primary Focus */}
                     <div>
-                        <div className="flex items-baseline gap-2 mb-1">
-                            <span
-                                className="text-5xl font-black text-white tracking-tighter tabular-nums"
+                        <span
+                            className="block text-6xl font-black text-white tracking-tighter tabular-nums"
+                            style={{
+                                lineHeight: '1',
+                                textShadow: '0 4px 24px rgba(59, 130, 246, 0.4)'
+                            }}
+                        >
+                            {counts.total.toLocaleString()}
+                        </span>
+                        <div className="flex items-baseline gap-2 mt-2">
+                            <span className="text-base font-bold text-gray-300">Active Events</span>
+                            <div
+                                className="h-1 flex-1 rounded-full"
                                 style={{
-                                    textShadow: '0 2px 16px rgba(59, 130, 246, 0.3)'
+                                    background: 'linear-gradient(90deg, rgba(59, 130, 246, 0.6), transparent)',
+                                    boxShadow: '0 0 12px rgba(59, 130, 246, 0.4)'
                                 }}
-                            >
-                                {counts.total.toLocaleString()}
-                            </span>
-                            <div className="flex flex-col">
-                                <span className="text-gray-400 font-semibold text-xs">active</span>
-                                <span className="text-gray-500 font-medium text-[10px]">events</span>
-                            </div>
+                            />
                         </div>
-                        <div className="h-0.5 w-16 rounded-full bg-gradient-to-r from-blue-500 to-purple-600 shadow-[0_0_12px_rgba(59,130,246,0.5)]" />
                     </div>
 
                     {/* Disaster Type Filters */}
@@ -136,15 +156,15 @@ export default function MapLegend({
                         >
                             <div
                                 className={`flex items-center justify-between p-3 rounded-xl border transition-all duration-500 ease-in-out transform ${isActive('fire')
-                                        ? 'bg-gradient-to-r from-red-500/15 to-transparent border-red-500/30 shadow-[0_0_20px_rgba(239,68,68,0.15)] scale-[1.01]'
-                                        : 'bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06] opacity-60 hover:opacity-80'
+                                    ? 'bg-gradient-to-r from-red-500/15 to-transparent border-red-500/30 shadow-[0_0_20px_rgba(239,68,68,0.15)] scale-[1.01]'
+                                    : 'bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06] opacity-60 hover:opacity-80'
                                     }`}
                             >
                                 <div className="flex items-center gap-3">
                                     <div
                                         className={`p-2 rounded-lg transition-all duration-500 ease-in-out transform ${isActive('fire')
-                                                ? 'bg-red-500 shadow-[0_0_16px_rgba(239,68,68,0.5)] scale-110'
-                                                : 'bg-gray-800/50 scale-100'
+                                            ? 'bg-red-500 shadow-[0_0_16px_rgba(239,68,68,0.5)] scale-110'
+                                            : 'bg-gray-800/50 scale-100'
                                             }`}
                                     >
                                         <Flame
@@ -172,15 +192,15 @@ export default function MapLegend({
                         >
                             <div
                                 className={`flex items-center justify-between p-3 rounded-xl border transition-all duration-500 ease-in-out transform ${isActive('volcano')
-                                        ? 'bg-gradient-to-r from-orange-500/15 to-transparent border-orange-500/30 shadow-[0_0_20px_rgba(249,115,22,0.15)] scale-[1.01]'
-                                        : 'bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06] opacity-60 hover:opacity-80'
+                                    ? 'bg-gradient-to-r from-orange-500/15 to-transparent border-orange-500/30 shadow-[0_0_20px_rgba(249,115,22,0.15)] scale-[1.01]'
+                                    : 'bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06] opacity-60 hover:opacity-80'
                                     }`}
                             >
                                 <div className="flex items-center gap-3">
                                     <div
                                         className={`p-2 rounded-lg transition-all duration-500 ease-in-out transform ${isActive('volcano')
-                                                ? 'bg-orange-500 shadow-[0_0_16px_rgba(249,115,22,0.5)] scale-110'
-                                                : 'bg-gray-800/50 scale-100'
+                                            ? 'bg-orange-500 shadow-[0_0_16px_rgba(249,115,22,0.5)] scale-110'
+                                            : 'bg-gray-800/50 scale-100'
                                             }`}
                                     >
                                         <Mountain
@@ -208,15 +228,15 @@ export default function MapLegend({
                         >
                             <div
                                 className={`flex items-center justify-between p-3 rounded-xl border transition-all duration-500 ease-in-out transform ${isActive('earthquake')
-                                        ? 'bg-gradient-to-r from-amber-500/15 to-transparent border-amber-500/30 shadow-[0_0_20px_rgba(245,158,11,0.15)] scale-[1.01]'
-                                        : 'bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06] opacity-60 hover:opacity-80'
+                                    ? 'bg-gradient-to-r from-amber-500/15 to-transparent border-amber-500/30 shadow-[0_0_20px_rgba(245,158,11,0.15)] scale-[1.01]'
+                                    : 'bg-white/[0.03] border-white/[0.05] hover:bg-white/[0.06] opacity-60 hover:opacity-80'
                                     }`}
                             >
                                 <div className="flex items-center gap-3">
                                     <div
                                         className={`p-2 rounded-lg transition-all duration-500 ease-in-out transform ${isActive('earthquake')
-                                                ? 'bg-amber-500 shadow-[0_0_16px_rgba(245,158,11,0.5)] scale-110'
-                                                : 'bg-gray-800/50 scale-100'
+                                            ? 'bg-amber-500 shadow-[0_0_16px_rgba(245,158,11,0.5)] scale-110'
+                                            : 'bg-gray-800/50 scale-100'
                                             }`}
                                     >
                                         <Waves
