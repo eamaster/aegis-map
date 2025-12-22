@@ -58,7 +58,7 @@ function App() {
     >
       {/* Header - Professional Glassmorphism Design */}
       <header
-        className="relative flex items-center justify-between px-6 py-3.5 border-b z-50"
+        className="relative flex items-center justify-between px-6 py-2.5 border-b z-50"
         style={{
           background: theme === 'dark'
             ? 'linear-gradient(135deg, rgba(17, 24, 39, 0.95) 0%, rgba(31, 41, 55, 0.95) 100%)'
@@ -66,42 +66,40 @@ function App() {
           backdropFilter: 'blur(24px)',
           WebkitBackdropFilter: 'blur(24px)',
           borderColor: theme === 'dark' ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
-          boxShadow: '0 4px 24px rgba(0, 0, 0, 0.3)'
+          boxShadow: '0 4px 24px rgba(0, 0, 0, 0.2)'
         }}
       >
-        {/* Subtle gradient overlay */}
-        <div
-          className="absolute inset-0 opacity-50"
-          style={{
-            background: 'radial-gradient(circle at top right, rgba(59, 130, 246, 0.1), transparent 50%), radial-gradient(circle at bottom left, rgba(168, 85, 247, 0.1), transparent 50%)',
-            pointerEvents: 'none'
-          }}
-        />
 
-        {/* Logo - Enhanced with glassmorphism badge */}
+        {/* Logo - Softer design */}
         <div className="relative flex items-center gap-3">
           <div
-            className="w-10 h-10 rounded-xl flex items-center justify-center relative overflow-hidden"
+            className="w-9 h-9 rounded-2xl flex items-center justify-center relative overflow-hidden group transition-all duration-300"
             style={{
-              background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.8), rgba(147, 51, 234, 0.8))',
-              boxShadow: '0 4px 16px rgba(59, 130, 246, 0.3), inset 0 1px 1px rgba(255, 255, 255, 0.2)'
+              background: theme === 'dark'
+                ? 'linear-gradient(135deg, rgba(59, 130, 246, 0.15), rgba(147, 51, 234, 0.15))'
+                : 'linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(147, 51, 234, 0.1))',
+              border: theme === 'dark'
+                ? '1.5px solid rgba(59, 130, 246, 0.3)'
+                : '1.5px solid rgba(59, 130, 246, 0.2)',
+              boxShadow: theme === 'dark'
+                ? '0 4px 12px rgba(59, 130, 246, 0.2)'
+                : '0 2px 8px rgba(59, 130, 246, 0.15)'
             }}
           >
-            <Globe size={20} className="text-white relative z-10" />
-            {/* Shine effect */}
-            <div
-              className="absolute inset-0 opacity-40"
+            <Globe
+              size={18}
+              className="relative z-10 transition-transform group-hover:scale-110 duration-300"
               style={{
-                background: 'linear-gradient(135deg, transparent 40%, rgba(255, 255, 255, 0.4) 50%, transparent 60%)',
+                color: theme === 'dark' ? 'rgb(96, 165, 250)' : 'rgb(37, 99, 235)'
               }}
             />
           </div>
           <div>
             <h1
-              className="text-lg font-black tracking-tight"
+              className="text-base font-bold tracking-tight"
               style={{
                 color: theme === 'dark' ? '#fff' : '#111827',
-                textShadow: theme === 'dark' ? '0 1px 3px rgba(0,0,0,0.5)' : 'none'
+                letterSpacing: '-0.01em'
               }}
             >
               AegisMap

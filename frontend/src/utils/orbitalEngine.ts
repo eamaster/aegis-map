@@ -19,12 +19,6 @@ function parseTLEs(tleData: string): Array<{ name: string; line1: string; line2:
     const lines = tleData.trim().split('\n');
     const satellites = [];
 
-    console.log('📡 Parsing TLEs:', { 
-        totalLines: lines.length, 
-        expectedSatellites: Math.floor(lines.length / 3),
-        firstLines: lines.slice(0, 6)
-    });
-
     for (let i = 0; i < lines.length; i += 3) {
         if (i + 2 < lines.length) {
             const satellite = {
@@ -35,11 +29,6 @@ function parseTLEs(tleData: string): Array<{ name: string; line1: string; line2:
             satellites.push(satellite);
         }
     }
-
-    console.log('✅ Parsed TLEs:', { 
-        satelliteCount: satellites.length, 
-        satelliteNames: satellites.map(s => s.name)
-    });
 
     return satellites;
 }
@@ -61,13 +50,6 @@ export function predictPasses(
     const satellites = parseTLEs(tleRawData);
     const passes: SatellitePass[] = [];
 
-    console.log('🌍 Calculating passes for observer:', { 
-        lat: observerLat, 
-        lng: observerLng, 
-        minElevation,
-        satelliteCount: satellites.length 
-    });
-
     // Observer position
     const observerGd = {
         longitude: satellite.degreesToRadians(observerLng),
@@ -77,18 +59,12 @@ export function predictPasses(
 
     const now = new Date();
     const endTime = new Date(now.getTime() + 24 * 60 * 60 * 1000); // Next 24 hours
-    
-    console.log('⏰ Time window:', { 
-        now: now.toISOString(), 
-        endTime: endTime.toISOString(),
-        hours: 24
-    });
 
     satellites.forEach((sat) => {
         try {
             // Initialize satellite record
             const satrec = satellite.twoline2satrec(sat.line1, sat.line2);
-            
+
             if (!satrec || typeof satrec === 'boolean') {
                 console.warn(`⚠️ Failed to initialize satellite ${sat.name}`);
                 return;
@@ -121,7 +97,7 @@ export function predictPasses(
 
                     const elevationDeg = satellite.radiansToDegrees(lookAngles.elevation);
                     const azimuthDeg = satellite.radiansToDegrees(lookAngles.azimuth);
-                    
+
                     // Track max elevation for debugging
                     if (elevationDeg > maxElevationFound) {
                         maxElevationFound = elevationDeg;
@@ -150,16 +126,14 @@ export function predictPasses(
                 // Increment time by 5 minutes
                 currentTime = new Date(currentTime.getTime() + 5 * 60 * 1000);
             }
-            
+
             if (maxElevationFound > 0 && maxElevationFound < minElevation) {
-                console.log(`📡 ${sat.name}: Max elevation ${maxElevationFound.toFixed(1)}° (below threshold ${minElevation}°)`);
+                // Low elevation pass - below threshold
             }
         } catch (error) {
             console.error(`❌ Error processing satellite ${sat.name}:`, error);
         }
     });
-    
-    console.log('✅ Total passes found:', passes.length);
 
     // Sort passes by time
     return passes.sort((a, b) => a.time.getTime() - b.time.getTime());
@@ -173,23 +147,7 @@ export function getNextPass(
     observerLat: number,
     observerLng: number
 ): SatellitePass | null {
-    console.log('🔍 getNextPass called with:', { 
-        observerLat, 
-        observerLng, 
-        tleDataLength: tleRawData.length,
-        tleFirstChars: tleRawData.substring(0, 100)
-    });
-    
     const passes = predictPasses(tleRawData, observerLat, observerLng);
-    
-    console.log('📊 predictPasses returned:', { 
-        passCount: passes.length, 
-        passes: passes.map(p => ({
-            satellite: p.satelliteName,
-            time: p.time.toISOString(),
-            elevation: p.elevation.toFixed(1)
-        }))
-    });
-    
+
     return passes.length > 0 ? passes[0] : null;
 }
