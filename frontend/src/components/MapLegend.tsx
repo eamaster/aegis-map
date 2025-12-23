@@ -1,9 +1,9 @@
 /**
- * MapLegend Component - Theme-Aware Professional Dashboard
- * ✅ Dark/Light mode compatible
+ * MapLegend Component - Professional Theme-Aware Dashboard
+ * ✅ Proper spacing between icon, label, and number
+ * ✅ Consistent glassmorphism in both dark/light modes
  * ✅ Uses design system (no hardcoding)
- * ✅ Proper text visibility in both themes
- * ✅ Consistent glassmorphism
+ * ✅ Proper text visibility with high contrast
  */
 
 import { useState } from 'react';
@@ -63,7 +63,6 @@ export default function MapLegend({
 
     // Helper to add opacity to hex colors
     const addOpacity = (hex: string, opacity: number) => {
-        // Convert hex to rgba with opacity (0-100)
         const r = parseInt(hex.slice(1, 3), 16);
         const g = parseInt(hex.slice(3, 5), 16);
         const b = parseInt(hex.slice(5, 7), 16);
@@ -99,18 +98,18 @@ export default function MapLegend({
             <div
                 className="w-full transition-all duration-300"
                 style={{
-                    ...ds.glass.card, // Lighter glass for better visibility
+                    ...ds.glass.card,
                     borderRadius: ds.borderRadius.card,
                 }}
             >
                 {/* Header */}
                 <div
-                    className="px-5 py-4 flex items-center justify-between"
+                    className="px-6 py-4 flex items-center justify-between"
                     style={{
                         borderBottom: `1px solid ${ds.headerBorderColor}`,
                     }}
                 >
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2.5">
                         <div
                             className="w-2 h-2 rounded-full animate-pulse"
                             style={{
@@ -141,7 +140,7 @@ export default function MapLegend({
                 </div>
 
                 {/* Main Content */}
-                <div className="px-5 py-5 space-y-5">
+                <div className="px-6 py-6 space-y-6">
                     {/* Hero Number */}
                     <div>
                         <span
@@ -154,15 +153,15 @@ export default function MapLegend({
                             {counts.total.toLocaleString()}
                         </span>
                         <span
-                            className="block text-sm font-bold mt-1"
+                            className="block text-sm font-bold mt-2"
                             style={{ color: ds.textSecondary }}
                         >
                             Active Events
                         </span>
                     </div>
 
-                    {/* Disaster Type Rows */}
-                    <div className="space-y-2">
+                    {/* Disaster Type Rows - IMPROVED SPACING */}
+                    <div className="space-y-3">
                         {/* Wildfires */}
                         <button
                             onClick={() => onFilterToggle('fire')}
@@ -170,7 +169,7 @@ export default function MapLegend({
                             aria-label={`Toggle wildfires filter - ${counts.fires} active`}
                         >
                             <div
-                                className={`flex items-center justify-between px-4 py-3.5 rounded-xl transition-all duration-200 ${isActive('fire') ? '' : 'opacity-50 hover:opacity-75'
+                                className={`flex items-center justify-between px-4 py-4 rounded-xl transition-all duration-200 ${isActive('fire') ? '' : 'opacity-50 hover:opacity-75'
                                     }`}
                                 style={{
                                     background: isActive('fire')
@@ -182,9 +181,10 @@ export default function MapLegend({
                                         }`,
                                 }}
                             >
-                                <div className="flex items-center gap-3">
+                                {/* LEFT SIDE: Icon + Label - INCREASED GAP */}
+                                <div className="flex items-center gap-4">
                                     <div
-                                        className="w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-200"
+                                        className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition-all duration-200"
                                         style={{
                                             background: isActive('fire')
                                                 ? getDisasterColor('fire')
@@ -195,7 +195,7 @@ export default function MapLegend({
                                         }}
                                     >
                                         <Flame
-                                            size={18}
+                                            size={20}
                                             strokeWidth={2.5}
                                             style={{
                                                 color: isActive('fire') ? '#ffffff' : ds.textSecondary,
@@ -203,7 +203,7 @@ export default function MapLegend({
                                         />
                                     </div>
                                     <span
-                                        className="font-bold text-base"
+                                        className="font-bold text-base whitespace-nowrap"
                                         style={{
                                             color: isActive('fire') ? ds.textPrimary : ds.textSecondary,
                                         }}
@@ -211,8 +211,9 @@ export default function MapLegend({
                                         Wildfires
                                     </span>
                                 </div>
+                                {/* RIGHT SIDE: Number - SEPARATE SPACE */}
                                 <span
-                                    className="text-2xl font-black tabular-nums"
+                                    className="text-2xl font-black tabular-nums ml-auto"
                                     style={{
                                         color: isActive('fire') ? getDisasterColor('fire') : ds.textTertiary,
                                     }}
@@ -229,7 +230,7 @@ export default function MapLegend({
                             aria-label={`Toggle volcanoes filter - ${counts.volcanoes} active`}
                         >
                             <div
-                                className={`flex items-center justify-between px-4 py-3.5 rounded-xl transition-all duration-200 ${isActive('volcano') ? '' : 'opacity-50 hover:opacity-75'
+                                className={`flex items-center justify-between px-4 py-4 rounded-xl transition-all duration-200 ${isActive('volcano') ? '' : 'opacity-50 hover:opacity-75'
                                     }`}
                                 style={{
                                     background: isActive('volcano')
@@ -241,9 +242,9 @@ export default function MapLegend({
                                         }`,
                                 }}
                             >
-                                <div className="flex items-center gap-3">
+                                <div className="flex items-center gap-4">
                                     <div
-                                        className="w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-200"
+                                        className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition-all duration-200"
                                         style={{
                                             background: isActive('volcano')
                                                 ? getDisasterColor('volcano')
@@ -254,7 +255,7 @@ export default function MapLegend({
                                         }}
                                     >
                                         <Mountain
-                                            size={18}
+                                            size={20}
                                             strokeWidth={2.5}
                                             style={{
                                                 color: isActive('volcano') ? '#ffffff' : ds.textSecondary,
@@ -262,7 +263,7 @@ export default function MapLegend({
                                         />
                                     </div>
                                     <span
-                                        className="font-bold text-base"
+                                        className="font-bold text-base whitespace-nowrap"
                                         style={{
                                             color: isActive('volcano') ? ds.textPrimary : ds.textSecondary,
                                         }}
@@ -271,7 +272,7 @@ export default function MapLegend({
                                     </span>
                                 </div>
                                 <span
-                                    className="text-2xl font-black tabular-nums"
+                                    className="text-2xl font-black tabular-nums ml-auto"
                                     style={{
                                         color: isActive('volcano') ? getDisasterColor('volcano') : ds.textTertiary,
                                     }}
@@ -288,7 +289,7 @@ export default function MapLegend({
                             aria-label={`Toggle earthquakes filter - ${counts.earthquakes} active`}
                         >
                             <div
-                                className={`flex items-center justify-between px-4 py-3.5 rounded-xl transition-all duration-200 ${isActive('earthquake') ? '' : 'opacity-50 hover:opacity-75'
+                                className={`flex items-center justify-between px-4 py-4 rounded-xl transition-all duration-200 ${isActive('earthquake') ? '' : 'opacity-50 hover:opacity-75'
                                     }`}
                                 style={{
                                     background: isActive('earthquake')
@@ -300,9 +301,9 @@ export default function MapLegend({
                                         }`,
                                 }}
                             >
-                                <div className="flex items-center gap-3">
+                                <div className="flex items-center gap-4">
                                     <div
-                                        className="w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-200"
+                                        className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition-all duration-200"
                                         style={{
                                             background: isActive('earthquake')
                                                 ? getDisasterColor('earthquake')
@@ -313,7 +314,7 @@ export default function MapLegend({
                                         }}
                                     >
                                         <Waves
-                                            size={18}
+                                            size={20}
                                             strokeWidth={2.5}
                                             style={{
                                                 color: isActive('earthquake') ? '#ffffff' : ds.textSecondary,
@@ -321,7 +322,7 @@ export default function MapLegend({
                                         />
                                     </div>
                                     <span
-                                        className="font-bold text-base"
+                                        className="font-bold text-base whitespace-nowrap"
                                         style={{
                                             color: isActive('earthquake') ? ds.textPrimary : ds.textSecondary,
                                         }}
@@ -330,7 +331,7 @@ export default function MapLegend({
                                     </span>
                                 </div>
                                 <span
-                                    className="text-2xl font-black tabular-nums"
+                                    className="text-2xl font-black tabular-nums ml-auto"
                                     style={{
                                         color: isActive('earthquake') ? getDisasterColor('earthquake') : ds.textTertiary,
                                     }}
@@ -344,7 +345,7 @@ export default function MapLegend({
 
                 {/* Footer */}
                 <div
-                    className="px-5 py-3 flex items-center justify-between"
+                    className="px-6 py-4 flex items-center justify-between"
                     style={{
                         borderTop: `1px solid ${ds.headerBorderColor}`,
                     }}
