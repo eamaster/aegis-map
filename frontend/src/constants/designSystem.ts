@@ -69,37 +69,37 @@ export const DESIGN_SYSTEM = {
         },
     },
 
-    // ===== GLASS MORPHISM PRESETS =====
+    // ===== GLASS MORPHISM PRESETS (Reduced opacity for translucency) =====
     glass: {
         panel: {
             dark: {
-                background: 'rgba(17, 24, 39, 0.95)',
+                background: 'rgba(17, 24, 39, 0.65)', // Reduced from 0.95 for true glassmorphism
                 backdropFilter: 'blur(32px)',
                 WebkitBackdropFilter: 'blur(32px)',
-                border: '1px solid rgba(255, 255, 255, 0.1)',
+                border: '1px solid rgba(255, 255, 255, 0.15)', // Stronger border for visibility
                 boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
             },
             light: {
-                background: 'rgba(255, 255, 255, 0.95)',
+                background: 'rgba(255, 255, 255, 0.65)', // Reduced from 0.95
                 backdropFilter: 'blur(32px)',
                 WebkitBackdropFilter: 'blur(32px)',
-                border: '1px solid rgba(0, 0, 0, 0.1)',
+                border: '1px solid rgba(0, 0, 0, 0.15)', // Stronger border
                 boxShadow: '0 8px 32px rgba(0, 0, 0, 0.15)',
             },
         },
         card: {
             dark: {
-                background: 'rgba(30, 41, 59, 0.7)',
-                backdropFilter: 'blur(16px)',
-                WebkitBackdropFilter: 'blur(16px)',
-                border: '1px solid rgba(255, 255, 255, 0.05)',
+                background: 'rgba(30, 41, 59, 0.5)', // Reduced from 0.7 for more translucency
+                backdropFilter: 'blur(20px)', // Increased blur
+                WebkitBackdropFilter: 'blur(20px)',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
                 boxShadow: '0 4px 16px rgba(0, 0, 0, 0.4)',
             },
             light: {
-                background: 'rgba(248, 250, 252, 0.7)',
-                backdropFilter: 'blur(16px)',
-                WebkitBackdropFilter: 'blur(16px)',
-                border: '1px solid rgba(0, 0, 0, 0.05)',
+                background: 'rgba(248, 250, 252, 0.5)', // Reduced from 0.7
+                backdropFilter: 'blur(20px)',
+                WebkitBackdropFilter: 'blur(20px)',
+                border: '1px solid rgba(0, 0, 0, 0.1)',
                 boxShadow: '0 4px 16px rgba(0, 0, 0, 0.1)',
             },
         },
