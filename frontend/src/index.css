@@ -290,17 +290,17 @@ body {
 }
 
 /* ============================================================================
-   RESPONSIVE COMPONENT POSITIONING
+   RESPONSIVE COMPONENT POSITIONING - COMPLETE FIX
    ============================================================================ */
 
-/* Legend Positioning - Fixed in top-left on desktop, bottom sheet on mobile */
+/* ===== LEGEND POSITIONING ===== */
 .legend-responsive {
     position: fixed;
     z-index: 60;
-    /* Above header (z-50) but below sidebar (z-100) */
+    /* Above header (50) but below sidebar (100) */
 }
 
-/* Mobile: Full width bottom sheet */
+/* Mobile: Bottom sheet */
 @media (max-width: 767px) {
     .legend-responsive {
         bottom: 0;
@@ -310,34 +310,44 @@ body {
     }
 }
 
-/* Desktop: Top-left compact card */
+/* Desktop: Top-left floating card, below header */
 @media (min-width: 768px) {
     .legend-responsive {
-        top: 1.5rem;
-        /* 24px */
-        left: 1.5rem;
+        top: 88px;
+        /* Below header: 64px header + 24px gap */
+        left: 24px;
         bottom: auto;
         right: auto;
+        max-width: 320px;
+        /* Fixed width */
     }
 }
 
-/* Sidebar Responsive Height */
-.sidebar-responsive,
+/* ===== SIDEBAR POSITIONING ===== */
 .sidebar-container {
-    height: calc(100vh - 56px);
+    position: fixed !important;
+    top: 56px;
     /* Mobile header height */
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    /* Full width on mobile */
+    max-width: 420px;
+    /* Fixed width on desktop */
+    z-index: 100;
+    /* Highest layer */
 }
 
 @media (min-width: 768px) {
-
-    .sidebar-responsive,
     .sidebar-container {
-        height: calc(100vh - 64px);
+        top: 64px;
         /* Desktop header height */
+        width: 420px;
+        /* Fixed width panel */
     }
 }
 
-/* Touch-Friendly Interaction Zones (iOS/Android 44px guidelines) */
+/* ===== TOUCH TARGETS ===== */
 .touch-target {
     min-height: 44px;
     min-width: 44px;
@@ -345,3 +355,11 @@ body {
     align-items: center;
     justify-content: center;
 }
+
+/* ===== Z-INDEX LAYERS (GLOBAL HIERARCHY) =====
+   Layer 0: Map (default)
+   Layer 50: Header
+   Layer 60: MapLegend
+   Layer 100: Sidebar
+   Layer 200: Modal overlays (Tutorial, etc)
+===== */

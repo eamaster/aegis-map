@@ -497,7 +497,8 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
 
     return (
         <div
-            className={`fixed right-0 top-[56px] md:top-[64px] bottom-0 z-[100] w-full md:w-[420px] flex flex-col overflow-hidden transition-transform duration-300 sidebar-container ${isOpen ? 'translate-x-0' : 'translate-x-full md:translate-x-0'}`}
+            className={`sidebar-container flex flex-col overflow-hidden transition-transform duration-300 ${isOpen ? 'translate-x-0' : 'translate-x-full'
+                }`}
             style={{
                 ...ds.glass.panel,
                 borderLeft: `1px solid ${ds.headerBorderColor}`,
