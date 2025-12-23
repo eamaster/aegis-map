@@ -39,10 +39,11 @@ function App() {
     });
   };
 
-  // Handle disaster selection with mobile sidebar toggle
+  // Handle disaster selection - open sidebar on both mobile and desktop
   const handleDisasterSelect = (disaster: Disaster | null) => {
     setSelectedDisaster(disaster);
-    if (disaster && typeof window !== 'undefined' && window.innerWidth < 768) {
+    // Open sidebar whenever a disaster is selected (mobile + desktop)
+    if (disaster) {
       setIsSidebarOpen(true);
     }
   };

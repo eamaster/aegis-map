@@ -296,7 +296,8 @@ body {
 /* Legend Positioning - Fixed in top-left on desktop, bottom sheet on mobile */
 .legend-responsive {
     position: fixed;
-    z-index: 30;
+    z-index: 60;
+    /* Above header (z-50) but below sidebar (z-100) */
 }
 
 /* Mobile: Full width bottom sheet */
