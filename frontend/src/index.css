@@ -321,13 +321,16 @@ body {
 }
 
 /* Sidebar Responsive Height */
-.sidebar-responsive {
+.sidebar-responsive,
+.sidebar-container {
     height: calc(100vh - 56px);
     /* Mobile header height */
 }
 
 @media (min-width: 768px) {
-    .sidebar-responsive {
+
+    .sidebar-responsive,
+    .sidebar-container {
         height: calc(100vh - 64px);
         /* Desktop header height */
     }

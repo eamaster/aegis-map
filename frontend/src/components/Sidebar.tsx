@@ -8,6 +8,7 @@ import { X, Sparkles, Cloud } from 'lucide-react';
 import type { Disaster, WeatherData, AIAnalysisResponse } from '../types';
 import { getNextPass, predictPasses, type SatellitePass } from '../utils/orbitalEngine';
 import SatelliteImagery from './SatelliteImagery';
+import { useDesignSystem } from '../hooks/useDesignSystem';
 
 interface SidebarProps {
     disaster: Disaster | null;
@@ -16,6 +17,7 @@ interface SidebarProps {
 }
 
 export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarProps) {
+    const ds = useDesignSystem();
     const [nextPass, setNextPass] = useState<SatellitePass | null>(null);
     const [cloudCover, setCloudCover] = useState<number | null>(null);
     const [aiAnalysis, setAiAnalysis] = useState<string>('');
@@ -495,14 +497,10 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
 
     return (
         <div
-            className={`fixed right-0 top-[56px] md:top-[64px] bottom-0 z-[100] w-full md:w-[420px] flex flex-col overflow-hidden transition-transform duration-300 ${isOpen ? 'translate-x-0' : 'translate-x-full md:translate-x-0'}`}
+            className={`fixed right-0 top-[56px] md:top-[64px] bottom-0 z-[100] w-full md:w-[420px] flex flex-col overflow-hidden transition-transform duration-300 sidebar-container ${isOpen ? 'translate-x-0' : 'translate-x-full md:translate-x-0'}`}
             style={{
-                height: 'calc(100vh - 56px)',
-                background: 'var(--glass-bg)',
-                backdropFilter: 'blur(32px)',
-                WebkitBackdropFilter: 'blur(32px)',
-                borderLeft: '1px solid var(--color-border)',
-                boxShadow: 'var(--shadow-xl)'
+                ...ds.glass.panel,
+                borderLeft: `1px solid ${ds.headerBorderColor}`,
             }}
         >
             {/* Header */}
