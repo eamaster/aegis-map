@@ -152,18 +152,16 @@ body {
     }
 }
 
-/* Glassmorphism Utilities */
-.glass-panel {
-    background: rgba(17, 24, 39, 0.95);
-    backdrop-filter: blur(24px);
-    -webkit-backdrop-filter: blur(24px);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-}
+/* Glassmorphism Utilities - REMOVED HARDCODED DUPLICATES */
+/* NOTE: .glass-card is now defined above (lines 75-78) using CSS variables */
+/* that adapt to both dark and light themes. Do not re-define here. */
 
-.glass-card {
-    background: rgba(30, 41, 59, 0.6);
-    backdrop-filter: blur(8px);
-    border: 1px solid rgba(255, 255, 255, 0.05);
+/* .glass-panel uses CSS variables for theme awareness */
+.glass-panel {
+    background: var(--glass-bg);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
+    border: 1px solid var(--glass-border);
 }
 
 /* Custom scrollbar for dark theme */

@@ -1,8 +1,8 @@
 /**
  * MapLegend Component - Professional Theme-Aware Dashboard
+ * ✅ NO CSS CLASS CONFLICTS - Uses only inline styles from design system
  * ✅ Proper spacing between icon, label, and number
  * ✅ Consistent glassmorphism in both dark/light modes
- * ✅ Uses design system (no hardcoding)
  * ✅ Proper text visibility with high contrast
  */
 
@@ -75,10 +75,12 @@ export default function MapLegend({
             <div className="legend-responsive">
                 <button
                     onClick={() => setIsExpanded(true)}
-                    className="flex items-center gap-3 px-5 py-3 transition-all duration-300 hover:scale-105 active:scale-95 touch-target"
+                    className="flex items-center gap-3 px-5 py-3 transition-all duration-300 hover:scale-105 active:scale-95"
                     style={{
                         ...ds.glass.card,
                         borderRadius: ds.borderRadius.card,
+                        minHeight: '44px',
+                        minWidth: '44px',
                     }}
                 >
                     <span
@@ -129,9 +131,14 @@ export default function MapLegend({
                     </div>
                     <button
                         onClick={() => setIsExpanded(false)}
-                        className="p-1.5 rounded-lg transition-all hover:scale-110 touch-target"
+                        className="p-1.5 rounded-lg transition-all hover:scale-110"
                         style={{
                             color: ds.textSecondary,
+                            minHeight: '44px',
+                            minWidth: '44px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
                         }}
                         aria-label="Collapse legend"
                     >
@@ -165,8 +172,11 @@ export default function MapLegend({
                         {/* Wildfires */}
                         <button
                             onClick={() => onFilterToggle('fire')}
-                            className="w-full group transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] touch-target"
+                            className="w-full transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
                             aria-label={`Toggle wildfires filter - ${counts.fires} active`}
+                            style={{
+                                minHeight: '44px',
+                            }}
                         >
                             <div
                                 className={`flex items-center justify-between px-4 py-4 rounded-xl transition-all duration-200 ${isActive('fire') ? '' : 'opacity-50 hover:opacity-75'
@@ -184,7 +194,7 @@ export default function MapLegend({
                                 {/* LEFT SIDE: Icon + Label - INCREASED GAP */}
                                 <div className="flex items-center gap-4">
                                     <div
-                                        className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition-all duration-200"
+                                        className="w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-200"
                                         style={{
                                             background: isActive('fire')
                                                 ? getDisasterColor('fire')
@@ -192,6 +202,7 @@ export default function MapLegend({
                                             boxShadow: isActive('fire')
                                                 ? `0 4px 16px ${addOpacity(getDisasterColor('fire'), 40)}`
                                                 : 'none',
+                                            flexShrink: 0,
                                         }}
                                     >
                                         <Flame
@@ -203,9 +214,10 @@ export default function MapLegend({
                                         />
                                     </div>
                                     <span
-                                        className="font-bold text-base whitespace-nowrap"
+                                        className="font-bold text-base"
                                         style={{
                                             color: isActive('fire') ? ds.textPrimary : ds.textSecondary,
+                                            whiteSpace: 'nowrap',
                                         }}
                                     >
                                         Wildfires
@@ -213,9 +225,10 @@ export default function MapLegend({
                                 </div>
                                 {/* RIGHT SIDE: Number - SEPARATE SPACE */}
                                 <span
-                                    className="text-2xl font-black tabular-nums ml-auto"
+                                    className="text-2xl font-black tabular-nums"
                                     style={{
                                         color: isActive('fire') ? getDisasterColor('fire') : ds.textTertiary,
+                                        marginLeft: 'auto',
                                     }}
                                 >
                                     {counts.fires.toLocaleString()}
@@ -226,8 +239,11 @@ export default function MapLegend({
                         {/* Volcanoes */}
                         <button
                             onClick={() => onFilterToggle('volcano')}
-                            className="w-full group transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] touch-target"
+                            className="w-full transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
                             aria-label={`Toggle volcanoes filter - ${counts.volcanoes} active`}
+                            style={{
+                                minHeight: '44px',
+                            }}
                         >
                             <div
                                 className={`flex items-center justify-between px-4 py-4 rounded-xl transition-all duration-200 ${isActive('volcano') ? '' : 'opacity-50 hover:opacity-75'
@@ -244,7 +260,7 @@ export default function MapLegend({
                             >
                                 <div className="flex items-center gap-4">
                                     <div
-                                        className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition-all duration-200"
+                                        className="w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-200"
                                         style={{
                                             background: isActive('volcano')
                                                 ? getDisasterColor('volcano')
@@ -252,6 +268,7 @@ export default function MapLegend({
                                             boxShadow: isActive('volcano')
                                                 ? `0 4px 16px ${addOpacity(getDisasterColor('volcano'), 40)}`
                                                 : 'none',
+                                            flexShrink: 0,
                                         }}
                                     >
                                         <Mountain
@@ -263,18 +280,20 @@ export default function MapLegend({
                                         />
                                     </div>
                                     <span
-                                        className="font-bold text-base whitespace-nowrap"
+                                        className="font-bold text-base"
                                         style={{
                                             color: isActive('volcano') ? ds.textPrimary : ds.textSecondary,
+                                            whiteSpace: 'nowrap',
                                         }}
                                     >
                                         Volcanoes
                                     </span>
                                 </div>
                                 <span
-                                    className="text-2xl font-black tabular-nums ml-auto"
+                                    className="text-2xl font-black tabular-nums"
                                     style={{
                                         color: isActive('volcano') ? getDisasterColor('volcano') : ds.textTertiary,
+                                        marginLeft: 'auto',
                                     }}
                                 >
                                     {counts.volcanoes.toLocaleString()}
@@ -285,8 +304,11 @@ export default function MapLegend({
                         {/* Earthquakes */}
                         <button
                             onClick={() => onFilterToggle('earthquake')}
-                            className="w-full group transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] touch-target"
+                            className="w-full transition-all duration-200 hover:scale-[1.02] active:scale-[0.98]"
                             aria-label={`Toggle earthquakes filter - ${counts.earthquakes} active`}
+                            style={{
+                                minHeight: '44px',
+                            }}
                         >
                             <div
                                 className={`flex items-center justify-between px-4 py-4 rounded-xl transition-all duration-200 ${isActive('earthquake') ? '' : 'opacity-50 hover:opacity-75'
@@ -303,7 +325,7 @@ export default function MapLegend({
                             >
                                 <div className="flex items-center gap-4">
                                     <div
-                                        className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 transition-all duration-200"
+                                        className="w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-200"
                                         style={{
                                             background: isActive('earthquake')
                                                 ? getDisasterColor('earthquake')
@@ -311,6 +333,7 @@ export default function MapLegend({
                                             boxShadow: isActive('earthquake')
                                                 ? `0 4px 16px ${addOpacity(getDisasterColor('earthquake'), 40)}`
                                                 : 'none',
+                                            flexShrink: 0,
                                         }}
                                     >
                                         <Waves
@@ -322,18 +345,20 @@ export default function MapLegend({
                                         />
                                     </div>
                                     <span
-                                        className="font-bold text-base whitespace-nowrap"
+                                        className="font-bold text-base"
                                         style={{
                                             color: isActive('earthquake') ? ds.textPrimary : ds.textSecondary,
+                                            whiteSpace: 'nowrap',
                                         }}
                                     >
                                         Earthquakes
                                     </span>
                                 </div>
                                 <span
-                                    className="text-2xl font-black tabular-nums ml-auto"
+                                    className="text-2xl font-black tabular-nums"
                                     style={{
                                         color: isActive('earthquake') ? getDisasterColor('earthquake') : ds.textTertiary,
+                                        marginLeft: 'auto',
                                     }}
                                 >
                                     {counts.earthquakes.toLocaleString()}
@@ -368,10 +393,15 @@ export default function MapLegend({
                         <button
                             onClick={onRefresh}
                             disabled={isRefreshing}
-                            className="p-2 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed hover:scale-110 active:scale-95 touch-target"
+                            className="p-2 rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed hover:scale-110 active:scale-95"
                             style={{
                                 background: addOpacity(ds.colors.accent.blue, 15),
                                 border: `1px solid ${addOpacity(ds.colors.accent.blue, 30)}`,
+                                minHeight: '44px',
+                                minWidth: '44px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
                             }}
                             title="Refresh data"
                             aria-label="Refresh disaster data"
