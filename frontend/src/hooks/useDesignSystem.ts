@@ -39,6 +39,11 @@ export function useDesignSystem() {
         headerBorderColor: getHeaderBorderColor(isDark),
         accentGradient: getAccentGradient(isDark),
 
+        // ✅ NEW: Theme-aware text colors (from CSS variables)
+        textPrimary: isDark ? '#ffffff' : '#111827',
+        textSecondary: isDark ? '#9ca3af' : '#6b7280',
+        textTertiary: isDark ? '#6b7280' : '#9ca3af',
+
         // Static tokens (not theme-dependent)
         dimensions: DESIGN_SYSTEM.dimensions,
         breakpoints: DESIGN_SYSTEM.breakpoints,
