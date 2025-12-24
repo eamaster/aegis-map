@@ -79,14 +79,23 @@ export default function TutorialOverlay({ onClose }: TutorialOverlayProps) {
                 {/* Close Button */}
                 <button
                     onClick={handleClose}
-                    className="absolute top-3 right-3 z-10 p-2 rounded-lg transition-all duration-200 hover:scale-110 hover:rotate-90"
+                    className="absolute z-10 transition-all duration-200 hover:scale-110 hover:rotate-90"
                     style={{
-                        background: 'rgba(239, 68, 68, 0.15)',
-                        border: '1px solid rgba(239, 68, 68, 0.4)',
+                        top: '16px',
+                        right: '16px',
+                        width: '32px',
+                        height: '32px',
+                        padding: '6px',
+                        borderRadius: '10px',
+                        background: ds.isDark ? 'rgba(239, 68, 68, 0.15)' : 'rgba(239, 68, 68, 0.2)',
+                        border: ds.isDark ? '1px solid rgba(239, 68, 68, 0.4)' : '1px solid rgba(239, 68, 68, 0.5)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
                     }}
                     aria-label="Close help modal"
                 >
-                    <X size={16} style={{ color: '#f87171' }} strokeWidth={2.5} />
+                    <X size={16} style={{ color: ds.isDark ? '#f87171' : '#dc2626' }} strokeWidth={2.5} />
                 </button>
 
                 {/* Header - COMPACT */}
@@ -282,28 +291,28 @@ export default function TutorialOverlay({ onClose }: TutorialOverlayProps) {
                                     borderRadius: '8px',
                                     fontSize: '0.8125rem',
                                     fontWeight: '900',
-                                    color: '#ffffff',
-                                    background: 'linear-gradient(135deg, #374151, #4b5563)',
-                                    border: '1px solid rgba(156, 163, 175, 0.5)',
-                                    boxShadow: '0 2px 6px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1)',
+                                    color: ds.text.primary,
+                                    background: ds.surface.overlaySubtle,
+                                    border: `1px solid ${ds.surface.border}`,
+                                    boxShadow: ds.isDark ? '0 2px 6px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1)' : '0 2px 6px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
                                 }}
                             >
                                 Esc
                             </kbd>
-                            <span style={{ fontSize: '0.75rem', color: ds.text.tertiary, fontWeight: '600' }}>to show/hide help</span>
+                            <span style={{ fontSize: '0.75rem', color: ds.text.tertiary, fontWeight: '600' }}>to close help</span>
                         </div>
                         <button
                             onClick={handleClose}
                             className="transition-all duration-200 hover:scale-105 active:scale-95"
                             style={{
-                                padding: '8px 20px',
-                                borderRadius: '8px',
+                                padding: '10px 20px',
+                                borderRadius: '10px',
                                 fontSize: '0.8125rem',
-                                fontWeight: '900',
-                                color: '#ffffff',
-                                background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
-                                boxShadow: '0 4px 16px rgba(59, 130, 246, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.2)',
-                                border: 'none',
+                                fontWeight: '700',
+                                color: ds.text.primary,
+                                background: ds.surface.overlaySubtle,
+                                border: `2px solid ${ds.colors.accent.blue}`,
+                                boxShadow: `0 4px 16px ${ds.colors.accent.blue}40`,
                                 cursor: 'pointer',
                             }}
                         >
