@@ -308,16 +308,26 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
         </div>
       )}
 
-      {/* Historical Event Warning Banner */}
+      {/* Historical Event Warning Banner - REDESIGNED */}
       {(() => {
         const disasterDate = date ? new Date(date) : new Date();
         const daysSinceDetection = Math.floor((Date.now() - disasterDate.getTime()) / (1000 * 60 * 60 * 24));
         const isHistorical = daysSinceDetection > 7;
         return isHistorical ? (
-          <div className="bg-yellow-900/30 border border-yellow-700/50 rounded-lg p-2 mb-3 flex items-start gap-2">
-            <AlertCircle className="text-yellow-400 flex-shrink-0 mt-0.5" size={16} />
+          <div
+            className="flex items-start"
+            style={{
+              padding: '10px',
+              borderRadius: ds.borderRadius.lg,
+              background: 'rgba(234, 179, 8, 0.15)',
+              border: '1px solid rgba(234, 179, 8, 0.4)',
+              marginBottom: '10px',
+              gap: '8px',
+            }}
+          >
+            <AlertCircle className="flex-shrink-0" size={15} style={{ color: '#fbbf24', marginTop: '2px' }} />
             <div>
-              <p className="text-xs text-yellow-200 font-medium">
+              <p className="font-medium" style={{ fontSize: '0.75rem', color: '#fef08a' }}>
                 <strong>Historical Event:</strong> First detected {(() => {
                   if (daysSinceDetection >= 365) {
                     const years = Math.floor(daysSinceDetection / 365);
@@ -331,7 +341,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
                   return `${daysSinceDetection} day${daysSinceDetection > 1 ? 's' : ''} ago`;
                 })()}.
               </p>
-              <p className="text-xs text-yellow-300/80 mt-1">
+              <p style={{ fontSize: '0.75rem', color: '#fde68a', marginTop: '4px' }}>
                 Showing current satellite imagery and fire hotspots (last 7 days). Conditions may differ from initial detection.
               </p>
             </div>
@@ -339,42 +349,69 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
         ) : null;
       })()}
 
-      {/* Layer Selector */}
-      <div className="flex gap-2">
+      {/* Layer Selector - REDESIGNED */}
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
         {disasterType === 'fire' && (
           <button
             onClick={() => setSelectedLayer('fire')}
-            className={`flex-1 px-3 py-2 text-xs rounded-lg font-medium transition-all ${selectedLayer === 'fire'
-              ? 'bg-red-500/30 text-red-300 border-2 border-red-500/50 shadow-lg'
-              : 'bg-gray-800/50 text-gray-400 hover:bg-gray-700/50 border border-gray-700/50'
-              }`}
+            className="flex-1 font-medium transition-all"
+            style={{
+              padding: '8px 12px',
+              fontSize: '0.75rem',
+              borderRadius: '10px',
+              background: selectedLayer === 'fire' ? 'rgba(239, 68, 68, 0.2)' : ds.surface.overlaySubtle,
+              color: selectedLayer === 'fire' ? '#fca5a5' : ds.text.secondary,
+              border: selectedLayer === 'fire' ? '2px solid rgba(239, 68, 68, 0.4)' : `1px solid ${ds.surface.border}`,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+            }}
           >
-            <Flame size={14} className="inline mr-1" />
+            <Flame size={13} />
             Fire Hotspots
           </button>
         )}
         <button
           onClick={() => setSelectedLayer('thermal')}
-          className={`flex-1 px-3 py-2 text-xs rounded-lg font-medium transition-all ${selectedLayer === 'thermal'
-            ? 'bg-orange-500/30 text-orange-300 border-2 border-orange-500/50 shadow-lg'
-            : 'bg-gray-800/50 text-gray-400 hover:bg-gray-700/50 border border-gray-700/50'
-            }`}
+          className="flex-1 font-medium transition-all"
+          style={{
+            padding: '8px 12px',
+            fontSize: '0.75rem',
+            borderRadius: '10px',
+            background: selectedLayer === 'thermal' ? 'rgba(249, 115, 22, 0.2)' : ds.surface.overlaySubtle,
+            color: selectedLayer === 'thermal' ? '#fdba74' : ds.text.secondary,
+            border: selectedLayer === 'thermal' ? '2px solid rgba(249, 115, 22, 0.4)' : `1px solid ${ds.surface.border}`,
+          }}
         >
           🌡️ Thermal
         </button>
         <button
           onClick={() => setSelectedLayer('visual')}
-          className={`flex-1 px-3 py-2 text-xs rounded-lg font-medium transition-all ${selectedLayer === 'visual'
-            ? 'bg-blue-500/30 text-blue-300 border-2 border-blue-500/50 shadow-lg'
-            : 'bg-gray-800/50 text-gray-400 hover:bg-gray-700/50 border border-gray-700/50'
-            }`}
+          className="flex-1 font-medium transition-all"
+          style={{
+            padding: '8px 12px',
+            fontSize: '0.75rem',
+            borderRadius: '10px',
+            background: selectedLayer === 'visual' ? 'rgba(59, 130, 246, 0.2)' : ds.surface.overlaySubtle,
+            color: selectedLayer === 'visual' ? '#93c5fd' : ds.text.secondary,
+            border: selectedLayer === 'visual' ? '2px solid rgba(59, 130, 246, 0.4)' : `1px solid ${ds.surface.border}`,
+          }}
         >
           📸 Visual
         </button>
       </div>
 
-      {/* Image Display */}
-      <div className="relative rounded-lg overflow-hidden bg-gray-900/50 border border-white/10">
+      {/* Image Display - REDESIGNED */}
+      <div
+        className="relative overflow-hidden"
+        style={{
+          borderRadius: ds.borderRadius.lg,
+          background: ds.surface.overlaySubtle,
+          border: `1px solid ${ds.surface.border}`,
+          marginBottom: '10px',
+        }}
+      >
         {loading ? (
           <div className="w-full h-64 flex flex-col items-center justify-center gap-3">
             <div className="animate-spin rounded-full h-8 w-8 border-2 border-blue-500 border-t-transparent" />
@@ -490,31 +527,41 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
         </a>
       </div>
 
-      {/* Info Text */}
-      <div className="text-xs text-gray-400 leading-relaxed bg-gray-900/30 p-2 rounded border border-gray-800">
+      {/* Info Text - REDESIGNED */}
+      <div
+        className="leading-relaxed"
+        style={{
+          fontSize: '0.75rem',
+          color: ds.text.secondary,
+          padding: '10px',
+          borderRadius: ds.borderRadius.lg,
+          background: ds.surface.overlaySubtle,
+          border: `1px solid ${ds.surface.border}`,
+        }}
+      >
         {disasterType === 'fire' && selectedLayer === 'fire' && (
           <p>
-            🔴 <strong>Fire overlay:</strong> NASA VIIRS satellite detections (red dots = active fires, last 7 days). <strong>Base imagery:</strong> Mapbox commercial satellite (high resolution but may be weeks old). Click NASA Worldview for official time-synced imagery.
+            🔴 <strong style={{ color: ds.text.primary }}>Fire overlay:</strong> NASA VIIRS satellite detections (red dots = active fires, last 7 days). <strong style={{ color: ds.text.primary }}>Base imagery:</strong> Mapbox commercial satellite (high resolution but may be weeks old). Click NASA Worldview for official time-synced imagery.
           </p>
         )}
         {disasterType === 'fire' && selectedLayer === 'thermal' && (
           <p>
-            🌡️ <strong>Thermal infrared imagery</strong> using MODIS Bands 7-2-1. Red/orange areas show heat signatures. Useful for detecting fires through smoke.
+            🌡️ <strong style={{ color: ds.text.primary }}>Thermal infrared imagery</strong> using MODIS Bands 7-2-1. Red/orange areas show heat signatures. Useful for detecting fires through smoke.
           </p>
         )}
         {selectedLayer === 'visual' && (
           <p>
-            📸 <strong>High-resolution satellite imagery</strong>. True color composite for visual damage assessment and terrain analysis.
+            📸 <strong style={{ color: ds.text.primary }}>High-resolution satellite imagery</strong>. True color composite for visual damage assessment and terrain analysis.
           </p>
         )}
         {disasterType === 'volcano' && (
           <p>
-            🌋 <strong>Volcanic activity monitoring</strong> using thermal and SO₂ sensors. Click NASA Worldview for sulfur dioxide dispersion maps.
+            🌋 <strong style={{ color: ds.text.primary }}>Volcanic activity monitoring</strong> using thermal and SO₂ sensors. Click NASA Worldview for sulfur dioxide dispersion maps.
           </p>
         )}
         {disasterType === 'earthquake' && (
           <p>
-            🌍 <strong>Terrain and infrastructure imagery</strong>. Use thermal layers to detect landslides and building damage patterns.
+            🌍 <strong style={{ color: ds.text.primary }}>Terrain and infrastructure imagery</strong>. Use thermal layers to detect landslides and building damage patterns.
           </p>
         )}
       </div>
