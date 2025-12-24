@@ -17,9 +17,9 @@ export default function ThemeToggle() {
             title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
         >
             {theme === 'dark' ? (
-                <Sun size={18} className="text-yellow-400" />
+                <Sun size={18} style={{ color: '#fbbf24', strokeWidth: 2.5 }} />
             ) : (
-                <Moon size={18} className="text-gray-700" />
+                <Moon size={18} style={{ color: '#374151', strokeWidth: 2.5 }} />
             )}
         </button>
     );

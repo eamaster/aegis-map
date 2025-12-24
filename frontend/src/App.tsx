@@ -87,7 +87,7 @@ function App() {
         }}
       >
         {/* Logo - Professional Brand Identity */}
-        <div className="relative flex items-center gap-3.5">
+        <div className="relative flex items-center" style={{ gap: '14px' }}>
           {/* Globe Icon Badge */}
           <div
             className="flex items-center justify-center relative overflow-hidden group transition-all duration-300 hover:scale-105"
@@ -144,7 +144,7 @@ function App() {
         </div>
 
         {/* Right Controls */}
-        <div className="relative flex items-center gap-2.5">
+        <div className="relative flex items-center" style={{ gap: '10px' }}>
           <ThemeToggle />
 
           {/* Help Button */}
