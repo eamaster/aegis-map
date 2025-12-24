@@ -242,8 +242,8 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
               }}
             >
               <div className="flex items-center" style={{ gap: '10px' }}>
-                <Flame size={14} style={{ color: '#f87171' }} />
-                <span className="font-semibold" style={{ fontSize: '0.875rem', color: '#fca5a5' }}>Active Fire Hotspots (7 days)</span>
+                <Flame size={14} style={{ color: ds.isDark ? '#f87171' : '#dc2626' }} />
+                <span className="font-semibold" style={{ fontSize: '0.875rem', color: ds.text.primary }}>Active Fire Hotspots (7 days)</span>
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
@@ -319,15 +319,15 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
             style={{
               padding: '10px',
               borderRadius: ds.borderRadius.lg,
-              background: 'rgba(234, 179, 8, 0.15)',
-              border: '1px solid rgba(234, 179, 8, 0.4)',
+              background: ds.isDark ? 'rgba(234, 179, 8, 0.15)' : 'rgba(234, 179, 8, 0.25)',
+              border: ds.isDark ? '1px solid rgba(234, 179, 8, 0.4)' : '1px solid rgba(234, 179, 8, 0.5)',
               marginBottom: '10px',
               gap: '8px',
             }}
           >
-            <AlertCircle className="flex-shrink-0" size={15} style={{ color: '#fbbf24', marginTop: '2px' }} />
+            <AlertCircle className="flex-shrink-0" size={15} style={{ color: ds.isDark ? '#fbbf24' : '#ca8a04', marginTop: '2px' }} />
             <div>
-              <p className="font-medium" style={{ fontSize: '0.75rem', color: '#fef08a' }}>
+              <p className="font-medium" style={{ fontSize: '0.75rem', color: ds.text.primary }}>
                 <strong>Historical Event:</strong> First detected {(() => {
                   if (daysSinceDetection >= 365) {
                     const years = Math.floor(daysSinceDetection / 365);
@@ -341,7 +341,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
                   return `${daysSinceDetection} day${daysSinceDetection > 1 ? 's' : ''} ago`;
                 })()}.
               </p>
-              <p style={{ fontSize: '0.75rem', color: '#fde68a', marginTop: '4px' }}>
+              <p style={{ fontSize: '0.75rem', color: ds.text.secondary, marginTop: '4px' }}>
                 Showing current satellite imagery and fire hotspots (last 7 days). Conditions may differ from initial detection.
               </p>
             </div>
@@ -360,7 +360,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
               fontSize: '0.75rem',
               borderRadius: '10px',
               background: selectedLayer === 'fire' ? 'rgba(239, 68, 68, 0.2)' : ds.surface.overlaySubtle,
-              color: selectedLayer === 'fire' ? '#fca5a5' : ds.text.secondary,
+              color: selectedLayer === 'fire' ? (ds.isDark ? '#fca5a5' : '#dc2626') : ds.text.secondary,
               border: selectedLayer === 'fire' ? '2px solid rgba(239, 68, 68, 0.4)' : `1px solid ${ds.surface.border}`,
               display: 'flex',
               alignItems: 'center',
@@ -380,7 +380,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
             fontSize: '0.75rem',
             borderRadius: '10px',
             background: selectedLayer === 'thermal' ? 'rgba(249, 115, 22, 0.2)' : ds.surface.overlaySubtle,
-            color: selectedLayer === 'thermal' ? '#fdba74' : ds.text.secondary,
+            color: selectedLayer === 'thermal' ? (ds.isDark ? '#fdba74' : '#ea580c') : ds.text.secondary,
             border: selectedLayer === 'thermal' ? '2px solid rgba(249, 115, 22, 0.4)' : `1px solid ${ds.surface.border}`,
           }}
         >

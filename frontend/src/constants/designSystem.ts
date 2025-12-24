@@ -98,10 +98,10 @@ export const DESIGN_SYSTEM = {
             borderSubtle: 'rgba(255, 255, 255, 0.1)', // Subtle borders
         },
         light: {
-            base: 'rgba(255, 255, 255, 0.65)',     // Panel base
-            elevated: 'rgba(248, 250, 252, 0.5)',  // Cards
-            overlay: 'rgba(0, 0, 0, 0.04)',        // Light overlays for inactive states
-            overlaySubtle: 'rgba(0, 0, 0, 0.05)',  // Subtle dark overlay for buttons
+            base: 'rgba(255, 255, 255, 0.85)',     // Panel base - more opaque white
+            elevated: 'rgba(255, 255, 255, 0.7)',  // Cards - slightly transparent white
+            overlay: 'rgba(255, 255, 255, 0.65)',  // White overlays for panels
+            overlaySubtle: 'rgba(255, 255, 255, 0.5)', // Subtle white overlay for buttons
             border: 'rgba(0, 0, 0, 0.15)',         // Visible borders
             borderSubtle: 'rgba(0, 0, 0, 0.1)',    // Subtle borders
         },
