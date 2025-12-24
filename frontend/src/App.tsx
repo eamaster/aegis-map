@@ -150,12 +150,18 @@ function App() {
           {/* Help Button */}
           <button
             onClick={() => setShowTutorial(true)}
-            className="p-2.5 rounded-xl transition-all duration-200 hover:scale-105 active:scale-95 touch-target"
+            className="transition-all duration-200 hover:scale-105 active:scale-95"
             style={{
-              ...ds.glass.accent,
-              color: ds.isDark ? 'rgb(156, 163, 175)' : 'rgb(107, 114, 128)',
+              padding: '10px',
+              borderRadius: '10px',
+              background: ds.surface.overlaySubtle,
+              border: `1px solid ${ds.surface.border}`,
+              color: ds.text.secondary,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
             }}
-            title="Help (Press ?)"
+            title="Help (Press Esc)"
             aria-label="Show help"
           >
             <HelpCircle size={18} strokeWidth={2.5} />

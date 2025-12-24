@@ -9,9 +9,15 @@ export default function ThemeToggle() {
     return (
         <button
             onClick={toggleTheme}
-            className="p-2.5 rounded-xl transition-all duration-200 hover:scale-105 active:scale-95 touch-target"
+            className="transition-all duration-200 hover:scale-105 active:scale-95"
             style={{
-                ...ds.glass.accent,
+                padding: '10px',
+                borderRadius: '10px',
+                background: ds.surface.overlaySubtle,
+                border: `1px solid ${ds.surface.border}`,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
             }}
             aria-label="Toggle theme"
             title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
