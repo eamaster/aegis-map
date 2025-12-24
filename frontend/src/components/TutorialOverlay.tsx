@@ -259,7 +259,7 @@ export default function TutorialOverlay({ onClose }: TutorialOverlayProps) {
                             <Info size={16} style={{ color: ds.colors.accent.blue, flexShrink: 0, marginTop: '2px' }} strokeWidth={2.5} />
                             <p style={{ fontSize: '0.75rem', color: ds.text.secondary, lineHeight: '1.5' }}>
                                 <span style={{ fontWeight: '900', color: ds.colors.accent.blue }}>💡 Pro Tip:</span> Use the{' '}
-                                <strong style={{ color: ds.text.primary }}>Live Monitor panel</strong> (top-left) to filter disasters by type. Click to show/hide specific markers on the map.
+                                <strong style={{ color: ds.text.primary }}>Live Monitor panel</strong> to filter disasters by type. Click to show/hide specific markers on the map.
                             </p>
                         </div>
                     </div>
@@ -275,21 +275,7 @@ export default function TutorialOverlay({ onClose }: TutorialOverlayProps) {
                 >
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <kbd
-                                style={{
-                                    padding: '5px 10px',
-                                    borderRadius: '6px',
-                                    fontSize: '0.75rem',
-                                    fontWeight: '900',
-                                    color: '#ffffff',
-                                    background: 'linear-gradient(135deg, #374151, #4b5563)',
-                                    border: '1px solid rgba(156, 163, 175, 0.5)',
-                                    boxShadow: '0 2px 6px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1)',
-                                }}
-                            >
-                                ?
-                            </kbd>
-                            <span style={{ fontSize: '0.75rem', color: ds.text.tertiary, fontWeight: '600' }}>or</span>
+
                             <kbd
                                 style={{
                                     padding: '6px 12px',
