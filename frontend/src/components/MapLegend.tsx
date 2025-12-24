@@ -225,6 +225,7 @@ export default function MapLegend({
                                     display: 'flex',
                                     alignItems: 'center',
                                     justifyContent: 'space-between',
+                                    gap: '12px',
                                     padding: '7px 12px',
                                     borderRadius: '8px',
                                     background: isActive('fire')
@@ -309,6 +310,7 @@ export default function MapLegend({
                                     display: 'flex',
                                     alignItems: 'center',
                                     justifyContent: 'space-between',
+                                    gap: '12px',
                                     padding: '7px 12px',
                                     borderRadius: '8px',
                                     background: isActive('volcano')
@@ -393,6 +395,7 @@ export default function MapLegend({
                                     display: 'flex',
                                     alignItems: 'center',
                                     justifyContent: 'space-between',
+                                    gap: '12px',
                                     padding: '7px 12px',
                                     borderRadius: '8px',
                                     background: isActive('earthquake')
