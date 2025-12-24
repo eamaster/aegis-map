@@ -4,7 +4,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { X, Sparkles, Cloud } from 'lucide-react';
+import { X, Sparkles, Cloud, Satellite } from 'lucide-react';
 import type { Disaster, WeatherData, AIAnalysisResponse } from '../types';
 import { getNextPass, predictPasses, type SatellitePass } from '../utils/orbitalEngine';
 import SatelliteImagery from './SatelliteImagery';
@@ -504,71 +504,167 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                 borderLeft: `1px solid ${ds.headerBorderColor}`,
             }}
         >
-            {/* Header */}
-            <div className="px-6 py-5 flex items-center justify-between border-b border-white/10 flex-shrink-0">
-                <div>
-                    <h2 className="text-2xl font-black text-white tracking-tight mb-0.5">
-                        Coverage Analysis
-                    </h2>
-                    <p className="text-[11px] text-gray-500 font-medium">
-                        Satellite intelligence & AI insights
-                    </p>
+            {/* Header - COMPACT */}
+            <div
+                className="flex items-center justify-between flex-shrink-0"
+                style={{
+                    padding: '16px 20px 14px',
+                    borderBottom: `1px solid ${ds.surface.border}`,
+                }}
+            >
+                <div className="flex items-center gap-3">
+                    {/* Icon Badge */}
+                    <div
+                        className="flex items-center justify-center"
+                        style={{
+                            width: '38px',
+                            height: '38px',
+                            borderRadius: ds.borderRadius.lg,
+                            background: `linear-gradient(135deg, ${ds.colors.accent.blueDim}, rgba(37, 99, 235, 0.15))`,
+                            border: `2px solid ${ds.colors.accent.blue}66`,
+                            boxShadow: `0 3px 12px ${ds.colors.accent.blue}40`,
+                        }}
+                    >
+                        <Satellite
+                            size={20}
+                            style={{
+                                color: ds.colors.accent.blueLight,
+                                strokeWidth: 2.5,
+                            }}
+                        />
+                    </div>
+
+                    {/* Title */}
+                    <div>
+                        <h2
+                            className="font-black tracking-tight leading-none"
+                            style={{
+                                fontSize: '1.25rem',
+                                color: ds.text.primary,
+                                marginBottom: '3px',
+                            }}
+                        >
+                            Coverage Analysis
+                        </h2>
+                        <p
+                            className="text-xs font-semibold leading-none"
+                            style={{
+                                color: ds.text.tertiary,
+                                fontSize: '0.6875rem',
+                            }}
+                        >
+                            Satellite intelligence & AI insights
+                        </p>
+                    </div>
                 </div>
+
+                {/* Close Button */}
                 <button
                     onClick={onClose}
-                    className="text-gray-400 hover:text-white transition-all p-2.5 hover:bg-white/10 rounded-xl group"
+                    className="transition-all duration-200 hover:scale-110 hover:rotate-90"
+                    style={{
+                        padding: '8px',
+                        borderRadius: '10px',
+                        background: 'rgba(239, 68, 68, 0.15)',
+                        border: '1px solid rgba(239, 68, 68, 0.4)',
+                        color: '#f87171',
+                    }}
                     aria-label="Close"
                 >
-                    <X size={18} className="group-hover:rotate-90 transition-transform duration-300" />
+                    <X size={16} strokeWidth={2.5} />
                 </button>
             </div>
 
-            {/* Scrollable Content */}
-            <div className="flex-1 overflow-y-auto custom-scrollbar px-6 py-5 space-y-5">
+            {/* Scrollable Content - COMPACT */}
+            <div
+                className="flex-1 overflow-y-auto custom-scrollbar"
+                style={{
+                    padding: '16px 20px',
+                }}
+            >
 
-                {/* AI Insight Card */}
+                {/* AI Insight Card - REDESIGNED */}
                 <div
-                    className="rounded-2xl p-5 border relative overflow-hidden group transition-all duration-300"
+                    className="relative overflow-hidden transition-all duration-200"
                     style={{
-                        background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, rgba(147, 51, 234, 0.08) 100%)',
-                        borderLeft: '4px solid rgb(59, 130, 246)',
-                        border: '1px solid rgba(59, 130, 246, 0.2)',
-                        boxShadow: '0 8px 32px rgba(59, 130, 246, 0.1)'
+                        padding: '14px',
+                        borderRadius: ds.borderRadius.lg,
+                        background: ds.surface.overlay,
+                        border: `1px solid ${ds.surface.border}`,
+                        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.2)',
+                        marginBottom: '12px',
                     }}
                 >
-                    {/* Decorative gradient */}
-                    <div
-                        className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none"
-                        style={{
-                            background: 'radial-gradient(circle at top right, rgba(59, 130, 246, 0.1), transparent 50%)'
-                        }}
-                    />
                     {/* Header */}
-                    <div className="flex items-center justify-between mb-3 relative z-10">
+                    <div
+                        className="flex items-center justify-between relative z-10"
+                        style={{ marginBottom: '10px' }}
+                    >
                         <div className="flex items-center gap-2.5">
-                            <div className="p-2 rounded-lg bg-blue-500/20">
-                                <Sparkles className="text-blue-400" size={16} />
+                            <div
+                                style={{
+                                    padding: '6px',
+                                    borderRadius: '8px',
+                                    background: 'rgba(59, 130, 246, 0.15)',
+                                    border: `1px solid rgba(59, 130, 246, 0.3)`,
+                                }}
+                            >
+                                <Sparkles size={14} style={{ color: ds.colors.accent.blueLight }} />
                             </div>
-                            <h3 className="font-black text-white text-sm tracking-tight">
+                            <h3
+                                className="font-black tracking-tight"
+                                style={{
+                                    fontSize: '0.875rem',
+                                    color: ds.text.primary,
+                                }}
+                            >
                                 AI Insight
                             </h3>
                         </div>
-                        <span className="text-[9px] uppercase tracking-widest text-gray-500 font-bold px-2 py-1 rounded-md bg-white/5">
+                        <span
+                            className="text-xs font-bold px-2 py-1 rounded-md"
+                            style={{
+                                fontSize: '0.625rem',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.05em',
+                                color: ds.text.tertiary,
+                                background: ds.surface.overlaySubtle,
+                            }}
+                        >
                             Google Gemini
                         </span>
                     </div>
 
                     {/* Content */}
-                    <p className="text-gray-300 text-[13px] leading-relaxed relative z-10">
+                    <p
+                        className="leading-relaxed relative z-10"
+                        style={{
+                            fontSize: '0.75rem',
+                            color: ds.text.secondary,
+                        }}
+                    >
                         {loadingAnalysis ? (
                             <span className="flex items-center gap-2">
-                                <span className="inline-block w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
-                                <span className="text-blue-300 font-medium">Analyzing satellite telemetry...</span>
+                                <span
+                                    className="inline-block w-1.5 h-1.5 rounded-full animate-pulse"
+                                    style={{ background: ds.colors.accent.blueLight }}
+                                />
+                                <span
+                                    className="font-medium"
+                                    style={{ color: ds.colors.accent.blueLight }}
+                                >
+                                    Analyzing satellite telemetry...
+                                </span>
                             </span>
                         ) : aiAnalysis && aiAnalysis.trim().length > 0 ? (
                             aiAnalysis
                         ) : (
-                            <span className="text-gray-600 italic">Waiting for analysis...</span>
+                            <span
+                                className="italic"
+                                style={{ color: ds.text.tertiary }}
+                            >
+                                Waiting for analysis...
+                            </span>
                         )}
                     </p>
                 </div>
@@ -584,75 +680,151 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                     />
                 )}
 
-                {/* Two-Column Grid: Countdown + Cloud Forecast */}
-                <div className="grid grid-cols-2 gap-4">
+                {/* Two-Column Grid: Countdown + Cloud Forecast - COMPACT */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
                     {/* Countdown Timer */}
                     {nextPass && (
                         <div
-                            className="rounded-2xl p-5 text-center relative overflow-hidden"
+                            className="text-center relative overflow-hidden"
                             style={{
-                                background: 'rgba(255, 255, 255, 0.03)',
-                                border: '1px solid rgba(255, 255, 255, 0.08)',
-                                boxShadow: '0 4px 16px rgba(0, 0, 0, 0.2)'
+                                padding: '14px',
+                                borderRadius: ds.borderRadius.lg,
+                                background: ds.surface.overlay,
+                                border: `1px solid ${ds.surface.border}`,
+                                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.2)',
                             }}
                         >
-                            <div className="absolute inset-0 bg-gradient-to-b from-blue-500/5 to-transparent pointer-events-none" />
-
-                            <p className="text-[10px] uppercase tracking-widest text-gray-500 font-bold mb-3">
+                            <p
+                                className="uppercase font-bold"
+                                style={{
+                                    fontSize: '0.625rem',
+                                    letterSpacing: '0.05em',
+                                    color: ds.text.tertiary,
+                                    marginBottom: '10px',
+                                }}
+                            >
                                 {nextPass.satelliteName.replace(/[-_]/g, ' ')}
                             </p>
 
                             <div className="relative z-10">
-                                <div className="text-3xl font-black font-mono text-white tracking-tight tabular-nums mb-1">
+                                <div
+                                    className="font-black font-mono tracking-tight tabular-nums"
+                                    style={{
+                                        fontSize: '1.875rem',
+                                        color: ds.text.primary,
+                                        marginBottom: '4px',
+                                    }}
+                                >
                                     {timeUntilPass || '00:00:00'}
                                 </div>
-                                <div className="h-0.5 w-10 mx-auto rounded-full bg-gradient-to-r from-transparent via-blue-500 to-transparent" />
+                                <div
+                                    style={{
+                                        height: '2px',
+                                        width: '40px',
+                                        margin: '0 auto',
+                                        borderRadius: '2px',
+                                        background: `linear-gradient(90deg, transparent, ${ds.colors.accent.blue}, transparent)`,
+                                    }}
+                                />
                             </div>
                         </div>
                     )}
 
                     {/* Cloud Forecast */}
                     <div
-                        className="rounded-2xl p-5 relative overflow-hidden"
+                        className="relative overflow-hidden"
                         style={{
-                            background: 'rgba(255, 255, 255, 0.03)',
-                            border: '1px solid rgba(255, 255, 255, 0.08)',
-                            boxShadow: '0 4px 16px rgba(0, 0, 0, 0.2)'
+                            padding: '14px',
+                            borderRadius: ds.borderRadius.lg,
+                            background: ds.surface.overlay,
+                            border: `1px solid ${ds.surface.border}`,
+                            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.2)',
                         }}
                     >
-                        <div className="flex items-start justify-between mb-2">
-                            <Cloud className="text-sky-400" size={18} />
-                            <div className="w-1.5 h-1.5 rounded-full bg-green-400 shadow-[0_0_8px_rgba(74,222,128,0.8)]" />
+                        <div
+                            className="flex items-start justify-between"
+                            style={{ marginBottom: '8px' }}
+                        >
+                            <Cloud size={16} style={{ color: '#38bdf8' }} />
+                            <div
+                                className="w-1.5 h-1.5 rounded-full"
+                                style={{
+                                    background: '#4ade80',
+                                    boxShadow: '0 0 8px rgba(74, 222, 128, 0.8)',
+                                }}
+                            />
                         </div>
 
-                        <p className="text-[10px] uppercase tracking-widest text-gray-500 font-bold mb-2">
+                        <p
+                            className="uppercase font-bold"
+                            style={{
+                                fontSize: '0.625rem',
+                                letterSpacing: '0.05em',
+                                color: ds.text.tertiary,
+                                marginBottom: '8px',
+                            }}
+                        >
                             Cloud Forecast
                         </p>
 
                         {cloudCover !== null ? (
                             <>
-                                <div className="flex items-baseline gap-1 mb-1">
-                                    <span className="text-2xl font-black text-white tabular-nums">
+                                <div className="flex items-baseline gap-1" style={{ marginBottom: '4px' }}>
+                                    <span
+                                        className="font-black tabular-nums"
+                                        style={{
+                                            fontSize: '1.5rem',
+                                            color: ds.text.primary,
+                                        }}
+                                    >
                                         {cloudCover}
                                     </span>
-                                    <span className="text-gray-500 font-bold text-sm">%</span>
+                                    <span
+                                        className="font-bold"
+                                        style={{
+                                            fontSize: '0.875rem',
+                                            color: ds.text.tertiary,
+                                        }}
+                                    >
+                                        %
+                                    </span>
                                 </div>
-                                <p className="text-[11px] text-gray-400 font-medium">
+                                <p
+                                    className="font-medium"
+                                    style={{
+                                        fontSize: '0.6875rem',
+                                        color: ds.text.secondary,
+                                    }}
+                                >
                                     {cloudCover < 20 ? 'Clear ☀️' : cloudCover < 60 ? 'Partly Cloudy ⛅' : 'Overcast ☁️'}
                                 </p>
                             </>
                         ) : (
-                            <p className="text-gray-600 text-xs">Loading...</p>
+                            <p
+                                className="text-xs"
+                                style={{ color: ds.text.tertiary }}
+                            >
+                                Loading...
+                            </p>
                         )}
 
                         {nextPass && (
-                            <p className="text-[9px] text-gray-600 font-medium mt-3 pt-2 border-t border-white/5">
+                            <p
+                                className="font-medium"
+                                style={{
+                                    fontSize: '0.5625rem',
+                                    color: ds.text.tertiary,
+                                    marginTop: '10px',
+                                    paddingTop: '8px',
+                                    borderTop: `1px solid ${ds.surface.border}`,
+                                }}
+                            >
                                 {nextPass.time.toLocaleTimeString([], {
                                     hour: '2-digit',
                                     minute: '2-digit',
                                     timeZone: 'UTC'
                                 })} UTC
-                                <span className="text-gray-700 ml-1">
+                                <span style={{ color: ds.text.tertiary, marginLeft: '4px' }}>
                                     ({nextPass.time.toLocaleTimeString([], {
                                         hour: '2-digit',
                                         minute: '2-digit'
