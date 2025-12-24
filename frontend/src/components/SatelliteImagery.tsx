@@ -190,7 +190,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
         className="flex items-center justify-between"
         style={{ marginBottom: '10px' }}
       >
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center" style={{ gap: '10px' }}>
           <Satellite size={16} style={{ color: ds.colors.accent.blueLight }} />
           <h3
             className="font-bold tracking-tight"
@@ -241,7 +241,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
                 border: '1px solid rgba(220, 38, 38, 0.3)',
               }}
             >
-              <div className="flex items-center gap-2.5">
+              <div className="flex items-center" style={{ gap: '10px' }}>
                 <Flame size={14} style={{ color: '#f87171' }} />
                 <span className="font-semibold" style={{ fontSize: '0.875rem', color: '#fca5a5' }}>Active Fire Hotspots (7 days)</span>
               </div>

@@ -512,7 +512,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                     borderBottom: `1px solid ${ds.surface.border}`,
                 }}
             >
-                <div className="flex items-center gap-3">
+                <div className="flex items-center" style={{ gap: '12px' }}>
                     {/* Icon Badge */}
                     <div
                         className="flex items-center justify-center"
@@ -605,10 +605,14 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                         className="flex items-center justify-between relative z-10"
                         style={{ marginBottom: '10px' }}
                     >
-                        <div className="flex items-center gap-2.5">
+                        <div className="flex items-center" style={{ gap: '10px' }}>
                             <div
                                 style={{
-                                    padding: '6px',
+                                    width: '30px',
+                                    height: '30px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
                                     borderRadius: '8px',
                                     background: 'rgba(59, 130, 246, 0.15)',
                                     border: `1px solid rgba(59, 130, 246, 0.3)`,
