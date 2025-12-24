@@ -702,24 +702,191 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
                 </div>
             )}
 
-            {/* Loading overlay */}
+            {/* Loading overlay - DYNAMIC ANIMATED VERSION */}
             {loading && !mapError && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-sm z-10">
-                    <div className="glass-card rounded-2xl px-8 py-6 max-w-md text-center">
-                        {/* Animated globe */}
-                        <div className="mb-4 flex justify-center">
-                            <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center animate-pulse">
-                                <span className="text-3xl">🌐</span>
+                <div
+                    style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 9999,
+                        background: 'linear-gradient(135deg, rgba(17, 24, 39, 0.95), rgba(31, 41, 55, 0.95))',
+                        backdropFilter: 'blur(16px)',
+                        WebkitBackdropFilter: 'blur(16px)',
+                    }}
+                >
+                    <div
+                        className="rounded-2xl max-w-md text-center relative overflow-hidden"
+                        style={{
+                            padding: '32px 40px',
+                            background: 'linear-gradient(135deg, rgba(17, 24, 39, 0.98), rgba(31, 41, 55, 0.98))',
+                            backdropFilter: 'blur(32px)',
+                            WebkitBackdropFilter: 'blur(32px)',
+                            border: '2px solid rgba(59, 130, 246, 0.3)',
+                            boxShadow: '0 25px 80px rgba(0, 0, 0, 0.9), 0 0 1px rgba(59, 130, 246, 0.5)',
+                        }}
+                    >
+                        {/* Animated gradient overlays */}
+                        <div
+                            className="absolute top-0 right-0 w-64 h-64 rounded-full blur-3xl opacity-30 pointer-events-none"
+                            style={{
+                                background: 'radial-gradient(circle, rgba(59, 130, 246, 0.5), transparent 70%)',
+                                animation: 'pulse 3s ease-in-out infinite',
+                            }}
+                        />
+                        <div
+                            className="absolute bottom-0 left-0 w-64 h-64 rounded-full blur-3xl opacity-30 pointer-events-none"
+                            style={{
+                                background: 'radial-gradient(circle, rgba(147, 51, 234, 0.5), transparent 70%)',
+                                animation: 'pulse 3s ease-in-out infinite 1.5s',
+                            }}
+                        />
+
+                        {/* Rotating globe with glow */}
+                        <div className="mb-6 flex justify-center relative">
+                            <div
+                                className="relative"
+                                style={{
+                                    animation: 'spin 4s linear infinite',
+                                }}
+                            >
+                                <div
+                                    className="w-20 h-20 rounded-full flex items-center justify-center relative"
+                                    style={{
+                                        background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
+                                        boxShadow: '0 0 40px rgba(59, 130, 246, 0.6), 0 0 80px rgba(59, 130, 246, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.3)',
+                                    }}
+                                >
+                                    <span className="text-4xl relative z-10">🌐</span>
+                                    {/* Orbiting ring */}
+                                    <div
+                                        className="absolute inset-0 rounded-full"
+                                        style={{
+                                            border: '2px solid rgba(255, 255, 255, 0.3)',
+                                            animation: 'pulse 2s ease-in-out infinite',
+                                        }}
+                                    />
+                                </div>
                             </div>
                         </div>
-                        <h3 className="text-xl font-bold text-white mb-2">Initializing AegisMap</h3>
-                        <p className="text-gray-300 text-sm">
-                            Loading global disaster data from NASA EONET...
+
+                        {/* Title with gradient */}
+                        <h3
+                            className="text-2xl font-black mb-3 relative z-10"
+                            style={{
+                                background: 'linear-gradient(135deg, #60a5fa, #a78bfa)',
+                                WebkitBackgroundClip: 'text',
+                                WebkitTextFillColor: 'transparent',
+                                backgroundClip: 'text',
+                                letterSpacing: '-0.02em',
+                            }}
+                        >
+                            Initializing AegisMap
+                        </h3>
+
+                        {/* Loading text with typing animation effect */}
+                        <p
+                            className="text-sm mb-4 relative z-10"
+                            style={{
+                                color: '#e5e7eb',
+                                fontWeight: '600',
+                            }}
+                        >
+                            Loading disaster data from multiple sources...
                         </p>
-                        <div className="mt-4 w-full bg-gray-700 rounded-full h-1.5 overflow-hidden">
-                            <div className="h-full bg-gradient-to-r from-blue-500 to-purple-600 animate-pulse" style={{ width: '60%' }} />
+
+                        {/* Data sources tags */}
+                        <div className="flex flex-wrap justify-center gap-2 mb-6 relative z-10">
+                            {['NASA EONET', 'USGS', 'NASA FIRMS', 'Open-Meteo'].map((source, index) => (
+                                <span
+                                    key={source}
+                                    className="text-xs px-3 py-1.5 rounded-full font-bold"
+                                    style={{
+                                        background: 'rgba(59, 130, 246, 0.15)',
+                                        color: '#60a5fa',
+                                        border: '1px solid rgba(59, 130, 246, 0.3)',
+                                        boxShadow: '0 0 12px rgba(59, 130, 246, 0.2)',
+                                        animation: `fadeIn 0.5s ease-out ${index * 0.15}s both`,
+                                    }}
+                                >
+                                    {source}
+                                </span>
+                            ))}
+                        </div>
+
+                        {/* Animated progress bar */}
+                        <div
+                            className="w-full rounded-full h-2 overflow-hidden relative z-10"
+                            style={{
+                                background: 'rgba(75, 85, 99, 0.5)',
+                                boxShadow: 'inset 0 1px 3px rgba(0, 0, 0, 0.5)',
+                            }}
+                        >
+                            <div
+                                className="h-full relative overflow-hidden"
+                                style={{
+                                    background: 'linear-gradient(90deg, #3b82f6, #8b5cf6, #3b82f6)',
+                                    backgroundSize: '200% 100%',
+                                    animation: 'shimmer 2s linear infinite',
+                                    boxShadow: '0 0 12px rgba(59, 130, 246, 0.6)',
+                                    width: '100%',
+                                }}
+                            >
+                                {/* Moving shine effect */}
+                                <div
+                                    className="absolute inset-0"
+                                    style={{
+                                        background: 'linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent)',
+                                        animation: 'slide 1.5s ease-in-out infinite',
+                                    }}
+                                />
+                            </div>
+                        </div>
+
+                        {/* Loading dots */}
+                        <div className="flex justify-center gap-2 mt-4 relative z-10">
+                            {[0, 1, 2].map((i) => (
+                                <div
+                                    key={i}
+                                    className="w-2 h-2 rounded-full"
+                                    style={{
+                                        background: '#60a5fa',
+                                        boxShadow: '0 0 8px rgba(96, 165, 250, 0.6)',
+                                        animation: `bounce 1.4s ease-in-out ${i * 0.2}s infinite`,
+                                    }}
+                                />
+                            ))}
                         </div>
                     </div>
+
+                    {/* Add keyframes for animations */}
+                    <style>{`
+                        @keyframes spin {
+                            from { transform: rotate(0deg); }
+                            to { transform: rotate(360deg); }
+                        }
+                        @keyframes shimmer {
+                            0% { background-position: -200% 0; }
+                            100% { background-position: 200% 0; }
+                        }
+                        @keyframes slide {
+                            0% { transform: translateX(-100%); }
+                            100% { transform: translateX(100%); }
+                        }
+                        @keyframes bounce {
+                            0%, 80%, 100% { transform: scale(0); opacity: 0.5; }
+                            40% { transform: scale(1); opacity: 1; }
+                        }
+                        @keyframes fadeIn {
+                            from { opacity: 0; transform: translateY(-10px); }
+                            to { opacity: 1; transform: translateY(0); }
+                        }
+                    `}</style>
                 </div>
             )}
 
