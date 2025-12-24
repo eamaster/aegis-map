@@ -45,8 +45,18 @@ export default function TutorialOverlay({ onClose }: TutorialOverlayProps) {
 
     return (
         <div
-            className="fixed inset-0 flex items-center justify-center p-4 md:p-6 transition-all duration-300 z-[200]"
+            className="transition-all duration-300"
             style={{
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: '16px 24px',
+                zIndex: 9998,
                 background: isVisible ? 'rgba(0, 0, 0, 0.85)' : 'rgba(0, 0, 0, 0)',
                 backdropFilter: isVisible ? 'blur(12px)' : 'none',
                 WebkitBackdropFilter: isVisible ? 'blur(12px)' : 'none',
