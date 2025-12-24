@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Satellite, Download, ExternalLink, Flame, AlertCircle, MapPin } from 'lucide-react';
+import { useDesignSystem } from '../hooks/useDesignSystem';
 
 interface SatelliteImageryProps {
   lat: number;
@@ -20,6 +21,7 @@ interface FireHotspot {
 }
 
 export default function SatelliteImagery({ lat, lng, disasterType, date, title }: SatelliteImageryProps) {
+  const ds = useDesignSystem();
   const [imageUrl, setImageUrl] = useState<string>('');
   const [overlayUrl, setOverlayUrl] = useState<string>('');
   const [loading, setLoading] = useState(true);
@@ -87,7 +89,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
       // Use our backend proxy to hide the API key and avoid CORS issues
       const url = `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787'}/api/fire-hotspots?lat=${lat}&lng=${lng}`;
 
-            const response = await fetch(url);
+      const response = await fetch(url);
       if (!response.ok) {
         console.warn(`FIRMS API error: ${response.status}`);
         return;
@@ -101,12 +103,12 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
       }
 
       if (!data.hotspots || data.hotspots.length === 0) {
-                return;
+        return;
       }
 
       const hotspots: FireHotspot[] = data.hotspots.filter((h: any) => h.confidence !== 'l' && h.confidence !== 'low');
 
-            setFireHotspots(hotspots);
+      setFireHotspots(hotspots);
 
       // Calculate statistics
       if (hotspots.length > 0) {
@@ -159,10 +161,10 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
   };
 
   const getSeverityLevel = (temp: number): { label: string; color: string } => {
-    if (temp > 360) return { label: 'EXTREME', color: 'text-red-500' };
-    if (temp > 340) return { label: 'HIGH', color: 'text-orange-500' };
-    if (temp > 320) return { label: 'MODERATE', color: 'text-yellow-500' };
-    return { label: 'LOW', color: 'text-gray-400' };
+    if (temp > 360) return { label: 'EXTREME', color: '#ef4444' };
+    if (temp > 340) return { label: 'HIGH', color: '#f97316' };
+    if (temp > 320) return { label: 'MODERATE', color: '#fbbf24' };
+    return { label: 'LOW', color: '#9ca3af' };
   };
 
   const getConfidenceColor = (conf: string): string => {
@@ -172,71 +174,133 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
   };
 
   return (
-    <div className="glass-card rounded-xl p-4 space-y-3">
+    <div
+      className="relative overflow-hidden transition-all duration-200"
+      style={{
+        padding: '14px',
+        borderRadius: ds.borderRadius.lg,
+        background: ds.surface.overlay,
+        border: `1px solid ${ds.surface.border}`,
+        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.2)',
+        marginBottom: '12px',
+      }}
+    >
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Satellite className="text-blue-400" size={18} />
-          <h3 className="font-bold text-white text-sm">
+      <div
+        className="flex items-center justify-between"
+        style={{ marginBottom: '10px' }}
+      >
+        <div className="flex items-center gap-2.5">
+          <Satellite size={16} style={{ color: ds.colors.accent.blueLight }} />
+          <h3
+            className="font-bold tracking-tight"
+            style={{
+              fontSize: '0.875rem',
+              color: ds.text.primary,
+            }}
+          >
             {disasterType === 'fire' ? '🔥 Fire Intelligence' : '🛰️ Satellite Imagery'}
           </h3>
         </div>
-        <span className="text-[10px] uppercase tracking-wider text-gray-400 font-semibold">
+        <span
+          className="uppercase font-semibold"
+          style={{
+            fontSize: '0.625rem',
+            letterSpacing: '0.05em',
+            color: ds.text.tertiary,
+          }}
+        >
           {selectedLayer === 'thermal' ? 'NASA GIBS' : selectedLayer === 'fire' ? 'NASA GIBS + Mapbox' : 'Mapbox Satellite'}
         </span>
       </div>
 
       {/* Fire Statistics (Wildfires Only) */}
-      {/* Fire Statistics (Wildfires Only) */}
       {disasterType === 'fire' && (
         <div className="min-h-[120px] transition-all duration-300">
           {fetchingFire ? (
-            <div className="h-full flex flex-col items-center justify-center p-6 space-y-3 bg-gray-900/20 rounded-lg border border-gray-800/50">
-              <div className="animate-spin rounded-full h-6 w-6 border-2 border-orange-500 border-t-transparent" />
-              <p className="text-xs text-orange-400 font-medium animate-pulse">Scanning thermal sensors...</p>
+            <div
+              className="h-full flex flex-col items-center justify-center space-y-3"
+              style={
+                {
+                  padding: '20px',
+                  borderRadius: ds.borderRadius.lg,
+                  background: ds.surface.overlaySubtle,
+                  border: `1px solid ${ds.surface.border}`,
+                }}
+            >
+              <div className="animate-spin rounded-full h-6 w-6" style={{ border: '2px solid #fb923c', borderTopColor: 'transparent' }} />
+              <p className="text-xs font-medium animate-pulse" style={{ color: '#fb923c' }}>Scanning thermal sensors...</p>
             </div>
           ) : fireStats ? (
-            <div className="bg-gradient-to-br from-red-900/30 to-orange-900/20 border border-red-800/40 rounded-lg p-3 space-y-3 animate-in fade-in duration-500">
-              <div className="flex items-center gap-2">
-                <Flame className="text-red-400" size={16} />
-                <span className="text-red-300 font-semibold text-sm">Active Fire Hotspots (7 days)</span>
+            <div
+              className="space-y-3 animate-in fade-in duration-500"
+              style={{
+                padding: '12px',
+                borderRadius: ds.borderRadius.lg,
+                background: 'linear-gradient(135deg, rgba(220, 38, 38, 0.15), rgba(249, 115, 22, 0.1))',
+                border: '1px solid rgba(220, 38, 38, 0.3)',
+              }}
+            >
+              <div className="flex items-center gap-2.5">
+                <Flame size={14} style={{ color: '#f87171' }} />
+                <span className="font-semibold" style={{ fontSize: '0.875rem', color: '#fca5a5' }}>Active Fire Hotspots (7 days)</span>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div className="bg-black/30 rounded-lg p-2">
-                  <div className="text-3xl font-bold text-white">{fireStats.total}</div>
-                  <div className="text-xs text-gray-400">Total Hotspots</div>
-                  <div className="mt-1 flex flex-col gap-0.5 text-[10px] font-medium">
-                    <span className="text-red-400">{fireStats.highConfidence} High Confidence</span>
-                    <span className="text-orange-300/80">{fireStats.total - fireStats.highConfidence} Nominal</span>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
+                <div
+                  style={{
+                    padding: '10px',
+                    borderRadius: '8px',
+                    background: 'rgba(0, 0, 0, 0.3)',
+                  }}
+                >
+                  <div className="text-3xl font-bold" style={{ color: ds.text.primary }}>{fireStats.total}</div>
+                  <div className="text-xs" style={{ color: ds.text.secondary }}>Total Hotspots</div>
+                  <div className="mt-1 flex flex-col gap-0.5" style={{ fontSize: '0.625rem', fontWeight: 500 }}>
+                    <span style={{ color: '#f87171' }}>{fireStats.highConfidence} High Confidence</span>
+                    <span style={{ color: '#fed7aa' }}>{fireStats.total - fireStats.highConfidence} Nominal</span>
                   </div>
                 </div>
 
-                <div className="bg-black/30 rounded-lg p-2">
-                  <div className={`text-3xl font-bold ${getSeverityLevel(fireStats.avgTemp).color}`}>
+                <div
+                  style={{
+                    padding: '10px',
+                    borderRadius: '8px',
+                    background: 'rgba(0, 0, 0, 0.3)',
+                  }}
+                >
+                  <div className="text-3xl font-bold" style={{ color: getSeverityLevel(fireStats.avgTemp).color.replace('text-', '') }}>
                     {getSeverityLevel(fireStats.avgTemp).label}
                   </div>
-                  <div className="text-xs text-gray-400">Fire Intensity</div>
-                  <div className="mt-1 text-xs text-gray-400">
+                  <div className="text-xs" style={{ color: ds.text.secondary }}>Fire Intensity</div>
+                  <div className="mt-1 text-xs" style={{ color: ds.text.secondary }}>
                     {(fireStats.avgTemp - 273.15).toFixed(0)}°C
-                    <span className="text-gray-500 ml-1">({fireStats.avgTemp.toFixed(0)}K)</span>
+                    <span style={{ color: ds.text.tertiary, marginLeft: '4px' }}>({fireStats.avgTemp.toFixed(0)}K)</span>
                   </div>
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 text-xs">
-                <AlertCircle className="text-orange-400" size={14} />
-                <span className="text-gray-300">
-                  Max Fire Power: <span className="text-orange-300 font-semibold">{fireStats.maxFRP.toFixed(1)} MW</span>
-                  <span className="text-gray-500 text-[10px] ml-1">(industrial-scale heat)</span>
+              <div className="flex items-center gap-2.5 text-xs">
+                <AlertCircle size={13} style={{ color: '#fb923c' }} />
+                <span style={{ color: ds.text.secondary }}>
+                  Max Fire Power: <span className="font-semibold" style={{ color: '#fb923c' }}>{fireStats.maxFRP.toFixed(1)} MW</span>
+                  <span style={{ fontSize: '0.625rem', marginLeft: '4px', color: ds.text.tertiary }}>(industrial-scale heat)</span>
                 </span>
               </div>
             </div>
           ) : (
-            <div className="h-full flex flex-col items-center justify-center p-5 bg-gray-800/20 border border-gray-700/30 rounded-lg text-center">
-              <Flame className="text-gray-600 mb-2" size={24} />
-              <p className="text-sm text-gray-400 font-medium">No Active Hotspots</p>
-              <p className="text-xs text-gray-500 mt-1 max-w-[200px]">
+            <div
+              className="h-full flex flex-col items-center justify-center text-center"
+              style={{
+                padding: '16px',
+                background: ds.surface.overlaySubtle,
+                border: `1px solid ${ds.surface.border}`,
+                borderRadius: ds.borderRadius.lg,
+              }}
+            >
+              <Flame size={22} className="mb-2" style={{ color: ds.text.tertiary }} />
+              <p className="text-sm font-medium" style={{ color: ds.text.secondary }}>No Active Hotspots</p>
+              <p className="text-xs mt-1 max-w-[200px]" style={{ color: ds.text.tertiary }}>
                 Satellite thermal sensors have not detected significant heat anomalies in this area recently.
               </p>
             </div>

@@ -563,11 +563,16 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                     onClick={onClose}
                     className="transition-all duration-200 hover:scale-110 hover:rotate-90"
                     style={{
-                        padding: '8px',
+                        width: '32px',
+                        height: '32px',
+                        padding: '6px',
                         borderRadius: '10px',
                         background: 'rgba(239, 68, 68, 0.15)',
                         border: '1px solid rgba(239, 68, 68, 0.4)',
                         color: '#f87171',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
                     }}
                     aria-label="Close"
                 >
