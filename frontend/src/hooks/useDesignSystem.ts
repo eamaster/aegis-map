@@ -16,6 +16,7 @@ import {
 export function useDesignSystem() {
     const { theme } = useTheme();
     const isDark = theme === 'dark';
+    const themeKey = isDark ? 'dark' : 'light';
 
     return {
         // Theme state
@@ -39,10 +40,11 @@ export function useDesignSystem() {
         headerBorderColor: getHeaderBorderColor(isDark),
         accentGradient: getAccentGradient(isDark),
 
-        // ✅ NEW: Theme-aware text colors (from CSS variables)
-        textPrimary: isDark ? '#ffffff' : '#111827',
-        textSecondary: isDark ? '#9ca3af' : '#6b7280',
-        textTertiary: isDark ? '#6b7280' : '#9ca3af',
+        // ✅ Theme-aware text colors from design system
+        text: DESIGN_SYSTEM.text[themeKey],
+
+        // ✅ Theme-aware surface colors from design system
+        surface: DESIGN_SYSTEM.surface[themeKey],
 
         // Static tokens (not theme-dependent)
         dimensions: DESIGN_SYSTEM.dimensions,

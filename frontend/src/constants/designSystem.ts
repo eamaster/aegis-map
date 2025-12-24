@@ -69,6 +69,45 @@ export const DESIGN_SYSTEM = {
         },
     },
 
+    // ===== TEXT COLORS (Theme-aware tokens) =====
+    text: {
+        dark: {
+            primary: '#ffffff',      // Pure white
+            secondary: '#e5e7eb',    // gray-200
+            tertiary: '#d1d5db',     // gray-300
+            quaternary: '#9ca3af',   // gray-400
+            muted: '#6b7280',        // gray-500
+        },
+        light: {
+            primary: '#111827',      // gray-900
+            secondary: '#1f2937',    // gray-800
+            tertiary: '#374151',     // gray-700
+            quaternary: '#4b5563',   // gray-600
+            muted: '#6b7280',        // gray-500
+        },
+    },
+
+    // ===== SURFACE COLORS (Background tokens) =====
+    surface: {
+        dark: {
+            base: 'rgba(17, 24, 39, 0.65)',        // Panel base
+            elevated: 'rgba(30, 41, 59, 0.5)',     // Cards
+            overlay: 'rgba(0, 0, 0, 0.35)',        // Dark overlays for inactive states
+            overlaySubtle: 'rgba(255, 255, 255, 0.05)', // Subtle light overlay for buttons
+            border: 'rgba(255, 255, 255, 0.15)',   // Visible borders
+            borderSubtle: 'rgba(255, 255, 255, 0.1)', // Subtle borders
+        },
+        light: {
+            base: 'rgba(255, 255, 255, 0.65)',     // Panel base
+            elevated: 'rgba(248, 250, 252, 0.5)',  // Cards
+            overlay: 'rgba(0, 0, 0, 0.04)',        // Light overlays for inactive states
+            overlaySubtle: 'rgba(0, 0, 0, 0.05)',  // Subtle dark overlay for buttons
+            border: 'rgba(0, 0, 0, 0.15)',         // Visible borders
+            borderSubtle: 'rgba(0, 0, 0, 0.1)',    // Subtle borders
+        },
+    },
+
+
     // ===== GLASS MORPHISM PRESETS (Reduced opacity for translucency) =====
     glass: {
         panel: {
