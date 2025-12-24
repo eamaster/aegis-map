@@ -75,9 +75,11 @@ function App() {
     >
       {/* Professional Header - Enterprise Design */}
       <header
-        className="relative flex items-center justify-between px-4 md:px-8 py-3.5 border-b z-50 transition-all duration-300"
+        className="relative flex items-center justify-between py-3.5 border-b z-50 transition-all duration-300"
         style={{
           height: ds.dimensions.header.height.desktop,
+          paddingLeft: '24px',
+          paddingRight: '24px',
           background: ds.accentGradient,
           ...ds.glass.panel,
           borderColor: ds.headerBorderColor,
@@ -88,8 +90,10 @@ function App() {
         <div className="relative flex items-center gap-3.5">
           {/* Globe Icon Badge */}
           <div
-            className="w-11 h-11 flex items-center justify-center relative overflow-hidden group transition-all duration-300 hover:scale-105"
+            className="flex items-center justify-center relative overflow-hidden group transition-all duration-300 hover:scale-105"
             style={{
+              width: '44px',
+              height: '44px',
               borderRadius: ds.borderRadius.lg,
               background: `linear-gradient(135deg, ${ds.colors.accent.blueDim}, rgba(37, 99, 235, 0.15))`,
               border: `2px solid ${ds.colors.accent.blue}66`,
@@ -97,7 +101,7 @@ function App() {
             }}
           >
             <Globe
-              size={22}
+              size={26}
               className="relative z-10 transition-transform group-hover:rotate-12 duration-500"
               style={{
                 color: ds.colors.accent.blueLight,
@@ -116,8 +120,9 @@ function App() {
           {/* Brand Text */}
           <div className="flex flex-col">
             <h1
-              className="text-lg md:text-xl font-black tracking-tight leading-none"
+              className="font-black tracking-tight leading-none"
               style={{
+                fontSize: '1.5rem',
                 color: ds.isDark ? '#ffffff' : '#111827',
                 letterSpacing: '-0.03em',
                 textShadow: ds.isDark ? `0 2px 8px ${ds.colors.accent.blue}4D` : 'none'
