@@ -155,7 +155,8 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
           lng: [lng - bboxSize, lng + bboxSize]
         },
         modisDate: modisDateStr,
-        firmsDate: firmsDateStr
+        firmsDate: firmsDateStr,
+        stateDates: { modisDate, firmsDate }
       });
 
       // Base layer: MODIS Aqua natural color (WMS with explicit BBOX)
@@ -438,17 +439,17 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
         }}
       >
         {loading ? (
-          <div className="w-full h-64 flex flex-col items-center justify-center gap-3">
+          <div className="w-full aspect-[4/3] flex flex-col items-center justify-center gap-3">
             <div className="animate-spin rounded-full h-8 w-8 border-2 border-blue-500 border-t-transparent" />
             <p className="text-xs text-gray-400">Loading satellite imagery...</p>
           </div>
         ) : (
-          <div className="relative">
+          <div className="relative aspect-[4/3] w-full overflow-hidden bg-gray-900">
             {/* Base Image */}
             <img
               src={imageUrl}
               alt={`${disasterType} satellite view`}
-              className="w-full h-64 object-cover"
+              className="w-full h-full object-cover"
               onError={(e) => {
                 console.error('Image failed, using fallback');
                 const fallback = `https://api.mapbox.com/styles/v1/mapbox/satellite-v9/static/${lng},${lat},8,0/800x600?access_token=${import.meta.env.VITE_MAPBOX_TOKEN}`;
@@ -476,8 +477,18 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
 
                   // Calculate position relative to image center (50% = center)
                   // NOTE: Longitude offset is REVERSED because image left=lng-0.5, right=lng+0.5
-                  const relLng = ((lng - hotspot.longitude) / imgBboxSize) * 100 + 50;
+                  const relLng = ((hotspot.longitude - lng) / imgBboxSize) * 100 + 50;
                   const relLat = ((lat - hotspot.latitude) / imgBboxSize) * 100 + 50;
+
+                  // ✅ DEBUG: Log marker position (REMOVE after verifying fix works)
+                  if (idx === 0) {
+                    console.log('🎯 First Fire Marker:', {
+                      hotspot: { lat: hotspot.latitude, lng: hotspot.longitude },
+                      center: { lat, lng },
+                      calculated: { left: `${relLng.toFixed(1)}%`, top: `${relLat.toFixed(1)}%` },
+                      bboxSize
+                    });
+                  }
 
                   // Only show if within bounds (with small margin for edge cases)
                   if (relLng < -5 || relLng > 105 || relLat < -5 || relLat > 105) {
@@ -520,7 +531,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
             </div>
 
             {/* Data Timestamp */}
-            <div className="absolute bottom-2 right-2 bg-black/80 px-2 py-1 rounded text-xs text-gray-300 backdrop-blur-sm">
+            <div className="absolute bottom-2 right-2 bg-black/80 px-2 py-1 rounded text-xs text-gray-300 backdrop-blur-sm" style={{ zIndex: 20 }}>
               {selectedLayer === 'thermal' ? (
                 <span title="MODIS infrared imagery has 3-4 day processing delay">
                   NASA MODIS: {(() => {
@@ -531,7 +542,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
                 </span>
               ) : selectedLayer === 'fire' ? (
                 <span title="MODIS base: 3 days ago | VIIRS fires: today">
-                  MODIS: {modisDate} | Fires: {firmsDate}
+                  MODIS: {modisDate || '...'} | Fires: {firmsDate || '...'}
                 </span>
               ) : (
                 <span title="Mapbox commercial satellite imagery">
