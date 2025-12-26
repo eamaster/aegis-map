@@ -449,7 +449,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
             <img
               src={imageUrl}
               alt={`${disasterType} satellite view`}
-              className="w-full h-full object-cover"
+              className="w-full h-full object-contain"
               onError={(e) => {
                 console.error('Image failed, using fallback');
                 const fallback = `https://api.mapbox.com/styles/v1/mapbox/satellite-v9/static/${lng},${lat},8,0/800x600?access_token=${import.meta.env.VITE_MAPBOX_TOKEN}`;
@@ -462,7 +462,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
               <img
                 src={overlayUrl}
                 alt="Fire overlay"
-                className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+                className="absolute inset-0 w-full h-full object-contain pointer-events-none"
                 style={{ mixBlendMode: 'screen' }}
               />
             )}
@@ -477,7 +477,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
 
                   // Calculate position relative to image center (50% = center)
                   // NOTE: Longitude offset is REVERSED because image left=lng-0.5, right=lng+0.5
-                  const relLng = ((hotspot.longitude - lng) / imgBboxSize) * 100 + 50;
+                  const relLng = ((lng - hotspot.longitude) / imgBboxSize) * 100 + 50;
                   const relLat = ((lat - hotspot.latitude) / imgBboxSize) * 100 + 50;
 
                   // ✅ DEBUG: Log marker position (REMOVE after verifying fix works)
@@ -542,7 +542,11 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
                 </span>
               ) : selectedLayer === 'fire' ? (
                 <span title="MODIS base: 3 days ago | VIIRS fires: today">
-                  MODIS: {modisDate || '...'} | Fires: {firmsDate || '...'}
+                  MODIS: {(() => {
+                    const d = new Date();
+                    d.setDate(d.getDate() - 3);
+                    return d.toLocaleDateString();
+                  })()} | Fires: {new Date().toLocaleDateString()}
                 </span>
               ) : (
                 <span title="Mapbox commercial satellite imagery">
