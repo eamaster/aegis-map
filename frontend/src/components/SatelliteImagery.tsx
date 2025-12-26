@@ -444,12 +444,12 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
             <p className="text-xs text-gray-400">Loading satellite imagery...</p>
           </div>
         ) : (
-          <div className="relative aspect-[4/3] w-full overflow-hidden bg-gray-900">
-            {/* Base Image */}
+          <div className="relative w-full bg-gray-900" style={{ display: 'inline-block' }}>
+            {/* Base Image - positions the container */}
             <img
               src={imageUrl}
               alt={`${disasterType} satellite view`}
-              className="w-full h-full object-contain"
+              className="w-full h-auto block"
               onError={(e) => {
                 console.error('Image failed, using fallback');
                 const fallback = `https://api.mapbox.com/styles/v1/mapbox/satellite-v9/static/${lng},${lat},8,0/800x600?access_token=${import.meta.env.VITE_MAPBOX_TOKEN}`;
@@ -457,102 +457,104 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
               }}
             />
 
-            {/* Fire Overlay (if applicable) */}
-            {overlayUrl && (
-              <img
-                src={overlayUrl}
-                alt="Fire overlay"
-                className="absolute inset-0 w-full h-full object-contain pointer-events-none"
-                style={{ mixBlendMode: 'screen' }}
-              />
-            )}
-
-            {/* Fire Hotspot Markers */}
-            {disasterType === 'fire' && selectedLayer === 'fire' && fireHotspots.length > 0 && (
-              <div className="absolute inset-0 pointer-events-none">
-                {fireHotspots.slice(0, 30).map((hotspot, idx) => {
-                  // ✅ SYNCHRONIZED: Match WMS bbox (±0.5° range)
-                  const bboxSize = 0.5;
-                  const imgBboxSize = bboxSize * 2; // Total range: 1.0°
-
-                  // Calculate position relative to image center (50% = center)
-                  // NOTE: Longitude offset is REVERSED because image left=lng-0.5, right=lng+0.5
-                  const relLng = ((lng - hotspot.longitude) / imgBboxSize) * 100 + 50;
-                  const relLat = ((lat - hotspot.latitude) / imgBboxSize) * 100 + 50;
-
-                  // ✅ DEBUG: Log marker position (REMOVE after verifying fix works)
-                  if (idx === 0) {
-                    console.log('🎯 First Fire Marker:', {
-                      hotspot: { lat: hotspot.latitude, lng: hotspot.longitude },
-                      center: { lat, lng },
-                      calculated: { left: `${relLng.toFixed(1)}%`, top: `${relLat.toFixed(1)}%` },
-                      bboxSize
-                    });
-                  }
-
-                  // Only show if within bounds (with small margin for edge cases)
-                  if (relLng < -5 || relLng > 105 || relLat < -5 || relLat > 105) {
-                    return null;
-                  }
-
-                  return (
-                    <div
-                      key={idx}
-                      className={`absolute rounded-full ${getConfidenceColor(hotspot.confidence)} shadow-lg`}
-                      style={{
-                        width: '10px',
-                        height: '10px',
-                        left: `${relLng}%`,
-                        top: `${relLat}%`,
-                        transform: 'translate(-50%, -50%)',
-                        boxShadow: '0 0 20px rgba(239, 68, 68, 1), 0 0 40px rgba(239, 68, 68, 0.6)',
-                        border: '2px solid white',
-                        zIndex: 10,
-                        animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite'
-                      }}
-                      title={`${hotspot.bright_ti4}K, ${hotspot.frp}MW, Conf: ${hotspot.confidence}`}
-                    />
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Layer Label */}
-            <div className="absolute top-2 left-2 bg-black/80 px-3 py-1.5 rounded-full text-xs text-white font-medium backdrop-blur-sm">
-              {selectedLayer === 'fire' ? '🔥 MODIS Natural Color + NASA Fire Data' :
-                selectedLayer === 'thermal' ? '🌡️ NASA MODIS Thermal (Bands 7-2-1)' :
-                  '📸 Mapbox High-Res Satellite'}
-            </div>
-
-            {/* Coordinates */}
-            <div className="absolute bottom-2 left-2 bg-black/80 px-2 py-1 rounded text-xs text-white font-mono backdrop-blur-sm">
-              <MapPin size={10} className="inline mr-1" />
-              {lat.toFixed(4)}°, {lng.toFixed(4)}°
-            </div>
-
-            {/* Data Timestamp */}
-            <div className="absolute bottom-2 right-2 bg-black/80 px-2 py-1 rounded text-xs text-gray-300 backdrop-blur-sm" style={{ zIndex: 20 }}>
-              {selectedLayer === 'thermal' ? (
-                <span title="MODIS infrared imagery has 3-4 day processing delay">
-                  NASA MODIS: {(() => {
-                    const d = new Date();
-                    d.setDate(d.getDate() - 4);
-                    return d.toLocaleDateString();
-                  })()} (latest)
-                </span>
-              ) : selectedLayer === 'fire' ? (
-                <span title="MODIS base: 3 days ago | VIIRS fires: today">
-                  MODIS: {(() => {
-                    const d = new Date();
-                    d.setDate(d.getDate() - 3);
-                    return d.toLocaleDateString();
-                  })()} | Fires: {new Date().toLocaleDateString()}
-                </span>
-              ) : (
-                <span title="Mapbox commercial satellite imagery">
-                  Mapbox: Live
-                </span>
+            {/* Absolute positioned overlay layer - covers entire image */}
+            <div className="absolute top-0 left-0 w-full h-full pointer-events-none">
+              {/* Fire Overlay (if applicable) */}
+              {overlayUrl && (
+                <img
+                  src={overlayUrl}
+                  alt="Fire overlay"
+                  className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+                  style={{ mixBlendMode: 'screen' }}
+                />
               )}
+
+              {/* Fire Hotspot Markers */}
+              {disasterType === 'fire' && selectedLayer === 'fire' && fireHotspots.length > 0 && (
+                <>
+                  {fireHotspots.slice(0, 30).map((hotspot, idx) => {
+                    // ✅ SYNCHRONIZED: Match WMS bbox (±0.5° range)
+                    const bboxSize = 0.5;
+                    const imgBboxSize = bboxSize * 2; // Total range: 1.0°
+
+                    // Calculate position relative to image center (50% = center)
+                    const relLng = ((lng - hotspot.longitude) / imgBboxSize) * 100 + 50;
+                    const relLat = ((lat - hotspot.latitude) / imgBboxSize) * 100 + 50;
+
+                    // ✅ DEBUG: Log marker position (REMOVE after verifying fix works)
+                    if (idx === 0) {
+                      console.log('🎯 First Fire Marker:', {
+                        hotspot: { lat: hotspot.latitude, lng: hotspot.longitude },
+                        center: { lat, lng },
+                        calculated: { left: `${relLng.toFixed(1)}%`, top: `${relLat.toFixed(1)}%` },
+                        bboxSize
+                      });
+                    }
+
+                    // Only show if within bounds (with small margin for edge cases)
+                    if (relLng < -5 || relLng > 105 || relLat < -5 || relLat > 105) {
+                      return null;
+                    }
+
+                    return (
+                      <div
+                        key={idx}
+                        className={`absolute rounded-full ${getConfidenceColor(hotspot.confidence)} shadow-lg pointer-events-auto`}
+                        style={{
+                          width: '10px',
+                          height: '10px',
+                          left: `${relLng}%`,
+                          top: `${relLat}%`,
+                          transform: 'translate(-50%, -50%)',
+                          boxShadow: '0 0 20px rgba(239, 68, 68, 1), 0 0 40px rgba(239, 68, 68, 0.6)',
+                          border: '2px solid white',
+                          zIndex: 10,
+                          animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite'
+                        }}
+                        title={`${hotspot.bright_ti4}K, ${hotspot.frp}MW, Conf: ${hotspot.confidence}`}
+                      />
+                    );
+                  })}
+                </>
+              )}
+
+              {/* Layer Label */}
+              <div className="absolute top-2 left-2 bg-black/80 px-3 py-1.5 rounded-full text-xs text-white font-medium backdrop-blur-sm pointer-events-none">
+                {selectedLayer === 'fire' ? '🔥 MODIS Natural Color + NASA Fire Data' :
+                  selectedLayer === 'thermal' ? '🌡️ NASA MODIS Thermal (Bands 7-2-1)' :
+                    '📸 Mapbox High-Res Satellite'}
+              </div>
+
+              {/* Coordinates */}
+              <div className="absolute bottom-2 left-2 bg-black/80 px-2 py-1 rounded text-xs text-white font-mono backdrop-blur-sm pointer-events-none">
+                <MapPin size={10} className="inline mr-1" />
+                {lat.toFixed(4)}°, {lng.toFixed(4)}°
+              </div>
+
+              {/* Data Timestamp */}
+              <div className="absolute bottom-2 right-2 bg-black/80 px-2 py-1 rounded text-xs text-gray-300 backdrop-blur-sm pointer-events-none" style={{ zIndex: 20 }}>
+                {selectedLayer === 'thermal' ? (
+                  <span title="MODIS infrared imagery has 3-4 day processing delay">
+                    NASA MODIS: {(() => {
+                      const d = new Date();
+                      d.setDate(d.getDate() - 4);
+                      return d.toLocaleDateString();
+                    })()} (latest)
+                  </span>
+                ) : selectedLayer === 'fire' ? (
+                  <span title="MODIS base: 3 days ago | VIIRS fires: today">
+                    MODIS: {(() => {
+                      const d = new Date();
+                      d.setDate(d.getDate() - 3);
+                      return d.toLocaleDateString();
+                    })()} | Fires: {new Date().toLocaleDateString()}
+                  </span>
+                ) : (
+                  <span title="Mapbox commercial satellite imagery">
+                    Mapbox: Live
+                  </span>
+                )}
+              </div>
             </div>
           </div>
         )}
