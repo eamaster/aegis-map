@@ -472,49 +472,56 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
               {/* Fire Hotspot Markers */}
               {disasterType === 'fire' && selectedLayer === 'fire' && fireHotspots.length > 0 && (
                 <>
-                  {fireHotspots.slice(0, 30).map((hotspot, idx) => {
-                    // ✅ SYNCHRONIZED: Match WMS bbox (±0.5° range)
-                    const bboxSize = 0.5;
-                    const imgBboxSize = bboxSize * 2; // Total range: 1.0°
+                  {(() => {
+                    let visibleCount = 0;
+                    let filteredCount = 0;
 
-                    // Calculate position relative to image center (50% = center)
-                    const relLng = ((lng - hotspot.longitude) / imgBboxSize) * 100 + 50;
-                    const relLat = ((lat - hotspot.latitude) / imgBboxSize) * 100 + 50;
+                    const markers = fireHotspots.slice(0, 30).map((hotspot, idx) => {
+                      // ✅ SYNCHRONIZED: Match WMS bbox (±0.5° range)
+                      const bboxSize = 0.5;
+                      const imgBboxSize = bboxSize * 2; // Total range: 1.0°
 
-                    // ✅ DEBUG: Log marker position (REMOVE after verifying fix works)
-                    if (idx === 0) {
-                      console.log('🎯 First Fire Marker:', {
-                        hotspot: { lat: hotspot.latitude, lng: hotspot.longitude },
-                        center: { lat, lng },
-                        calculated: { left: `${relLng.toFixed(1)}%`, top: `${relLat.toFixed(1)}%` },
-                        bboxSize
-                      });
-                    }
+                      // Calculate position relative to image center (50% = center)
+                      const relLng = ((lng - hotspot.longitude) / imgBboxSize) * 100 + 50;
+                      const relLat = ((lat - hotspot.latitude) / imgBboxSize) * 100 + 50;
 
-                    // Only show if within bounds (with small margin for edge cases)
-                    if (relLng < -5 || relLng > 105 || relLat < -5 || relLat > 105) {
-                      return null;
-                    }
+                      // Only show if within bounds (with small margin for edge cases)
+                      if (relLng < -5 || relLng > 105 || relLat < -5 || relLat > 105) {
+                        filteredCount++;
+                        return null;
+                      }
 
-                    return (
-                      <div
-                        key={idx}
-                        className={`absolute rounded-full ${getConfidenceColor(hotspot.confidence)} shadow-lg pointer-events-auto`}
-                        style={{
-                          width: '10px',
-                          height: '10px',
-                          left: `${relLng}%`,
-                          top: `${relLat}%`,
-                          transform: 'translate(-50%, -50%)',
-                          boxShadow: '0 0 20px rgba(239, 68, 68, 1), 0 0 40px rgba(239, 68, 68, 0.6)',
-                          border: '2px solid white',
-                          zIndex: 10,
-                          animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite'
-                        }}
-                        title={`${hotspot.bright_ti4}K, ${hotspot.frp}MW, Conf: ${hotspot.confidence}`}
-                      />
-                    );
-                  })}
+                      visibleCount++;
+
+                      return (
+                        <div
+                          key={idx}
+                          className={`absolute rounded-full ${getConfidenceColor(hotspot.confidence)} shadow-lg pointer-events-auto`}
+                          style={{
+                            width: '10px',
+                            height: '10px',
+                            left: `${relLng}%`,
+                            top: `${relLat}%`,
+                            transform: 'translate(-50%, -50%)',
+                            boxShadow: '0 0 20px rgba(239, 68, 68, 1), 0 0 40px rgba(239, 68, 68, 0.6)',
+                            border: '2px solid white',
+                            zIndex: 10,
+                            animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite'
+                          }}
+                          title={`${hotspot.bright_ti4}K, ${hotspot.frp}MW, Conf: ${hotspot.confidence}`}
+                        />
+                      );
+                    });
+
+                    console.log('🔥 Fire Markers:', {
+                      total: fireHotspots.length,
+                      visible: visibleCount,
+                      filtered: filteredCount,
+                      reason: 'Markers outside ±0.5° image bounds are hidden'
+                    });
+
+                    return markers;
+                  })()}
                 </>
               )}
 
