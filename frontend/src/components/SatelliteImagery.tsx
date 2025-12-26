@@ -458,7 +458,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
             />
 
             {/* Absolute positioned overlay layer - covers entire image */}
-            <div className="absolute top-0 left-0 w-full h-full pointer-events-none">
+            <div className="absolute w-full h-full pointer-events-none" style={{ top: 0, left: 0 }}>
               {/* Fire Overlay (if applicable) */}
               {overlayUrl && (
                 <img
@@ -519,20 +519,20 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
               )}
 
               {/* Layer Label */}
-              <div className="absolute top-2 left-2 bg-black/90 px-2 py-1 rounded text-xs text-white font-medium backdrop-blur-sm pointer-events-none" style={{ zIndex: 15 }}>
+              <div className="absolute bg-black/90 px-2 py-1 rounded text-xs text-white font-medium backdrop-blur-sm pointer-events-none" style={{ top: '8px', left: '8px', zIndex: 15 }}>
                 {selectedLayer === 'fire' ? '🔥 Fire Data' :
                   selectedLayer === 'thermal' ? '🌡️ Thermal' :
                     '📸 Visual'}
               </div>
 
               {/* Coordinates */}
-              <div className="absolute bottom-2 left-2 bg-black/90 px-2 py-1 rounded text-xs text-white font-mono backdrop-blur-sm pointer-events-none" style={{ zIndex: 15 }}>
+              <div className="absolute bg-black/90 px-2 py-1 rounded text-xs text-white font-mono backdrop-blur-sm pointer-events-none" style={{ bottom: '8px', left: '8px', zIndex: 15 }}>
                 <MapPin size={10} className="inline mr-1" />
                 {lat.toFixed(3)}°, {lng.toFixed(3)}°
               </div>
 
               {/* Data Timestamp */}
-              <div className="absolute bottom-2 right-2 bg-black/90 px-2 py-1 rounded text-xs text-white backdrop-blur-sm pointer-events-none" style={{ zIndex: 15 }}>
+              <div className="absolute bg-black/90 px-2 py-1 rounded text-xs text-white backdrop-blur-sm pointer-events-none" style={{ bottom: '8px', right: '8px', zIndex: 15 }}>
                 {selectedLayer === 'thermal' ? (
                   <span title="MODIS infrared imagery has 3-4 day processing delay">
                     {(() => {
