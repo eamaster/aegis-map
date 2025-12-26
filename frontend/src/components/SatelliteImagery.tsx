@@ -34,36 +34,35 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
     avgTemp: number;
     maxFRP: number;
   } | null>(null);
+  const [modisDate, setModisDate] = useState<string>('');
+  const [firmsDate, setFirmsDate] = useState<string>('');
 
   const [fetchingFire, setFetchingFire] = useState(false);
 
   useEffect(() => {
-    // ✅ FIXED: Use appropriate date based on data source latency
-    let dateStr: string;
-    let thermalDateStr: string;
-
-    // Current date for FIRMS fire hotspots (3-hour latency)
-    dateStr = new Date().toISOString().split('T')[0];
-
-    // MODIS has 3-4 day processing delay - use 4 days ago for thermal layer
+    // ✅ CRITICAL: MODIS imagery has 3-4 day processing delay
+    // MODIS imagery date for Fire Hotspots and Thermal tabs
     const modisDate = new Date();
     modisDate.setDate(modisDate.getDate() - 4);
-    thermalDateStr = modisDate.toISOString().split('T')[0];
+    const modisDateStr = modisDate.toISOString().split('T')[0];
 
     // Set NASA Worldview URL with disaster-specific layers
     const layers = getWorldviewLayers(disasterType);
-    // Use thermal date for Worldview if thermal layer selected
-    const worldviewDate = selectedLayer === 'thermal' ? thermalDateStr : dateStr;
-    const worldview = `https://worldview.earthdata.nasa.gov/?v=${lng - 1.5},${lat - 1.5},${lng + 1.5},${lat + 1.5}&t=${worldviewDate}&l=${layers}`;
+    // Always use MODIS date for Worldview (MODIS layers)
+    const worldview = `https://worldview.earthdata.nasa.gov/?v=${lng - 1.5},${lat - 1.5},${lng + 1.5},${lat + 1.5}&t=${modisDateStr}&l=${layers}`;
     setWorldviewUrl(worldview);
 
-    // Fetch fire data for wildfires
+    // Fetch fire data for wildfires (uses near real-time FIRMS API)
     if (disasterType === 'fire') {
       fetchFireHotspots(lat, lng);
     }
 
-    // Update imagery based on selected layer (pass both dates)
-    updateImagery(lat, lng, selectedLayer === 'thermal' ? thermalDateStr : dateStr);
+    // ✅ Update imagery - only MODIS layers need the date parameter
+    if (selectedLayer === 'visual') {
+      updateImagery(lat, lng, '');  // Mapbox doesn't use date parameter
+    } else {
+      updateImagery(lat, lng, modisDateStr);  // MODIS layers use 4-day-old date
+    }
   }, [lat, lng, disasterType, date, selectedLayer]);
 
   const getWorldviewLayers = (type: string): string => {
@@ -134,24 +133,50 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
     const mapboxToken = import.meta.env.VITE_MAPBOX_TOKEN;
 
     if (disasterType === 'fire' && selectedLayer === 'fire') {
-      // ✅ Base: High-res Mapbox satellite (better than MODIS 250m)
-      const baseUrl = `https://api.mapbox.com/styles/v1/mapbox/satellite-v9/static/${lng},${lat},14,0/800x600@2x?access_token=${mapboxToken}`;
+      // ✅ Fire Hotspots: MODIS Aqua True Color (natural colors) + VIIRS overlay
+      // CRITICAL: All three (base, overlay, markers) use SAME ±0.5° bbox for alignment
+      const bboxSize = 0.5; // ±0.5° = ~55km radius - MUST match marker calculation!
+
+      // MODIS has 3-day processing delay, use historical date for base layer
+      const modisDateObj = new Date();
+      modisDateObj.setDate(modisDateObj.getDate() - 3);
+      const modisDateStr = modisDateObj.toISOString().split('T')[0];
+      setModisDate(modisDateObj.toLocaleDateString());
+
+      // VIIRS has near real-time availability (3-hour latency), use today's date
+      const firmsDateStr = new Date().toISOString().split('T')[0];
+      setFirmsDate(new Date().toLocaleDateString());
+
+      console.log('🔥 Fire Hotspots WMS Config:', {
+        center: { lat, lng },
+        bboxSize,
+        bboxRange: {
+          lat: [lat - bboxSize, lat + bboxSize],
+          lng: [lng - bboxSize, lng + bboxSize]
+        },
+        modisDate: modisDateStr,
+        firmsDate: firmsDateStr
+      });
+
+      // Base layer: MODIS Aqua natural color (WMS with explicit BBOX)
+      // GIBS WMS 1.3.0 EPSG:4326 uses lat,lng order: minLat,minLng,maxLat,maxLng
+      const baseUrl = `https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=MODIS_Aqua_CorrectedReflectance_TrueColor&TIME=${modisDateStr}&CRS=EPSG:4326&WIDTH=800&HEIGHT=600&BBOX=${lat - bboxSize},${lng - bboxSize},${lat + bboxSize},${lng + bboxSize}&FORMAT=image/jpeg`;
       setImageUrl(baseUrl);
 
-      // ✅ FIXED: Use 0.5° bbox to match FIRMS data range (prevents off-screen markers)
-      const bboxSize = 0.5; // ±0.5° = ~55km radius
-      const fireOverlay = `https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=VIIRS_NOAA20_Thermal_Anomalies_375m_All&TIME=${dateStr}&CRS=EPSG:4326&WIDTH=800&HEIGHT=600&BBOX=${lat - bboxSize},${lng - bboxSize},${lat + bboxSize},${lng + bboxSize}&FORMAT=image/png&TRANSPARENT=true`;
+      // VIIRS fire overlay - use SAME bbox order and today's date for current fire data
+      const fireOverlay = `https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=VIIRS_NOAA20_Thermal_Anomalies_375m_All&TIME=${firmsDateStr}&CRS=EPSG:4326&WIDTH=800&HEIGHT=600&BBOX=${lat - bboxSize},${lng - bboxSize},${lat + bboxSize},${lng + bboxSize}&FORMAT=image/png&TRANSPARENT=true`;
       setOverlayUrl(fireOverlay);
 
     } else if (selectedLayer === 'thermal') {
-      // MODIS 250m resolution - use 0.3° for optimal balance
-      const thermalBbox = 0.3; // ±0.3° = ~33km radius (good for MODIS resolution)
+      // Thermal: MODIS Bands 7-2-1 (use 4-day-old date)
+      // GIBS WMS 1.3.0 EPSG:4326 uses lat,lng order: minLat,minLng,maxLat,maxLng
+      const thermalBbox = 0.3;
       const thermalUrl = `https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=MODIS_Terra_CorrectedReflectance_Bands721&TIME=${dateStr}&CRS=EPSG:4326&WIDTH=800&HEIGHT=600&BBOX=${lat - thermalBbox},${lng - thermalBbox},${lat + thermalBbox},${lng + thermalBbox}&FORMAT=image/jpeg`;
       setImageUrl(thermalUrl);
       setOverlayUrl('');
 
     } else {
-      // Visual (high-res satellite) - Zoom 15 for maximum street-level detail
+      // Visual: Mapbox high-res
       const visualUrl = `https://api.mapbox.com/styles/v1/mapbox/satellite-v9/static/${lng},${lat},15,0/800x600@2x?access_token=${mapboxToken}`;
       setImageUrl(visualUrl);
       setOverlayUrl('');
@@ -445,12 +470,13 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
             {disasterType === 'fire' && selectedLayer === 'fire' && fireHotspots.length > 0 && (
               <div className="absolute inset-0 pointer-events-none">
                 {fireHotspots.slice(0, 30).map((hotspot, idx) => {
-                  // ✅ SYNCHRONIZED: Match GIBS overlay bbox (±0.5° range)
-                  const bboxSize = 0.5; // Must match GIBS overlay bbox
-                  const imgBboxSize = bboxSize * 2; // Total range: 1.0° (from lat-0.5 to lat+0.5)
+                  // ✅ SYNCHRONIZED: Match WMS bbox (±0.5° range)
+                  const bboxSize = 0.5;
+                  const imgBboxSize = bboxSize * 2; // Total range: 1.0°
 
                   // Calculate position relative to image center (50% = center)
-                  const relLng = ((hotspot.longitude - lng) / imgBboxSize) * 100 + 50;
+                  // NOTE: Longitude offset is REVERSED because image left=lng-0.5, right=lng+0.5
+                  const relLng = ((lng - hotspot.longitude) / imgBboxSize) * 100 + 50;
                   const relLat = ((lat - hotspot.latitude) / imgBboxSize) * 100 + 50;
 
                   // Only show if within bounds (with small margin for edge cases)
@@ -461,13 +487,17 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
                   return (
                     <div
                       key={idx}
-                      className={`absolute w-3 h-3 rounded-full ${getConfidenceColor(hotspot.confidence)} animate-pulse shadow-lg`}
+                      className={`absolute rounded-full ${getConfidenceColor(hotspot.confidence)} shadow-lg`}
                       style={{
+                        width: '10px',
+                        height: '10px',
                         left: `${relLng}%`,
                         top: `${relLat}%`,
                         transform: 'translate(-50%, -50%)',
-                        boxShadow: '0 0 15px rgba(239, 68, 68, 0.9)',
-                        zIndex: 10
+                        boxShadow: '0 0 20px rgba(239, 68, 68, 1), 0 0 40px rgba(239, 68, 68, 0.6)',
+                        border: '2px solid white',
+                        zIndex: 10,
+                        animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite'
                       }}
                       title={`${hotspot.bright_ti4}K, ${hotspot.frp}MW, Conf: ${hotspot.confidence}`}
                     />
@@ -478,9 +508,9 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
 
             {/* Layer Label */}
             <div className="absolute top-2 left-2 bg-black/80 px-3 py-1.5 rounded-full text-xs text-white font-medium backdrop-blur-sm">
-              {selectedLayer === 'fire' ? '🔥 NASA Fire Data + Mapbox Base' :
+              {selectedLayer === 'fire' ? '🔥 MODIS Natural Color + NASA Fire Data' :
                 selectedLayer === 'thermal' ? '🌡️ NASA MODIS Thermal (Bands 7-2-1)' :
-                  '📸 Mapbox Satellite Imagery'}
+                  '📸 Mapbox High-Res Satellite'}
             </div>
 
             {/* Coordinates */}
@@ -492,14 +522,20 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
             {/* Data Timestamp */}
             <div className="absolute bottom-2 right-2 bg-black/80 px-2 py-1 rounded text-xs text-gray-300 backdrop-blur-sm">
               {selectedLayer === 'thermal' ? (
-                <span>NASA: {(() => {
-                  const d = new Date();
-                  d.setDate(d.getDate() - 4);
-                  return d.toLocaleDateString();
-                })()} (latest)</span>
+                <span title="MODIS infrared imagery has 3-4 day processing delay">
+                  NASA MODIS: {(() => {
+                    const d = new Date();
+                    d.setDate(d.getDate() - 4);
+                    return d.toLocaleDateString();
+                  })()} (latest)
+                </span>
+              ) : selectedLayer === 'fire' ? (
+                <span title="MODIS base: 3 days ago | VIIRS fires: today">
+                  MODIS: {modisDate} | Fires: {firmsDate}
+                </span>
               ) : (
-                <span title="Mapbox imagery date may differ from disaster date">
-                  Base: Commercial
+                <span title="Mapbox commercial satellite imagery">
+                  Mapbox: Live
                 </span>
               )}
             </div>
@@ -541,7 +577,11 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
       >
         {disasterType === 'fire' && selectedLayer === 'fire' && (
           <p>
-            🔴 <strong style={{ color: ds.text.primary }}>Fire overlay:</strong> NASA VIIRS satellite detections (red dots = active fires, last 7 days). <strong style={{ color: ds.text.primary }}>Base imagery:</strong> Mapbox commercial satellite (high resolution but may be weeks old). Click NASA Worldview for official time-synced imagery.
+            🔥 <strong style={{ color: ds.text.primary }}>Fire Hotspots:</strong> NASA VIIRS satellite fire detections (bright dots = active fires, last 7 days) overlaid on MODIS natural color imagery (regional ~55km view).
+            {fireHotspots.length > 0 && (
+              <span> <strong style={{ color: ds.colors.disaster.fire }}>{fireHotspots.length} hotspots detected.</strong></span>
+            )}
+            {' '}Switch to <strong>Visual</strong> tab for street-level detail.
           </p>
         )}
         {disasterType === 'fire' && selectedLayer === 'thermal' && (
