@@ -519,39 +519,39 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
               )}
 
               {/* Layer Label */}
-              <div className="absolute top-2 left-2 bg-black/80 px-3 py-1.5 rounded-full text-xs text-white font-medium backdrop-blur-sm pointer-events-none">
-                {selectedLayer === 'fire' ? '🔥 MODIS Natural Color + NASA Fire Data' :
-                  selectedLayer === 'thermal' ? '🌡️ NASA MODIS Thermal (Bands 7-2-1)' :
-                    '📸 Mapbox High-Res Satellite'}
+              <div className="absolute top-2 left-2 bg-black/90 px-2 py-1 rounded text-xs text-white font-medium backdrop-blur-sm pointer-events-none" style={{ zIndex: 15 }}>
+                {selectedLayer === 'fire' ? '🔥 Fire Data' :
+                  selectedLayer === 'thermal' ? '🌡️ Thermal' :
+                    '📸 Visual'}
               </div>
 
               {/* Coordinates */}
-              <div className="absolute bottom-2 left-2 bg-black/80 px-2 py-1 rounded text-xs text-white font-mono backdrop-blur-sm pointer-events-none">
+              <div className="absolute bottom-2 left-2 bg-black/90 px-2 py-1 rounded text-xs text-white font-mono backdrop-blur-sm pointer-events-none" style={{ zIndex: 15 }}>
                 <MapPin size={10} className="inline mr-1" />
-                {lat.toFixed(4)}°, {lng.toFixed(4)}°
+                {lat.toFixed(3)}°, {lng.toFixed(3)}°
               </div>
 
               {/* Data Timestamp */}
-              <div className="absolute bottom-2 right-2 bg-black/80 px-2 py-1 rounded text-xs text-gray-300 backdrop-blur-sm pointer-events-none" style={{ zIndex: 20 }}>
+              <div className="absolute bottom-2 right-2 bg-black/90 px-2 py-1 rounded text-xs text-white backdrop-blur-sm pointer-events-none" style={{ zIndex: 15 }}>
                 {selectedLayer === 'thermal' ? (
                   <span title="MODIS infrared imagery has 3-4 day processing delay">
-                    NASA MODIS: {(() => {
+                    {(() => {
                       const d = new Date();
                       d.setDate(d.getDate() - 4);
-                      return d.toLocaleDateString();
-                    })()} (latest)
+                      return d.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' });
+                    })()}
                   </span>
                 ) : selectedLayer === 'fire' ? (
                   <span title="MODIS base: 3 days ago | VIIRS fires: today">
-                    MODIS: {(() => {
+                    {(() => {
                       const d = new Date();
                       d.setDate(d.getDate() - 3);
-                      return d.toLocaleDateString();
-                    })()} | Fires: {new Date().toLocaleDateString()}
+                      return d.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' });
+                    })()} | {new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit' })}
                   </span>
                 ) : (
                   <span title="Mapbox commercial satellite imagery">
-                    Mapbox: Live
+                    Live
                   </span>
                 )}
               </div>
