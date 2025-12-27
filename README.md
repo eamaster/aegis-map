@@ -1,184 +1,306 @@
-# 🏛️ AegisMap - Disaster Situational Awareness Dashboard
+# 🌍 AegisMap - Real-Time Disaster Monitoring & Satellite Intelligence Platform
 
-Professional-grade disaster monitoring with satellite pass predictions and AI-powered coverage analysis.
+> **Professional-grade disaster situational awareness with satellite pass predictions, AI-powered coverage analysis, and fire hotspot tracking.**
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue)
+![React](https://img.shields.io/badge/React-19.2-61DAFB)
+![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020)
+
+**Live Demo** • [Report Bug](https://github.com/yourusername/aegis-map/issues) • [Request Feature](https://github.com/yourusername/aegis-map/issues)
+
+---
+
+## 📋 Table of Contents
+
+- [Overview](#overview)
+- [Key Features](#key-features)
+- [Tech Stack](#tech-stack)
+- [Architecture](#architecture)
+- [Getting Started](#getting-started)
+- [API Reference](#api-reference)
+- [Deployment](#deployment)
+- [Contributing](#contributing)
+- [License](#license)
+
+---
+
+## 🎯 Overview
+
+**AegisMap** is an advanced disaster monitoring and satellite intelligence platform designed for emergency response teams, researchers, and disaster management professionals. It combines real-time disaster data from multiple authoritative sources with sophisticated satellite orbital mechanics to predict optimal imaging opportunities and provide AI-powered coverage analysis.
+
+### What Makes AegisMap Unique?
+
+- **🛰️ Real-Time Orbital Predictions**: Calculate next satellite overpass times using SGP4 propagation
+- **🤖 AI-Powered Analysis**: Google Gemini AI evaluates imaging feasibility based on cloud cover and sensor capabilities
+- **🔥 Live Fire Hotspot Tracking**: NASA FIRMS data integration with thermal intensity visualization
+- **🌦️ Weather-Aware**: Automatic cloud forecast integration for pass quality assessment
+- **📊 Multi-Source Data Fusion**: Combines NASA EONET, USGS, and FIRMS data streams
+- **💾 Smart Caching**: Intelligent response caching reduces API costs and improves performance
+
+---
+
+## ✨ Key Features
+
+### 1. **Comprehensive Disaster Monitoring**
+- **Wildfires**: NASA EONET + NASA FIRMS fire hotspot data (thermal intensity, confidence levels)
+- **Earthquakes**: USGS real-time seismic activity (magnitude ≥2.5)
+- **Volcanoes**: NASA EONET volcanic activity tracking
+- **Auto-Refresh**: 10-minute cache TTL with KV storage
+
+### 2. **Satellite Pass Predictions**
+- **6 Satellite Constellations** monitored:
+  - Landsat-8 & Landsat-9 (30m optical + thermal)
+  - Sentinel-2A & Sentinel-2B (10m optical)
+  - Terra & Aqua (MODIS sensors)
+- **Precision Calculations**:
+  - SGP4 orbital propagation
+  - Minimum elevation filter (>25°)
+  - 24-hour forecast window
+  - Real-time countdown timers
+
+### 3. **AI Coverage Analysis**
+- **Powered by**: Google Gemini 1.5 Flash/Pro
+- **Smart Caching System**:
+  - Templates cached by disaster type + satellite class + cloud coverage bucket
+  - 2-hour TTL with personalized response generation
+  - ~$0/month operational cost with effective caching
+- **Analysis Includes**:
+  - Optical vs. thermal sensor suitability
+  - Cloud cover impact assessment
+  - Alternative sensor recommendations
+  - 2-sentence actionable summaries
+
+### 4. **Advanced Map Visualization**
+- **Mapbox GL JS** with dark/light theme support
+- **NASA GIBS Integration**: Thermal satellite imagery overlays
+- **Interactive Layers**:
+  - Pulsing animations for high-severity events
+  - Custom disaster markers (fires, earthquakes, volcanoes)
+  - Fire hotspot heatmaps with intensity gradients
+- **Safe Mode Architecture**: useRef-based implementation prevents unnecessary map reloads
+
+### 5. **Professional UI/UX**
+- **Responsive Design**: Mobile-first with desktop optimizations
+- **Dark/Light Themes**: Automatic system preference detection
+- **Glassmorphism Effects**: Modern, premium aesthetic
+- **Tutorial Overlay**: Interactive onboarding (press `?`)
+- **Debug Panel**: Real-time system diagnostics
+
+---
 
 ## 🛠️ Tech Stack
 
-- **Frontend:** React 18 + Vite + Tailwind CSS + TypeScript
-- **Map Engine:** Mapbox GL JS (Safe Mode with useRef)
-- **Backend:** Cloudflare Workers + Hono Framework
-- **Caching:** Cloudflare KV
-- **Orbital Math:** Satellite.js (Client-side calculations)
-- **AI Analysis:** Google Gemini 1.5 Pro (with smart caching)
-- **Weather:** Open-Meteo API (Free)
-- **Disaster Data:** NASA EONET + USGS
+### Frontend
+| Technology | Version | Purpose |
+|-----------|---------|---------|
+| **React** | 19.2.0 | UI framework |
+| **Vite** | 7.2.4 | Build tool & dev server |
+| **TypeScript** | 5.9.3 | Type safety |
+| **Tailwind CSS** | 4.1.17 | Styling framework |
+| **Mapbox GL JS** | 3.16.0 | Map rendering engine |
+| **Satellite.js** | 6.0.1 | Orbital mechanics (SGP4) |
+| **date-fns** | 4.1.0 | Date manipulation |
+| **Lucide React** | 0.554.0 | Icon library |
+| **React Hot Toast** | 2.6.0 | Notifications |
 
-## 🔥 Recent Fixes (December 2024)
+### Backend
+| Technology | Version | Purpose |
+|-----------|---------|---------|
+| **Cloudflare Workers** | Latest | Serverless runtime |
+| **Hono** | 4.10.6 | Web framework |
+| **Cloudflare KV** | N/A | Edge caching layer |
+| **Wrangler** | 4.50.0 | Deployment CLI |
 
-### Removed Features
-- ❌ **Starlink Connectivity Radar** - Removed hardcoded fake widget
+### External APIs
+| Service | Purpose | Cost | Rate Limits |
+|---------|---------|------|-------------|
+| **NASA EONET** | Wildfire & volcano events | FREE | No hard limit |
+| **USGS Earthquakes** | Seismic activity | FREE | No hard limit |
+| **NASA FIRMS** | Fire hotspot detection | FREE | 5000 req/10min |
+| **CelesTrak** | Satellite TLE data | FREE | Fair use |
+| **Open-Meteo** | Weather forecasts | FREE | 10,000 req/day |
+| **NASA GIBS** | Satellite imagery tiles | FREE | Fair use |
+| **Mapbox** | Base maps | FREE | 50k loads/month |
+| **Google Gemini** | AI analysis | Pay-as-you-go | Varies by model |
 
-### Fixed Bugs
-- ✅ **Fire Hotspot Markers** - Synchronized GIBS overlay and FIRMS bbox to 0.5° radius
-- ✅ **Cloud Forecast Label** - Changed to "Cloud Forecast at Pass Time" with timestamp
-- ✅ **Image Source Labels** - Clarified which layers use NASA GIBS vs. Mapbox
+---
 
-### Performance Improvements
-- ⚡ **Gemini Smart Caching** - Responses cached by disaster type/satellite/cloud bucket (2hr TTL)
+## 🏗️ Architecture
 
-### API Usage Summary
-| API | Purpose | Cost |
-|-----|---------|------|
-| NASA EONET | Wildfire/volcano events | FREE |
-| USGS Earthquakes | Seismic activity | FREE |
-| NASA FIRMS | Fire hotspot detection | FREE |
-| CelesTrak TLEs | Satellite orbital data | FREE |
-| Open-Meteo | Weather forecast | FREE |
-| NASA GIBS | Thermal satellite imagery | FREE |
-| Mapbox | Base map & high-res satellite | FREE (50k loads/mo) |
-| Google Gemini | AI analysis (cached) | ~$0/mo with caching |
-
-## 📦 Project Structure
+### System Overview
 
 ```
-aegis-map/
-├── backend/          # Cloudflare Worker API
-│   ├── src/
-│   │   └── index.ts  # Hono API routes
-│   ├── .dev.vars     # Local environment secrets
-│   └── wrangler.jsonc
-│
-└── frontend/         # React Application
-    ├── src/
-    │   ├── components/
-    │   │   ├── MapBoard.tsx   # Mapbox map (Safe Mode)
-    │   │   └── Sidebar.tsx    # Coverage analysis panel
-    │   ├── utils/
-    │   │   └── orbitalEngine.ts  # Satellite pass calculations
-  │   └── types/
-    │       └── index.ts       # TypeScript definitions
-    └── .env          # Environment variables
+┌─────────────────────────────────────────────────────────────┐
+│                        FRONTEND (React)                      │
+│  ┌────────────┐  ┌─────────────┐  ┌───────────────────┐   │
+│  │  MapBoard  │  │   Sidebar   │  │  TutorialOverlay  │   │
+│  │  (Mapbox)  │  │  (Analysis) │  │   (Onboarding)    │   │
+│  └────────────┘  └─────────────┘  └───────────────────┘   │
+│         │               │                                    │
+│         └───────────────┴──── Orbital Engine (Client-side) │
+│                         │                                    │
+└─────────────────────────┼────────────────────────────────────┘
+                          │ HTTPS
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│              BACKEND (Cloudflare Workers + KV)              │
+│  ┌──────────────┐  ┌───────────────┐  ┌──────────────┐    │
+│  │ GET /disasters│  │ GET /tles     │  │ POST /analyze │   │
+│  │ (10min cache) │  │ (12hr cache)  │  │ (AI + cache)  │   │
+│  └──────────────┘  └───────────────┘  └──────────────┘    │
+└─────────────────────────────────────────────────────────────┘
+         │                  │                    │
+         ▼                  ▼                    ▼
+    ┌─────────┐      ┌──────────┐        ┌──────────┐
+    │ NASA    │      │ CelesTrak│        │  Google  │
+    │ EONET   │      │          │        │  Gemini  │
+    ├─────────┤      └──────────┘        └──────────┘
+    │ USGS    │
+    ├─────────┤
+    │ FIRMS   │
+    └─────────┘
 ```
 
-## 🚀 Quick Start
+### Data Flow
+
+1. **Disaster Data**: Backend fetches from NASA EONET + USGS → KV cache (10min TTL) → Frontend map
+2. **Satellite TLEs**: Backend fetches from CelesTrak → KV cache (12hr TTL) → Frontend orbital engine
+3. **Pass Predictions**: Client-side SGP4 calculations using Satellite.js
+4. **Weather Data**: Client-side fetch from Open-Meteo during satellite pass calculation
+5. **AI Analysis**: Backend calls Gemini API → Smart cache (2hr TTL) → Personalized response
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+- **Node.js** ≥ 18.0.0
+- **npm** ≥ 9.0.0
+- **Cloudflare Account** (for deployment)
+- **API Keys**:
+  - [Mapbox Access Token](https://account.mapbox.com/access-tokens/)
+  - [Google Gemini API Key](https://aistudio.google.com/app/apikey) (optional, has fallback)
+  - [NASA FIRMS Map Key](https://firms.modaps.eosdis.nasa.gov/api/) (optional, has fallback)
 
 ### Backend Setup
 
-1. **Navigate to backend:**
+1. **Navigate to backend directory:**
    ```bash
    cd backend
    ```
 
-2. **Environment variables are already configured in `.dev.vars`**
+2. **Install dependencies:**
+   ```bash
+   npm install
+   ```
 
-3. **Start local development server:**
+3. **Create `.dev.vars` file:**
+   ```bash
+   # Required for local development
+   GEMINI_API_KEY=your_gemini_api_key_here
+   FIRMS_MAP_KEY=your_firms_map_key_here
+   ```
+
+4. **Start development server:**
    ```bash
    npm run dev
    ```
-   Backend will run at `http://localhost:8787`
+   Backend runs at `http://localhost:8787`
 
-4. **Test endpoints:**
+5. **Test endpoints:**
    ```bash
-   # Test disaster data
+   # Health check
+   curl http://localhost:8787/
+
+   # Get disaster data
    curl http://localhost:8787/api/disasters
-   
-   # Test TLE data
+
+   # Get satellite TLEs
    curl http://localhost:8787/api/tles
-   
+
    # Test AI analysis
    curl -X POST http://localhost:8787/api/analyze \
      -H "Content-Type: application/json" \
-     -d '{"disasterTitle":"California Wildfire","satelliteName":"Landsat-9","passTime":"2025-11-23T10:30:00Z","cloudCover":15}'
+     -d '{"disasterTitle":"California Wildfire","satelliteName":"Landsat-9","passTime":"2025-12-27T10:00:00Z","cloudCover":15}'
    ```
 
 ### Frontend Setup
 
-1. **Navigate to frontend:**
+1. **Navigate to frontend directory:**
    ```bash
    cd frontend
    ```
 
-2. **Environment variables are already configured in `.env`:**
-   - `VITE_MAPBOX_TOKEN`: Mapbox public token
-   - `VITE_API_BASE_URL`: Backend API URL
+2. **Install dependencies:**
+   ```bash
+   npm install
+   ```
 
-3. **Start development server:**
+3. **Create `.env` file:**
+   ```bash
+   # Copy from example
+   cp .env.example .env
+
+   # Edit .env with your values
+   VITE_MAPBOX_TOKEN=your_mapbox_token_here
+   VITE_API_BASE_URL=http://localhost:8787
+   ```
+
+4. **Start development server:**
    ```bash
    npm run dev
    ```
-   Frontend will run at `http://localhost:5173`
+   Frontend runs at `http://localhost:5173`
 
-4. **Open in browser:**
+5. **Open in browser:**
    ```
    http://localhost:5173
    ```
 
-## ⚡ Features
+### Verification Checklist
 
-### 1. **Real-Time Disaster Monitoring**
-- Wildfires (NASA EONET)
-- Volcanoes (NASA EONET)
-- Earthquakes (USGS)
-- Auto-refresh every 10 minutes (KV cached)
+- [ ] Backend starts without errors
+- [ ] `/api/disasters` returns data
+- [ ] `/api/tles` returns satellite data
+- [ ] Frontend map loads only once (check browser console)
+- [ ] Clicking disaster marker opens sidebar
+- [ ] Satellite pass countdown updates
+- [ ] Cloud coverage displays correctly
+- [ ] AI analysis button works (if Gemini key configured)
 
-### 2. **Satellite Pass Predictions**
-- Calculates next satellite overpass
-- Filters by elevation (>25°)
-- Real-time countdown timer
-- Satellites monitored:
-  - Landsat-8 & Landsat-9
-  - Sentinel-2A & Sentinel-2B
-  - Terra & Aqua
+---
 
-### 3. **Weather Integration**
-- Cloud coverage forecast
-- Hourly predictions up to 2 days
-- Auto-matched to satellite pass time
+## 📡 API Reference
 
-### 4. **AI Coverage Analysis**
-- Powered by Gemini 1.5 Pro
-- Assesses satellite imagery feasibility
-- Considers cloud cover and sensor capabilities
-- Provides actionable 2-sentence summaries
+### Base URL
+- **Local**: `http://localhost:8787`
+- **Production**: `https://your-worker.workers.dev`
 
-## 🔒 Security Features
+### Endpoints
 
-- ✅ API keys stored in backend (never exposed to client)
-- ✅ KV caching prevents rate limiting
-- ✅ CORS enabled for local development
-- ✅ Environment variables gitignored
-
-## 🗺️ Mapbox Safety Protocol
-
-**Critical:** We use a "Safe Mode" initialization pattern to prevent map reloads:
-
-```typescript
-const map = useRef<mapboxgl.Map | null>(null);
-
-useEffect(() => {
-  if (map.current) return; // ← PREVENTS RE-INITIALIZATION
-  
-  map.current = new mapboxgl.Map({...});
-  
-  map.current.on('load', () => {
-    // Add layers once
-  });
-}, []); // ← EMPTY DEPENDENCY ARRAY
+#### 1. Health Check
+```http
+GET /
+```
+**Response:**
+```json
+{
+  "status": "AegisMap API Online",
+  "version": "1.0.0"
+}
 ```
 
-**Budget:** 50,000 map loads/month. Monitor usage at [Mapbox Dashboard](https://account.mapbox.com/).
+#### 2. Get Disasters
+```http
+GET /api/disasters
+```
+**Description**: Fetches merged disaster data from NASA EONET and USGS.
 
-## 📡 API Endpoints
+**Cache**: 10 minutes (Cloudflare KV)
 
-### Backend (Port 8787)
-
-| Endpoint | Method | Description | Cache TTL |
-|----------|--------|-------------|-----------|
-| `/api/disasters` | GET | Merged NASA EONET + USGS data | 10 min |
-| `/api/tles` | GET | Satellite TLE elements | 12 hours |
-| `/api/analyze` | POST | AI coverage analysis | No cache |
-
-### Example Response: `/api/disasters`
+**Response:**
 ```json
 [
   {
@@ -187,23 +309,136 @@ useEffect(() => {
     "title": "California Wildfire",
     "lat": 34.0522,
     "lng": -118.2437,
-    "date": "2025-11-22T12:00:00Z",
+    "date": "2025-12-27T10:00:00Z",
     "severity": "high"
+  },
+  {
+    "id": "us6000abcd",
+    "type": "earthquake",
+    "title": "M 6.2 - 10km NW of Los Angeles",
+    "lat": 34.1522,
+    "lng": -118.3437,
+    "date": "2025-12-27T09:30:00Z",
+    "severity": "high",
+    "magnitude": 6.2
   }
 ]
 ```
 
-## 🧪 Testing Checklist
+#### 3. Get Satellite TLEs
+```http
+GET /api/tles
+```
+**Description**: Fetches Two-Line Element (TLE) orbital data for 6 disaster monitoring satellites.
 
-- [ ] Backend starts without errors
-- [ ] Disasters endpoint returns data
-- [ ] TLEs endpoint returns satellite data
-- [ ] AI analyze endpoint works with test data
-- [ ] Frontend map loads only once (check console)
-- [ ] Clicking disaster opens sidebar
-- [ ] Satellite pass countdown updates every second
-- [ ] Cloud coverage displays correctly
-- [ ] AI analysis button triggers Gemini
+**Cache**: 12 hours (Cloudflare KV)
+
+**Satellites**:
+- Landsat-8 (NORAD 39084)
+- Landsat-9 (NORAD 49260)
+- Sentinel-2A (NORAD 40697)
+- Sentinel-2B (NORAD 42063)
+- Terra (NORAD 25994)
+- Aqua (NORAD 27424)
+
+**Response** (plaintext TLE format):
+```
+LANDSAT 8                       
+1 39084U 13008A   25361.50000000  .00000000  00000-0  00000-0 0  9999
+2 39084  98.2000 180.0000 0001000  90.0000 270.0000 14.57100000000000
+LANDSAT 9                       
+1 49260U 21088A   25361.50000000  .00000000  00000-0  00000-0 0  9999
+2 49260  98.2000 180.0000 0001000  90.0000 270.0000 14.57100000000000
+...
+```
+
+#### 4. Get Fire Hotspots
+```http
+GET /api/fire-hotspots?lat=34.0522&lng=-118.2437
+```
+**Description**: Fetches NASA FIRMS fire hotspot data within ±0.5° radius (~55km).
+
+**Query Parameters**:
+- `lat` (required): Latitude in decimal degrees
+- `lng` (required): Longitude in decimal degrees
+
+**Response:**
+```json
+{
+  "hotspots": [
+    {
+      "latitude": 34.0522,
+      "longitude": -118.2437,
+      "bright_ti4": 320.5,
+      "scan": 1.2,
+      "track": 1.1,
+      "acq_date": "2025-12-27",
+      "acq_time": "0930",
+      "satellite": "N",
+      "confidence": "h",
+      "version": "1.0",
+      "bright_ti5": 298.3,
+      "frp": 45.6,
+      "daynight": "D"
+    }
+  ],
+  "totalCount": 1,
+  "highConfidence": 1,
+  "maxBrightness": 320.5,
+  "maxPower": 45.6
+}
+```
+
+#### 5. AI Coverage Analysis
+```http
+POST /api/analyze
+```
+**Description**: AI-powered satellite pass analysis using Google Gemini with smart caching.
+
+**Request Body:**
+```json
+{
+  "disasterTitle": "California Wildfire",
+  "satelliteName": "Landsat-9",
+  "passTime": "2025-12-27T10:00:00Z",
+  "cloudCover": 15
+}
+```
+
+**Response:**
+```json
+{
+  "analysis": "Landsat-9's thermal sensors will capture high-quality wildfire imagery at 10:00 UTC with excellent 15% cloud coverage. This pass offers optimal conditions for damage assessment and fire perimeter mapping.",
+  "cached": false
+}
+```
+
+**Caching Strategy**:
+- Templates cached by `{disasterType}:{satelliteClass}:{cloudCoverBucket}`
+- Cloud cover bucketed in 5% intervals (e.g., 12% → 10%, 17% → 15%)
+- Personalized responses generated from templates
+- 2-hour TTL on cached templates
+
+#### 6. Test Gemini API
+```http
+GET /api/test-gemini
+```
+**Description**: Diagnostic endpoint to verify Gemini API configuration.
+
+**Response:**
+```json
+{
+  "status": 200,
+  "ok": true,
+  "keyLength": 39,
+  "keyPrefix": "AIzaSyBxxx...",
+  "response": {
+    "candidates": [...]
+  }
+}
+```
+
+---
 
 ## 🚢 Deployment
 
@@ -211,16 +446,29 @@ useEffect(() => {
 
 1. **Create KV namespace:**
    ```bash
+   cd backend
    wrangler kv:namespace create "AEGIS_CACHE"
    ```
 
-2. **Update `wrangler.jsonc` with the KV ID returned above**
+2. **Update `wrangler.jsonc`:**
+   ```jsonc
+   {
+     "kv_namespaces": [
+       {
+         "binding": "AEGIS_CACHE",
+         "id": "YOUR_KV_ID_FROM_STEP_1"
+       }
+     ]
+   }
+   ```
 
-3. **Set production secret:**
+3. **Set production secrets:**
    ```bash
    wrangler secret put GEMINI_API_KEY
-   # Paste your Gemini API key when prompted
-   # Get your key from: https://aistudio.google.com/app/apikey
+   # Paste your API key when prompted
+
+   wrangler secret put FIRMS_MAP_KEY
+   # Paste your FIRMS key when prompted
    ```
 
 4. **Deploy:**
@@ -228,15 +476,19 @@ useEffect(() => {
    npm run deploy
    ```
 
-### Frontend (Cloudflare Pages recommended)
+5. **Note your Worker URL** (e.g., `https://aegis-map-backend.your-subdomain.workers.dev`)
 
-1. **Update `.env` with production API URL:**
-   ```
-   VITE_API_BASE_URL=https://your-worker.workers.dev
+### Frontend (Cloudflare Pages)
+
+1. **Update `.env` for production:**
+   ```bash
+   VITE_MAPBOX_TOKEN=your_mapbox_token
+   VITE_API_BASE_URL=https://aegis-map-backend.your-subdomain.workers.dev
    ```
 
 2. **Build:**
    ```bash
+   cd frontend
    npm run build
    ```
 
@@ -245,65 +497,223 @@ useEffect(() => {
    npx wrangler pages deploy dist
    ```
 
-## 📊 Orbital Calculation Details
+4. **Configure custom domain** (optional):
+   - Go to Cloudflare Pages dashboard
+   - Add custom domain in settings
+   - Update DNS records as instructed
 
-The `orbitalEngine.ts` uses satellite.js to:
+### Alternative: GitHub Pages (Frontend Only)
 
-1. Parse TLE (Two-Line Element) data
-2. Propagate satellite position using SGP4
-3. Convert ECI → ECF → Geodetic coordinates
-4. Calculate look angles (azimuth & elevation)
-5. Filter passes with elevation > 25°
-6. Optimize with 90-minute skips after each pass
+1. **Update `vite.config.ts`:**
+   ```typescript
+   export default defineConfig({
+     base: '/aegis-map/', // Replace with your repo name
+     ...
+   });
+   ```
+
+2. **Build and deploy:**
+   ```bash
+   npm run build
+   npx gh-pages -d dist
+   ```
+
+---
+
+## 🧪 Orbital Calculation Details
+
+The frontend uses **Satellite.js** to perform client-side orbital mechanics calculations:
+
+### SGP4 Propagation Pipeline
+
+1. **Parse TLE Data**: Extract satellite orbital elements
+2. **Initialize SGP4**: Create satellite record
+3. **Propagate Position**: Calculate satellite ECI coordinates at given time
+4. **Coordinate Conversion**:
+   - ECI (Earth-Centered Inertial) → ECF (Earth-Centered Fixed)
+   - ECF → Geodetic (Lat/Lng/Alt)
+5. **Calculate Look Angles**:
+   - Observer-to-satellite azimuth
+   - Observer-to-satellite elevation
+6. **Filter Passes**: Only include passes with elevation > 25°
+7. **Optimize Search**: Skip 90 minutes after each detected pass (approximate orbital period)
+
+### Performance Optimizations
+
+- **5-minute time steps** for pass detection
+- **90-minute skip** after each pass to avoid duplicate detections
+- **24-hour forecast window** to balance accuracy and computation time
+- **Client-side execution** to reduce backend load
+
+---
 
 ## 🎨 UI/UX Features
 
-- Dark theme for data visibility
-- Responsive design (mobile & desktop)
-- Glassmorphism sidebar
-- Real-time countdown animations
-- Color-coded disaster types:
-  - 🔴 Red: Fires
-  - 🟠 Orange: Earthquakes & Volcanoes
+### Design System
 
-## 📝 License
+- **Color Themes**: Dark mode (default) + light mode
+- **Typography**: Inter font family with optimized weights
+- **Glassmorphism**: Backdrop blur with transparency effects
+- **Animations**:
+  - Pulsing disaster markers for high-severity events
+  - Smooth accordion transitions
+  - Loading skeletons
+  - Toast notifications
 
-This project uses:
-- Mapbox (Free tier: 50k loads/month)
-- NASA EONET (Public domain)
-- USGS (Public domain)
-- Open-Meteo (CC BY 4.0)
-- Google Gemini API (Pay-as-you-go)
+### Responsive Breakpoints
+
+- **Mobile**: < 768px
+- **Desktop**: ≥ 768px
+
+### Accessibility
+
+- Keyboard shortcuts (`?` for help)
+- ARIA labels on interactive elements
+- Semantic HTML structure
+- High-contrast color ratios
+
+---
 
 ## 🐛 Troubleshooting
 
 ### Backend Issues
 
-**Problem:** `GEMINI_API_KEY is undefined`
-- **Solution:** Check `.dev.vars` file exists in `backend/` directory
+**Problem**: `GEMINI_API_KEY is undefined`
+- **Solution**: Create `.dev.vars` file in `backend/` directory with your API key
+- **Note**: For production, use `wrangler secret put GEMINI_API_KEY`
 
-**Problem:** KV namespace errors
-- **Solution:** The placeholder IDs in `wrangler.jsonc` are for local dev only. For deployment, create real KV namespaces.
+**Problem**: KV namespace errors
+- **Solution**: Placeholder IDs in `wrangler.jsonc` are for local dev only. Create real KV namespaces for deployment.
+
+**Problem**: CORS errors
+- **Solution**: CORS is enabled for all origins. Ensure `VITE_API_BASE_URL` in `.env` matches your Worker URL exactly.
 
 ### Frontend Issues
 
-**Problem:** Map doesn't load
-- **Solution:** Verify `VITE_MAPBOX_TOKEN` in `.env` is correct
+**Problem**: Map doesn't load
+- **Solution**: Verify `VITE_MAPBOX_TOKEN` in `.env` is correct
+- **Check**: Mapbox account hasn't exceeded 50k map loads/month
 
-**Problem:** No disasters showing
-- **Solution:** Ensure backend is running on port 8787
+**Problem**: No disasters showing
+- **Solution**: Ensure backend is running on correct port (8787 for local)
+- **Check**: Browser console for CORS or network errors
 
-**Problem:** Satellite calculations slow
-- **Solution:** This is normal for first calculation. Results are cached in component state.
+**Problem**: Satellite calculations slow
+- **Solution**: Normal for first calculation (processing 6 satellites over 24 hours). Results cached in component state.
 
-## 🔮 Future Enhancements
+**Problem**: AI analysis not working
+- **Solution**: 
+  - Check Gemini API key is valid
+  - Verify regional restrictions (Gemini not available in all countries)
+  - Check backend logs for error details
+  - Fallback analysis will display if API unavailable
 
-- [ ] Historical disaster timeline
-- [ ] Export satellite pass schedule
-- [ ] Push notifications for optimal passes
-- [ ] Multi-satellite comparison
-- [ ] SAR satellite integration (all-weather imaging)
+### Map Performance
+
+**Problem**: Map reloading on state changes
+- **Solution**: This is prevented by useRef pattern. If occurring, check for conditional rendering around `<MapBoard />`.
+
+**Problem**: Exceeding Mapbox free tier
+- **Solution**: Monitor usage at [Mapbox Dashboard](https://account.mapbox.com/). Optimize by:
+  - Implementing stricter caching
+  - Using lower-resolution tiles
+  - Limiting map interactions
 
 ---
 
-**Built with** ❤️ **for disaster response teams**
+## 🔒 Security & Privacy
+
+### API Key Protection
+
+✅ **Secure**:
+- All API keys stored in backend (Cloudflare Worker environment)
+- `.env` and `.dev.vars` gitignored
+- Production secrets managed via `wrangler secret`
+
+✅ **Client-Side**:
+- Only Mapbox public token exposed (expected)
+- No sensitive credentials in frontend code
+
+### Data Privacy
+
+- No user authentication or personal data collection
+- All disaster data from public government APIs
+- KV cache contains only public disaster/satellite information
+
+---
+
+## 📈 Future Enhancements
+
+- [ ] Historical disaster timeline with playback
+- [ ] Export satellite pass schedule to calendar (.ics)
+- [ ] Push notifications for optimal imaging passes
+- [ ] Multi-satellite comparison view
+- [ ] SAR satellite integration (all-weather imaging)
+- [ ] Offline PWA support with service workers
+- [ ] Mobile app (React Native)
+- [ ] Advanced analytics dashboard
+- [ ] User accounts with saved locations
+- [ ] Email/SMS alerts for disasters in areas of interest
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! Please follow these guidelines:
+
+1. **Fork the repository**
+2. **Create a feature branch**: `git checkout -b feature/AmazingFeature`
+3. **Commit changes**: `git commit -m 'Add AmazingFeature'`
+4. **Push to branch**: `git push origin feature/AmazingFeature`
+5. **Open a Pull Request**
+
+### Development Guidelines
+
+- Follow existing code style (ESLint + Prettier)
+- Add TypeScript types for all new code
+- Update documentation for API changes
+- Test on both mobile and desktop
+- Ensure accessibility standards
+
+---
+
+## 📄 License
+
+This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+
+### Third-Party Licenses
+
+- **Mapbox**: Free tier (50k loads/month) - [Mapbox Terms](https://www.mapbox.com/tos/)
+- **NASA EONET**: Public domain
+- **USGS**: Public domain
+- **NASA FIRMS**: Public domain
+- **NASA GIBS**: Public domain
+- **Open-Meteo**: CC BY 4.0
+- **Google Gemini**: Pay-as-you-go - [Gemini Terms](https://ai.google.dev/terms)
+
+---
+
+## 🙏 Acknowledgments
+
+- **NASA** for EONET, FIRMS, and GIBS services
+- **USGS** for real-time earthquake data
+- **CelesTrak** for satellite TLE data
+- **Open-Meteo** for weather forecasts
+- **Mapbox** for map rendering
+- **Google** for Gemini AI
+- **Cloudflare** for Workers and KV infrastructure
+- **Ready Player Me** for animation inspiration (previous iterations)
+
+---
+
+## 📞 Support
+
+- **Issues**: [GitHub Issues](https://github.com/yourusername/aegis-map/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/yourusername/aegis-map/discussions)
+- **Email**: your-email@example.com
+
+---
+
+**Built with** ❤️ **for disaster response teams and emergency management professionals.**
+
+**Star ⭐ this repository if you find it useful!**
