@@ -134,9 +134,14 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
                 setLoading(false);
             });
 
-            // Load disaster data when map is ready
+            // ✅ PERFORMANCE: Load disaster data immediately in parallel with map
+            // Don't wait for map to finish loading - fetch data while map renders
+            loadDisasters();
+
+            // Add disaster layers when map finishes loading
             map.current.on('load', () => {
-                loadDisasters();
+                // Layers will be added by the useEffect if disasters are already loaded
+                console.log('✅ Map finished loading');
             });
         } catch (error) {
             console.error('Error creating map:', error);
@@ -199,9 +204,7 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
             setLastUpdated(new Date());
             setIsRefreshing(false);
 
-            if (map.current) {
-                addDisasterLayers(data);
-            }
+            // ✅ Layers will be added by useEffect (line 266) when disasters state updates
 
             // Show success toast only on manual refresh, not initial load
             if (!isInitialLoadRef.current) {
@@ -266,6 +269,27 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
         // Re-add layers with current filters
         addDisasterLayers(disasters);
     }, [activeFilters, disasters]); // No need for addDisasterLayers in deps // Re-run when filters OR disasters change
+
+    // ✅ PERFORMANCE FIX: Handle case where disasters load before map is ready
+    useEffect(() => {
+        if (!map.current || disasters.length === 0) return;
+
+        // Wait for map to be fully loaded before adding layers
+        if (map.current.loaded()) {
+            addDisasterLayers(disasters);
+        } else {
+            // If map not loaded yet, add listener
+            const onLoad = () => {
+                if (map.current && disasters.length > 0) {
+                    addDisasterLayers(disasters);
+                }
+            };
+            map.current.once('load', onLoad);
+            return () => {
+                map.current?.off('load', onLoad);
+            };
+        }
+    }, [disasters]); // Run when disasters are loaded
 
 
     // Add disaster data layers to map
