@@ -152,6 +152,16 @@ body {
     }
 }
 
+/* Spin animation for loading spinners */
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
 /* Glassmorphism Utilities - REMOVED HARDCODED DUPLICATES */
 /* NOTE: .glass-card is now defined above (lines 75-78) using CSS variables */
 /* that adapt to both dark and light themes. Do not re-define here. */

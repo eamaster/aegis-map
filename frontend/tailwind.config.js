@@ -22,6 +22,15 @@ export default {
                 '2xl': '40px',
                 '3xl': '64px',
             },
+            animation: {
+                'spin': 'spin 1s linear infinite',
+            },
+            keyframes: {
+                spin: {
+                    from: { transform: 'rotate(0deg)' },
+                    to: { transform: 'rotate(360deg)' },
+                }
+            }
         },
     },
     plugins: [],

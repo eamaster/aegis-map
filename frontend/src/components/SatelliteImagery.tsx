@@ -26,7 +26,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
   const [overlayUrl, setOverlayUrl] = useState<string>('');
   const [loading, setLoading] = useState(true);
   const [worldviewUrl, setWorldviewUrl] = useState<string>('');
-  const [selectedLayer, setSelectedLayer] = useState<'fire' | 'thermal' | 'visual'>('fire');
+  const [selectedLayer, setSelectedLayer] = useState<'fire' | 'thermal' | 'visual'>('visual');
   const [fireHotspots, setFireHotspots] = useState<FireHotspot[]>([]);
   const [fireStats, setFireStats] = useState<{
     total: number;
@@ -34,9 +34,9 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
     avgTemp: number;
     maxFRP: number;
   } | null>(null);
-  const [modisDate, setModisDate] = useState<string>('');
-  const [firmsDate, setFirmsDate] = useState<string>('');
   const [overlayLoadError, setOverlayLoadError] = useState(false);
+  const [imageLoadError, setImageLoadError] = useState(false);
+  const [imageKey, setImageKey] = useState(0); // Force re-render of img element
   const [fetchingFire, setFetchingFire] = useState(false);
 
   // Calculate visible marker count (markers within image bounds)
@@ -87,6 +87,18 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
       updateImagery(lat, lng, modisDateStr);  // MODIS layers use 4-day-old date
     }
   }, [lat, lng, disasterType, date, selectedLayer]);
+
+  // Handle cached images that don't fire onLoad
+  useEffect(() => {
+    if (!imageUrl) return;
+
+    // Check if image is already loaded from cache
+    const img = document.querySelector(`img[src="${imageUrl}"]`) as HTMLImageElement;
+    if (img && img.complete && img.naturalHeight !== 0) {
+      console.log('✅ Image already loaded from cache');
+      setLoading(false);
+    }
+  }, [imageUrl]);
 
   const getWorldviewLayers = (type: string): string => {
     switch (type) {
@@ -155,6 +167,11 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
   const updateImagery = (lat: number, lng: number, dateStr: string) => {
     const mapboxToken = import.meta.env.VITE_MAPBOX_TOKEN;
 
+    // Reset states when starting to load new imagery
+    setLoading(true);
+    setImageLoadError(false);
+    setImageKey(prev => prev + 1); // Force new image element to prevent cached images
+
     if (disasterType === 'fire' && selectedLayer === 'fire') {
       // ✅ Fire Hotspots: MODIS Aqua True Color (natural colors) + VIIRS overlay
       // CRITICAL: All three (base, overlay, markers) use SAME ±0.5° bbox for alignment
@@ -164,14 +181,13 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
       const modisDateObj = new Date();
       modisDateObj.setDate(modisDateObj.getDate() - 3);
       const modisDateStr = modisDateObj.toISOString().split('T')[0];
-      setModisDate(modisDateObj.toLocaleDateString());
 
       // VIIRS has near real-time availability (3-hour latency), use today's date
       const firmsDateStr = new Date().toISOString().split('T')[0];
-      setFirmsDate(new Date().toLocaleDateString());
 
-      // Reset overlay error state when updating imagery
+      // Reset error states when updating imagery
       setOverlayLoadError(false);
+      setImageLoadError(false);
 
       console.log('🔥 Fire Hotspots WMS Config:', {
         center: { lat, lng },
@@ -181,8 +197,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
           lng: [lng - bboxSize, lng + bboxSize]
         },
         modisDate: modisDateStr,
-        firmsDate: firmsDateStr,
-        stateDates: { modisDate, firmsDate }
+        firmsDate: firmsDateStr
       });
 
       // Base layer: MODIS Aqua natural color (WMS with explicit BBOX)
@@ -209,7 +224,8 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
       setOverlayUrl('');
     }
 
-    setLoading(false);
+    // Keep loading true - will be set to false when image actually loads
+    // Don't set loading false here, the onLoad/onError handlers will do it
   };
 
   const getSeverityLevel = (temp: number): { label: string; color: string } => {
@@ -464,24 +480,91 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
           marginBottom: '10px',
         }}
       >
-        {loading ? (
-          <div className="w-full aspect-[4/3] flex flex-col items-center justify-center gap-3">
-            <div className="animate-spin rounded-full h-8 w-8 border-2 border-blue-500 border-t-transparent" />
-            <p className="text-xs text-gray-400">Loading satellite imagery...</p>
+        {imageLoadError ? (
+          <div className="w-full aspect-[4/3] flex flex-col items-center justify-center gap-3 p-6 text-center">
+            <AlertCircle size={48} style={{ color: ds.colors.status.warning }} />
+            <div>
+              <p className="text-sm font-semibold" style={{ color: ds.text.primary }}>
+                NASA GIBS Service Unavailable
+              </p>
+              <p className="text-xs mt-2" style={{ color: ds.text.secondary }}>
+                The NASA satellite imagery service is currently experiencing connection issues.
+                {selectedLayer === 'fire' ? ' Fire hotspot markers are still visible on the map.' : ''}
+              </p>
+              <p className="text-xs mt-2" style={{ color: ds.text.tertiary }}>
+                Try switching to the <strong>Visual</strong> tab for Mapbox imagery, or check back later.
+              </p>
+            </div>
           </div>
         ) : (
-          <div className="relative w-full bg-gray-900" style={{ display: 'inline-block' }}>
-            {/* Base Image - positions the container */}
-            <img
-              src={imageUrl}
-              alt={`${disasterType} satellite view`}
-              className="w-full h-auto block"
-              onError={(e) => {
-                console.error('Image failed, using fallback');
-                const fallback = `https://api.mapbox.com/styles/v1/mapbox/satellite-v9/static/${lng},${lat},8,0/800x600?access_token=${import.meta.env.VITE_MAPBOX_TOKEN}`;
-                (e.target as HTMLImageElement).src = fallback;
-              }}
-            />
+          <div className="relative w-full" style={{ aspectRatio: '4/3', backgroundColor: '#111827', minHeight: '300px' }}>
+            {/* Loading Overlay - shows on top while image loads */}
+            {loading && (
+              <div className="absolute inset-0 w-full h-full flex flex-col items-center justify-center gap-3 z-30" style={{ backgroundColor: 'rgba(17, 24, 39, 0.95)' }}>
+                {/* Rotating spinner - EXACT copy from MapBoard.tsx */}
+                <div
+                  style={{
+                    animation: 'spin 2s linear infinite',
+                  }}
+                >
+                  <div
+                    className="w-16 h-16 rounded-full flex items-center justify-center"
+                    style={{
+                      background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
+                      boxShadow: '0 0 30px rgba(59, 130, 246, 0.5), 0 0 60px rgba(59, 130, 246, 0.2)',
+                    }}
+                  >
+                    <span className="text-3xl">🌐</span>
+                  </div>
+                </div>
+
+                <p className="text-sm text-gray-300 font-medium">
+                  {selectedLayer === 'visual'
+                    ? 'Loading high-resolution satellite imagery...'
+                    : selectedLayer === 'thermal'
+                      ? 'Loading NASA thermal imagery...'
+                      : 'Loading NASA fire detection imagery...'}
+                </p>
+
+                {/* Inline keyframes animation - same as MapBoard */}
+                <style>{`
+                  @keyframes spin {
+                    from { transform: rotate(0deg); }
+                    to { transform: rotate(360deg); }
+                  }
+                `}</style>
+              </div>
+            )}
+
+            {/* Base Image - conditionally rendered */}
+            {imageUrl && (
+              <img
+                key={imageKey}  // Force re-create element when tab changes
+                src={imageUrl}
+                alt={`${disasterType} satellite view`}
+                className="absolute inset-0 w-full h-full object-cover"
+                onError={(e) => {
+                  console.error('Image load failed:', { selectedLayer, url: imageUrl });
+
+                  // Only use Mapbox fallback for Visual tab
+                  // For NASA imagery (Fire/Thermal), hide image to show error state
+                  if (selectedLayer === 'visual') {
+                    const fallback = `https://api.mapbox.com/styles/v1/mapbox/satellite-v9/static/${lng},${lat},8,0/800x600?access_token=${import.meta.env.VITE_MAPBOX_TOKEN}`;
+                    (e.target as HTMLImageElement).src = fallback;
+                    // Fallback will re-fire onLoad or onError
+                  } else {
+                    // For NASA GIBS imagery, hide the image and show error
+                    (e.target as HTMLImageElement).style.display = 'none';
+                    setImageLoadError(true);
+                    setLoading(false);
+                  }
+                }}
+                onLoad={() => {
+                  console.log('✅ Image loaded successfully:', { selectedLayer, url: imageUrl });
+                  setLoading(false);  // ✅ Image finished downloading
+                }}
+              />
+            )}
 
             {/* Absolute positioned overlay layer - covers entire image */}
             <div className="absolute w-full h-full pointer-events-none" style={{ top: 0, left: 0 }}>
@@ -550,12 +633,6 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
                       );
                     });
 
-                    console.log('🔥 Fire Markers:', {
-                      total: fireHotspots.length,
-                      visible: visibleCount,
-                      filtered: filteredCount,
-                      reason: 'Markers outside ±0.5° image bounds are hidden'
-                    });
 
                     return markers;
                   })()}
