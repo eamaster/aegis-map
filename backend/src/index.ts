@@ -27,7 +27,7 @@ const GEMINI_CONFIG = {
 		'gemini-2.5-flash-lite',         // ✅ Cost-optimized fallback
 		'gemini-2.0-flash',              // ✅ Legacy support (Feb 2025)
 	],
-	apiVersion: 'v1',                  // v1 supports all models
+	apiVersion: 'v1beta',             // v1beta required for Gemini 3.0 models
 	cacheVersion: 'v2',                // Increment to invalidate 1.5 caches
 	appVersion: '1.1.0',               // Bumped from 1.0.0
 } as const;
@@ -396,7 +396,7 @@ Provide exactly 2 sentences for emergency responders. Be concise and actionable.
 			],
 			generation_config: {
 				temperature: 0.7,
-				max_output_tokens: 150,
+				max_output_tokens: 2048,  // High limit for Gemini 3 thinking tokens (60+) + full response
 				top_p: 0.9,
 				top_k: 40,
 			},
