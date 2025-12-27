@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { API_BASE } from '../config/api';
+import { debugLog } from '../utils/debug';
 import toast from 'react-hot-toast';
 import type { Disaster } from '../types';
 import MapLegend from './MapLegend';
@@ -156,14 +157,14 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
     const loadDisasters = async () => {
         try {
             // DEBUG: Log API call
-            (window as any).aegisDebug?.log('backend', `Fetching disasters from ${API_BASE}/api/disasters`, 'info');
+            debugLog('backend', `Fetching disasters from ${API_BASE}/api/disasters`, 'info');
 
             const response = await fetch(`${API_BASE}/api/disasters`);
             const data: Disaster[] = await response.json();
 
             // DEBUG: Validate disaster data
             if (!Array.isArray(data)) {
-                (window as any).aegisDebug?.log('disasters', 'ERROR: Response is not an array', 'error', { data });
+                debugLog('disasters', 'ERROR: Response is not an array', 'error', { data });
                 setLoading(false);
                 isInitialLoadRef.current = false; // Mark as no longer initial load even on error
                 return;
@@ -175,7 +176,7 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
             const earthquakeCount = data.filter(d => d.type === 'earthquake').length;
 
             // DEBUG: Log disaster stats
-            (window as any).aegisDebug?.log(
+            debugLog(
                 'disasters',
                 `Loaded ${data.length} disasters: ${fireCount} fires, ${volcanoCount} volcanoes, ${earthquakeCount} earthquakes`,
                 'success',
@@ -183,14 +184,14 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
             );
 
             // DEBUG: Confirm backend is online
-            (window as any).aegisDebug?.log('backend', 'Backend connection successful', 'success');
+            debugLog('backend', 'Backend connection successful', 'success');
 
             // Validate coordinates
             const invalid = data.filter(d =>
                 Math.abs(d.lat) > 90 || Math.abs(d.lng) > 180
             );
             if (invalid.length > 0) {
-                (window as any).aegisDebug?.log(
+                debugLog(
                     'disasters',
                     `WARNING: Found ${invalid.length} disasters with invalid coordinates`,
                     'warning',
@@ -220,7 +221,7 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
             isInitialLoadRef.current = false;
         } catch (error) {
             console.error('Error loading disasters:', error);
-            (window as any).aegisDebug?.log(
+            debugLog(
                 'disasters',
                 `FAILED to load disasters: ${error}`,
                 'error',
@@ -306,7 +307,7 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
         // Add fires layer
         if (fires.length > 0) {
             // DEBUG: Log layer creation
-            (window as any).aegisDebug?.log(
+            debugLog(
                 'map',
                 `Adding fires layer with ${fires.length} markers`,
                 'info'

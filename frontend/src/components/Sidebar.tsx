@@ -10,6 +10,7 @@ import { getNextPass, predictPasses, type SatellitePass } from '../utils/orbital
 import SatelliteImagery from './SatelliteImagery';
 import { useDesignSystem } from '../hooks/useDesignSystem';
 import { API_BASE } from '../config/api';
+import { debugLog } from '../utils/debug';
 
 interface SidebarProps {
     disaster: Disaster | null;
@@ -52,7 +53,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
             try {
 
                 // DEBUG: Log TLE fetch
-                (window as any).aegisDebug?.log(
+                debugLog(
                     'tles',
                     `Fetching TLEs from ${API_BASE}/api/tles`,
                     'info'
@@ -109,14 +110,14 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
 
                 // DEBUG: Validate TLE format
                 if (tleLines.length % 3 !== 0) {
-                    (window as any).aegisDebug?.log(
+                    debugLog(
                         'tles',
                         `WARNING: TLE format incorrect. Expected multiple of 3 lines, got ${tleLines.length}`,
                         'warning'
                     );
                 }
 
-                (window as any).aegisDebug?.log(
+                debugLog(
                     'tles',
                     `Loaded TLEs for ${satelliteCount} satellites`,
                     ' success',
@@ -141,7 +142,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
 
                 // Calculate next pass
 
-                (window as any).aegisDebug?.log(
+                debugLog(
                     'orbital',
                     `Calculating satellite passes for disaster at (${latNum}, ${lngNum})`,
                     'info'
@@ -170,7 +171,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
 
                 if (!pass) {
                     console.warn('⚠️ No satellite passes found in next 24 hours even with lower threshold');
-                    (window as any).aegisDebug?.log(
+                    debugLog(
                         'orbital',
                         'No satellite passes found in next 24 hours',
                         'warning'
@@ -184,7 +185,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                     return;
                 } else {
                     const timeUntil = (pass.time.getTime() - new Date().getTime()) / 1000 / 60; // minutes
-                    (window as any).aegisDebug?.log(
+                    debugLog(
                         'orbital',
                         `Next pass: ${pass.satelliteName} at ${pass.time.toLocaleString()} (in ${Math.round(timeUntil)} min) - Elevation: ${pass.elevation.toFixed(1)}°`,
                         'success',
@@ -200,7 +201,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                 console.error('❌ Error fetching data in sidebar:', error);
                 const errorMessage = error instanceof Error ? error.message : String(error);
                 console.error('Error details:', { error, errorMessage, stack: error instanceof Error ? error.stack : undefined });
-                (window as any).aegisDebug?.log(
+                debugLog(
                     'tles',
                     `FAILED to fetch TLEs: ${errorMessage}`,
                     'error',
@@ -222,7 +223,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
 
 
             // DEBUG: Log weather API call
-            (window as any).aegisDebug?.log(
+            debugLog(
                 'weather',
                 `Fetching weather for (${lat.toFixed(2)}, ${lng.toFixed(2)})`,
                 'info'
@@ -235,7 +236,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
             const data: WeatherData = await response.json();
             // DEBUG: Validate weather response
             if (!data.hourly || !data.hourly.cloud_cover) {
-                (window as any).aegisDebug?.log(
+                debugLog(
                     'weather',
                     'WARNING: Invalid weather data format',
                     'warning',
@@ -259,7 +260,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                 setCloudCover(cloudValue);
 
                 // DEBUG: Log weather result
-                (window as any).aegisDebug?.log(
+                debugLog(
                     'weather',
                     `Cloud coverage at pass time: ${cloudValue}% (${cloudValue < 20 ? 'Clear' : 'Cloudy'})`,
                     'success',
@@ -267,7 +268,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                 );
             } else {
                 console.warn('⚠️ Could not find cloud data for pass time:', passTime.toISOString());
-                (window as any).aegisDebug?.log(
+                debugLog(
                     'weather',
                     'WARNING: Could not find cloud data for pass time',
                     'warning'
@@ -277,7 +278,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
             console.error('❌ Error fetching weather:', error);
             const errorMessage = error instanceof Error ? error.message : String(error);
             console.error('Weather error details:', { error, errorMessage });
-            (window as any).aegisDebug?.log(
+            debugLog(
                 'weather',
                 `FAILED to fetch weather: ${errorMessage}`,
                 'error',
@@ -351,7 +352,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
             };
 
             // DEBUG: Log Gemini API request
-            (window as any).aegisDebug?.log(
+            debugLog(
                 'gemini',
                 `Requesting AI analysis for ${disaster.title}`,
                 'info',
@@ -407,7 +408,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
             // DEBUG: Validate Gemini response
             if (!data.analysis || data.analysis.trim().length === 0) {
                 console.error('❌ AI analysis is empty or whitespace only:', data);
-                (window as any).aegisDebug?.log(
+                debugLog(
                     'gemini',
                     'WARNING: AI analysis response is empty or whitespace only',
                     'warning',
@@ -419,7 +420,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
 
             if (data.analysis.trim().length < 10) {
                 console.warn('⚠️ AI analysis is very short:', data.analysis);
-                (window as any).aegisDebug?.log(
+                debugLog(
                     'gemini',
                     'WARNING: AI analysis response is too short',
                     'warning',
@@ -431,7 +432,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
             const trimmedAnalysis = data.analysis.trim();
             // Check if analysis mentions the disaster
             const mentionsDisaster = trimmedAnalysis.toLowerCase().includes(disaster.title.toLowerCase().split(' ')[0]);
-            (window as any).aegisDebug?.log(
+            debugLog(
                 'gemini',
                 `AI analysis received (${trimmedAnalysis.length} chars). Relevant: ${mentionsDisaster ? 'YES' : 'MAYBE'}`,
                 'success',
@@ -443,7 +444,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
             console.error('❌ Error getting AI analysis:', error);
             const errorMessage = error instanceof Error ? error.message : String(error);
             console.error('AI analysis error details:', { error, errorMessage, stack: error instanceof Error ? error.stack : undefined });
-            (window as any).aegisDebug?.log(
+            debugLog(
                 'gemini',
                 `FAILED to get AI analysis: ${errorMessage}`,
                 'error',
@@ -814,4 +815,5 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
         </div>
     );
 }
+
 
