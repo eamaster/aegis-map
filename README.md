@@ -60,7 +60,7 @@
   - Real-time countdown timers
 
 ### 3. **AI Coverage Analysis**
-- **Powered by**: Google Gemini 1.5 Flash/Pro
+- **Powered by**: Google Gemini 3 Flash (upgraded December 2025)
 - **Smart Caching System**:
   - Templates cached by disaster type + satellite class + cloud coverage bucket
   - 2-hour TTL with personalized response generation

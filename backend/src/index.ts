@@ -15,12 +15,29 @@ type Bindings = {
 
 const app = new Hono<{ Bindings: Bindings }>();
 
+/**
+ * Gemini API Configuration
+ * Using Gemini 3.0 Flash (December 2025) with stable fallbacks
+ * Models are tried in order until one succeeds
+ */
+const GEMINI_CONFIG = {
+	models: [
+		'gemini-3-flash-preview',        // ✅ Latest GA (Dec 2025) - frontier intelligence
+		'gemini-2.5-flash',              // ✅ Stable production (Sept 2025)
+		'gemini-2.5-flash-lite',         // ✅ Cost-optimized fallback
+		'gemini-2.0-flash',              // ✅ Legacy support (Feb 2025)
+	],
+	apiVersion: 'v1',                  // v1 supports all models
+	cacheVersion: 'v2',                // Increment to invalidate 1.5 caches
+	appVersion: '1.1.0',               // Bumped from 1.0.0
+} as const;
+
 // Enable CORS for frontend
 app.use('/*', cors());
 
 // Health check
 app.get('/', (c) => {
-	return c.json({ status: 'AegisMap API Online', version: '1.0.0' });
+	return c.json({ status: 'AegisMap API Online', version: GEMINI_CONFIG.appVersion });
 });
 
 // Route 1: GET /api/disasters
@@ -318,7 +335,7 @@ app.post('/api/analyze', async (c) => {
 		const cloudBucket = Math.floor(cloudCover / 5) * 5;
 
 		// Create cache key
-		const cacheKey = `gemini_v1:${disasterType}:${satelliteType}:${cloudBucket}`;
+		const cacheKey = `gemini_${GEMINI_CONFIG.cacheVersion}:${disasterType}:${satelliteType}:${cloudBucket}`;
 
 		console.log(`🔍 Cache lookup: ${cacheKey}`);
 
@@ -360,14 +377,9 @@ app.post('/api/analyze', async (c) => {
 			});
 		}
 
-		// Use comprehensive model list with latest versions
-		const models = [
-			'gemini-1.5-flash-latest',  // ✅ Latest version first
-			'gemini-1.5-flash',          // ✅ Stable version
-			'gemini-1.5-pro-latest',     // ✅ Pro latest (fallback)
-			'gemini-1.5-pro',            // ✅ Pro stable (fallback)
-		];
-		const apiVersions = ['v1', 'v1beta']; // Try v1 first
+		// Use Gemini 3.0 Flash with stable fallbacks
+		const models = GEMINI_CONFIG.models;
+		const apiVersions = [GEMINI_CONFIG.apiVersion];
 
 		const prompt = `You are a satellite imagery analyst. A disaster "${disasterTitle}" will be observed by satellite "${satelliteName}" at ${new Date(passTime).toLocaleString()} UTC. Cloud cover: ${cloudCover}%.
 
@@ -531,8 +543,8 @@ app.get('/api/test-gemini', async (c) => {
 			}, 500 as any);
 		}
 
-		// Test API call
-		const testUrl = `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${c.env.GEMINI_API_KEY}`;
+		// Test API call with latest Gemini 3 Flash model
+		const testUrl = `https://generativelanguage.googleapis.com/${GEMINI_CONFIG.apiVersion}/models/${GEMINI_CONFIG.models[0]}:generateContent?key=${c.env.GEMINI_API_KEY}`;
 
 		const response = await fetch(testUrl, {
 			method: 'POST',
