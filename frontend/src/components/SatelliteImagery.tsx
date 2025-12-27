@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Satellite, Download, ExternalLink, Flame, AlertCircle, MapPin } from 'lucide-react';
 import { useDesignSystem } from '../hooks/useDesignSystem';
 
@@ -37,8 +37,30 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
   const [modisDate, setModisDate] = useState<string>('');
   const [firmsDate, setFirmsDate] = useState<string>('');
   const [overlayLoadError, setOverlayLoadError] = useState(false);
-
   const [fetchingFire, setFetchingFire] = useState(false);
+
+  // Calculate visible marker count (markers within image bounds)
+  const visibleMarkerCount = useMemo(() => {
+    if (disasterType !== 'fire' || selectedLayer !== 'fire' || fireHotspots.length === 0) {
+      return 0;
+    }
+
+    const bboxSize = 0.5;
+    const imgBboxSize = bboxSize * 2;
+    let count = 0;
+
+    fireHotspots.slice(0, 30).forEach((hotspot) => {
+      const relLng = ((hotspot.longitude - lng) / imgBboxSize) * 100 + 50;
+      const relLat = ((hotspot.latitude - lat) / imgBboxSize) * 100 + 50;
+
+      // Count if within bounds
+      if (relLng >= -5 && relLng <= 105 && relLat >= -5 && relLat <= 105) {
+        count++;
+      }
+    });
+
+    return count;
+  }, [fireHotspots, disasterType, selectedLayer, lat, lng]);
 
   useEffect(() => {
     // ✅ CRITICAL: MODIS imagery has 3-4 day processing delay
@@ -622,7 +644,17 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
           <p>
             🔥 <strong style={{ color: ds.text.primary }}>Fire Hotspots:</strong> NASA VIIRS satellite fire detections (bright dots = active fires, last 7 days) overlaid on MODIS natural color imagery (regional ~55km view).
             {fireHotspots.length > 0 && (
-              <span> <strong style={{ color: ds.colors.disaster.fire }}>{fireHotspots.length} hotspots detected.</strong></span>
+              <span>
+                {' '}<strong style={{ color: ds.colors.disaster.fire }}>
+                  {visibleMarkerCount > 0 ? `${visibleMarkerCount} visible` : `${fireHotspots.length} detected`}
+                  {visibleMarkerCount > 0 && visibleMarkerCount < fireHotspots.length && (
+                    <span style={{ color: ds.text.secondary, fontWeight: 'normal' }}> of {fireHotspots.length} total</span>
+                  )}
+                </strong>
+                {visibleMarkerCount < fireHotspots.length && (
+                  <span style={{ color: ds.text.tertiary, fontSize: '0.7rem' }}> (some outside view)</span>
+                )}
+              </span>
             )}
             {' '}Switch to <strong>Visual</strong> tab for street-level detail.
           </p>
