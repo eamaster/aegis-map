@@ -482,8 +482,10 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
                       const imgBboxSize = bboxSize * 2; // Total range: 1.0°
 
                       // Calculate position relative to image center (50% = center)
-                      const relLng = ((lng - hotspot.longitude) / imgBboxSize) * 100 + 50;
-                      const relLat = ((lat - hotspot.latitude) / imgBboxSize) * 100 + 50;
+                      // Formula: (hotspot_coordinate - center_coordinate) / total_range * 100 + 50
+                      // Positive offset moves marker right/down, negative offset moves left/up
+                      const relLng = ((hotspot.longitude - lng) / imgBboxSize) * 100 + 50;
+                      const relLat = ((hotspot.latitude - lat) / imgBboxSize) * 100 + 50;
 
                       // Only show if within bounds (with small margin for edge cases)
                       if (relLng < -5 || relLng > 105 || relLat < -5 || relLat > 105) {
@@ -525,8 +527,12 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
                 </>
               )}
 
-              {/* Layer Label */}
-              <div className="absolute bg-black/90 px-2 py-1 rounded text-xs text-white font-medium backdrop-blur-sm pointer-events-none" style={{ top: '8px', left: '8px', zIndex: 15 }}>
+              {/* Layer Label - Top Left with higher z-index to prevent overlap */}
+              <div
+                key={`layer-label-${selectedLayer}`}
+                className="absolute bg-black/90 px-2.5 py-1.5 rounded text-xs text-white font-medium backdrop-blur-sm pointer-events-none"
+                style={{ top: '10px', left: '10px', zIndex: 20 }}
+              >
                 {selectedLayer === 'fire' ? '🔥 Fire Data' :
                   selectedLayer === 'thermal' ? '🌡️ Thermal' :
                     '📸 Visual'}
