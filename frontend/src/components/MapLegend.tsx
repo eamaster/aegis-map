@@ -37,6 +37,14 @@ export default function MapLegend({
 }: MapLegendProps) {
     const ds = useDesignSystem();
     const [isExpanded, setIsExpanded] = useState(true);
+    const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+
+    // Track viewport size for responsive chevron direction
+    useState(() => {
+        const handleResize = () => setIsMobile(window.innerWidth < 768);
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    });
 
     const formatTime = (date: Date) => {
         const now = new Date();
@@ -95,7 +103,12 @@ export default function MapLegend({
                     >
                         {counts.total.toLocaleString()}
                     </span>
-                    <ChevronDown size={12} style={{ color: ds.text.primary }} />
+                    {/* Mobile: Up arrow (expand up), Desktop: Down arrow (expand down) */}
+                    {isMobile ? (
+                        <ChevronUp size={12} style={{ color: ds.text.primary }} />
+                    ) : (
+                        <ChevronDown size={12} style={{ color: ds.text.primary }} />
+                    )}
                 </button>
             </div>
         );
@@ -169,7 +182,12 @@ export default function MapLegend({
                         }}
                         aria-label="Collapse legend"
                     >
-                        <ChevronUp size={12} strokeWidth={2.5} />
+                        {/* Mobile: Down arrow (collapse down), Desktop: Up arrow (collapse up) */}
+                        {isMobile ? (
+                            <ChevronDown size={12} strokeWidth={2.5} />
+                        ) : (
+                            <ChevronUp size={12} strokeWidth={2.5} />
+                        )}
                     </button>
                 </div>
 
