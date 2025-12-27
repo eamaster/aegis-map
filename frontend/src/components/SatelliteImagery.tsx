@@ -256,7 +256,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
       {/* Header */}
       <div
         className="flex items-center justify-between"
-        style={{ marginBottom: '10px' }}
+        style={{ marginBottom: '12px' }}  // Consistent spacing
       >
         <div className="flex items-center" style={{ gap: '10px' }}>
           <Satellite size={16} style={{ color: ds.colors.accent.blueLight }} />
@@ -296,8 +296,31 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
                   border: `1px solid ${ds.surface.border}`,
                 }}
             >
-              <div className="animate-spin rounded-full h-6 w-6" style={{ border: '2px solid #fb923c', borderTopColor: 'transparent' }} />
-              <p className="text-xs font-medium animate-pulse" style={{ color: '#fb923c' }}>Scanning thermal sensors...</p>
+              {/* Rotating fire icon - consistent with main loading animation */}
+              <div
+                style={{
+                  animation: 'spin 2s linear infinite',
+                }}
+              >
+                <div
+                  className="w-8 h-8 rounded-full flex items-center justify-center"
+                  style={{
+                    background: 'linear-gradient(135deg, #fb923c, #f97316)',
+                    boxShadow: '0 0 20px rgba(251, 146, 60, 0.4)',
+                  }}
+                >
+                  <span className="text-lg">🔥</span>
+                </div>
+              </div>
+              <p className="text-xs font-medium" style={{ color: '#fb923c' }}>Scanning thermal sensors...</p>
+
+              {/* Inline keyframes - consistent with other loading animations */}
+              <style>{`
+                @keyframes spin {
+                  from { transform: rotate(0deg); }
+                  to { transform: rotate(360deg); }
+                }
+              `}</style>
             </div>
           ) : fireStats ? (
             <div
@@ -307,6 +330,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
                 borderRadius: ds.borderRadius.lg,
                 background: 'linear-gradient(135deg, rgba(220, 38, 38, 0.15), rgba(249, 115, 22, 0.1))',
                 border: '1px solid rgba(220, 38, 38, 0.3)',
+                marginBottom: '12px',  // Consistent spacing with other sections
               }}
             >
               <div className="flex items-center" style={{ gap: '10px' }}>
@@ -364,6 +388,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
                 background: ds.surface.overlaySubtle,
                 border: `1px solid ${ds.surface.border}`,
                 borderRadius: ds.borderRadius.lg,
+                marginBottom: '12px',  // Consistent spacing
               }}
             >
               <Flame size={22} className="mb-2" style={{ color: ds.text.tertiary }} />
@@ -389,7 +414,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
               borderRadius: ds.borderRadius.lg,
               background: ds.isDark ? 'rgba(234, 179, 8, 0.15)' : 'rgba(234, 179, 8, 0.25)',
               border: ds.isDark ? '1px solid rgba(234, 179, 8, 0.4)' : '1px solid rgba(234, 179, 8, 0.5)',
-              marginBottom: '10px',
+              marginBottom: '12px',  // Consistent spacing
               gap: '8px',
             }}
           >
@@ -418,7 +443,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
       })()}
 
       {/* Layer Selector - REDESIGNED */}
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+      <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>  {/* Consistent spacing */}
         {disasterType === 'fire' && (
           <button
             onClick={() => setSelectedLayer('fire')}
@@ -477,7 +502,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
           borderRadius: ds.borderRadius.lg,
           background: ds.surface.overlaySubtle,
           border: `1px solid ${ds.surface.border}`,
-          marginBottom: '10px',
+          marginBottom: '12px',  // Consistent spacing
         }}
       >
         {imageLoadError ? (
@@ -686,12 +711,13 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
       </div>
 
       {/* Action Buttons */}
-      <div className="flex gap-2">
+      <div className="flex gap-2" style={{ marginBottom: '12px' }}>  {/* Added spacing */}
         <a
           href={worldviewUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="flex-1 flex items-center justify-center gap-2 px-3 py-2.5 bg-gradient-to-r from-blue-600/20 to-blue-500/20 hover:from-blue-600/30 hover:to-blue-500/30 text-blue-300 rounded-lg text-xs font-semibold transition-all border border-blue-500/30"
+          className="flex-1 flex items-center justify-center gap-2 px-3 py-2.5 bg-gradient-to-r from-blue-600/20 to-blue-500/20 hover:from-blue-600/40 hover:to-blue-500/40 rounded-lg text-xs font-semibold transition-all border border-blue-500/40"
+          style={{ color: '#60a5fa' }}  // Higher contrast blue for better visibility
         >
           <ExternalLink size={14} />
           NASA Worldview
@@ -699,7 +725,8 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
         <a
           href={imageUrl}
           download={`${disasterType}_${title.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.jpg`}
-          className="flex items-center justify-center gap-2 px-4 py-2.5 bg-gray-700/50 hover:bg-gray-600/50 text-gray-300 rounded-lg text-xs font-semibold transition-all border border-gray-600/50"
+          className="flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-gray-600/30 to-gray-500/30 hover:from-gray-600/50 hover:to-gray-500/50 rounded-lg text-xs font-semibold transition-all border border-gray-400/40"
+          style={{ color: '#d1d5db' }}  // Higher contrast gray for visibility
         >
           <Download size={14} />
         </a>
@@ -743,7 +770,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
         )}
         {selectedLayer === 'visual' && (
           <p>
-            📸 <strong style={{ color: ds.text.primary }}>High-resolution satellite imagery</strong>. True color composite for visual damage assessment and terrain analysis.
+            📸 <strong style={{ color: ds.text.primary }}>High-resolution satellite imagery</strong> from Mapbox. Shows geographic context, terrain, and infrastructure for location reference.
           </p>
         )}
         {disasterType === 'volcano' && (
@@ -753,7 +780,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
         )}
         {disasterType === 'earthquake' && (
           <p>
-            🌍 <strong style={{ color: ds.text.primary }}>Terrain and infrastructure imagery</strong>. Use thermal layers to detect landslides and building damage patterns.
+            🌍 <strong style={{ color: ds.text.primary }}>Satellite imagery for location context</strong>. Shows affected area terrain and infrastructure. Use NASA Worldview for detailed surface displacement maps.
           </p>
         )}
       </div>
