@@ -62,7 +62,7 @@ VITE_API_BASE_URL=http://localhost:8787
 
 For production, use:
 ```env
-VITE_API_BASE_URL=https://aegis-map-backend.smah0085.workers.dev
+VITE_API_BASE_URL=https://your-worker.workers.dev
 ```
 
 ### Development

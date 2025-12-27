@@ -7,7 +7,7 @@
 ![React](https://img.shields.io/badge/React-19.2-61DAFB)
 ![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020)
 
-**Live Demo** • [Report Bug](https://github.com/yourusername/aegis-map/issues) • [Request Feature](https://github.com/yourusername/aegis-map/issues)
+**[Live Demo](https://eamaster.github.io/aegis-map/)** • [Report Bug](https://github.com/eamaster/aegis-map/issues) • [Request Feature](https://github.com/eamaster/aegis-map/issues)
 
 ---
 
@@ -288,7 +288,7 @@ GET /
 ```json
 {
   "status": "AegisMap API Online",
-  "version": "1.0.0"
+  "version": "1.1.0"
 }
 ```
 
@@ -476,14 +476,14 @@ GET /api/test-gemini
    npm run deploy
    ```
 
-5. **Note your Worker URL** (e.g., `https://aegis-map-backend.your-subdomain.workers.dev`)
+5. **Note your Worker URL** (e.g., `https://aegis-map-backend.YOUR_SUBDOMAIN.workers.dev`)
 
 ### Frontend (Cloudflare Pages)
 
 1. **Update `.env` for production:**
    ```bash
    VITE_MAPBOX_TOKEN=your_mapbox_token
-   VITE_API_BASE_URL=https://aegis-map-backend.your-subdomain.workers.dev
+   VITE_API_BASE_URL=https://your-worker.workers.dev
    ```
 
 2. **Build:**
@@ -708,9 +708,9 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 
 ## 📞 Support
 
-- **Issues**: [GitHub Issues](https://github.com/yourusername/aegis-map/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/aegis-map/discussions)
-- **Email**: your-email@example.com
+- **Repository**: [github.com/eamaster/aegis-map](https://github.com/eamaster/aegis-map)
+- **Issues**: [GitHub Issues](https://github.com/eamaster/aegis-map/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/eamaster/aegis-map/discussions)
 
 ---
 
