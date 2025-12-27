@@ -22,15 +22,17 @@ interface MapBoardProps {
 }
 
 // Helper function to safely remove all disaster layers and sources
-const removeDisasterLayers = (mapInstance: mapboxgl.Map | null) => {
+const removeDisasterLayers = (mapInstance: mapboxgl.Map | null, animationIds?: Record<string, ReturnType<typeof setInterval>>) => {
     if (!mapInstance) return;
 
     // Stop all animations first
-    const animationKeys = ['fires', 'earthquakes', 'volcanoes'];
-    animationKeys.forEach(() => {
-        // Animation IDs are now managed externally via refs
-        // This function just clears the intervals if they exist
-    });
+    if (animationIds) {
+        Object.values(animationIds).forEach(intervalId => {
+            if (intervalId) clearInterval(intervalId);
+        });
+        // Clear the animation IDs object
+        Object.keys(animationIds).forEach(key => delete animationIds[key]);
+    }
 
     // Remove layers (must be done before removing sources)
     ['fires-layer', 'earthquakes-layer', 'volcanoes-layer'].forEach(layerId => {
@@ -66,6 +68,9 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
     const [lastUpdated, setLastUpdated] = useState<Date | undefined>(undefined);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const isInitialLoadRef = useRef(true);
+
+    // Animation interval refs for proper cleanup
+    const animationIdsRef = useRef<Record<string, ReturnType<typeof setInterval>>>({});
 
     // Initialize map only once
     useEffect(() => {
@@ -238,16 +243,7 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
 
         // Remove existing layers and sources before refreshing
         if (map.current) {
-            ['fires-layer', 'earthquakes-layer', 'volcanoes-layer'].forEach(layerId => {
-                if (map.current?.getLayer(layerId)) {
-                    map.current.removeLayer(layerId);
-                }
-            });
-            ['fires', 'earthquakes', 'volcanoes'].forEach(sourceId => {
-                if (map.current?.getSource(sourceId)) {
-                    map.current.removeSource(sourceId);
-                }
-            });
+            removeDisasterLayers(map.current, animationIdsRef.current);
         }
 
         await loadDisasters();
@@ -258,7 +254,7 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
         if (!map.current || disasters.length === 0) return;
 
         // Use helper function to clean up
-        removeDisasterLayers(map.current);
+        removeDisasterLayers(map.current, animationIdsRef.current);
 
         // Re-add layers with current filters
         addDisasterLayers(disasters);
@@ -268,19 +264,25 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
     useEffect(() => {
         if (!map.current || disasters.length === 0) return;
 
+        const mapInstance = map.current; // Capture in closure for cleanup
+
         // Wait for map to be fully loaded before adding layers
-        if (map.current.loaded()) {
+        if (mapInstance.loaded()) {
             addDisasterLayers(disasters);
         } else {
             // If map not loaded yet, add listener
             const onLoad = () => {
-                if (map.current && disasters.length > 0) {
+                if (mapInstance && disasters.length > 0) {
                     addDisasterLayers(disasters);
                 }
             };
-            map.current.once('load', onLoad);
+
+            mapInstance.once('load', onLoad);
+
+            // Cleanup function always runs, even if map loads before unmount
             return () => {
-                map.current?.off('load', onLoad);
+                // Remove listener in case it hasn't fired yet
+                mapInstance.off('load', onLoad);
             };
         }
     }, [disasters]); // Run when disasters are loaded
@@ -291,7 +293,7 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
         if (!map.current) return;
 
         // Safety check: Clean up any existing layers first
-        removeDisasterLayers(map.current);
+        removeDisasterLayers(map.current, animationIdsRef.current);
 
         // ✅ Filter disasters based on active filters
         const visibleDisasters = disasters.filter(d => activeFilters.has(d.type));
@@ -371,7 +373,7 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
             // Start animation loop for high-severity markers
             const firesAnimationId = setInterval(animateFires, 50);
             // Store animation ID for cleanup
-            (map.current as any).firesAnimationId = firesAnimationId;
+            animationIdsRef.current.fires = firesAnimationId;
 
             // Add click handler
             map.current.on('click', 'fires-layer', (e) => {
@@ -495,7 +497,7 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
             };
 
             const earthquakesAnimationId = setInterval(animateEarthquakes, 50);
-            (map.current as any).earthquakesAnimationId = earthquakesAnimationId;
+            animationIdsRef.current.earthquakes = earthquakesAnimationId;
 
             // Add click handler
             map.current.on('click', 'earthquakes-layer', (e) => {
@@ -631,7 +633,7 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
             };
 
             const volcanoesAnimationId = setInterval(animateVolcanoes, 50);
-            (map.current as any).volcanoesAnimationId = volcanoesAnimationId;
+            animationIdsRef.current.volcanoes = volcanoesAnimationId;
 
             // Add click handler
             map.current.on('click', 'volcanoes-layer', (e) => {
