@@ -14,8 +14,20 @@ import { API_BASE } from '../config/api';
 interface SidebarProps {
     disaster: Disaster | null;
     onClose: () => void;
-    isOpen?: boolean;
+    isOpen: boolean;
 }
+
+/**
+ * Satellite Elevation Thresholds
+ * - OPTIMAL: Best quality imagery (>25°)
+ * - ACCEPTABLE: Degraded but usable (>15°)
+ * - MINIMUM: Last resort, significant quality loss (>5°)
+ */
+const SATELLITE_ELEVATION_THRESHOLDS = {
+    OPTIMAL: 25,
+    ACCEPTABLE: 15,
+    MINIMUM: 5
+} as const;
 
 export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarProps) {
     const ds = useDesignSystem();
@@ -119,8 +131,9 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                 const latNum = typeof lat === 'number' ? lat : parseFloat(String(lat || '0'));
                 const lngNum = typeof lng === 'number' ? lng : parseFloat(String(lng || '0'));
 
-                // Validate coordinates - allow 0 for equator/prime meridian, but not both
-                if (isNaN(latNum) || isNaN(lngNum) || (latNum === 0 && lngNum === 0)) {
+                // Validate coordinates - allow (0,0) which is a valid location (Gulf of Guinea)
+                if (isNaN(latNum) || isNaN(lngNum) ||
+                    Math.abs(latNum) > 90 || Math.abs(lngNum) > 180) {
                     console.error('❌ Invalid coordinates in sidebar:', { lat, lng, latNum, lngNum, disaster: disasterAny });
                     setAiAnalysis("Invalid coordinates. Unable to calculate satellite passes.");
                     return;
@@ -135,27 +148,21 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                 );
 
                 // Try with lower elevation threshold if no passes found
-                let pass = getNextPass(tles, latNum, lngNum);
+                let pass = getNextPass(tles, latNum, lngNum); // Uses OPTIMAL threshold (25°)
 
-                // If no pass found with default 25°, try with lower threshold (15°)
+                // If no pass found with optimal threshold, try acceptable threshold
                 if (!pass) {
-
-                    const lowerPasses = predictPasses(tles, latNum, lngNum, 15);
-
+                    const lowerPasses = predictPasses(tles, latNum, lngNum, SATELLITE_ELEVATION_THRESHOLDS.ACCEPTABLE);
                     if (lowerPasses.length > 0) {
                         pass = lowerPasses[0];
-
                     }
                 }
 
-                // If still no pass, try even lower threshold (5°)
+                // If still no pass, try minimum threshold as last resort
                 if (!pass) {
-
-                    const evenLowerPasses = predictPasses(tles, latNum, lngNum, 5);
-
+                    const evenLowerPasses = predictPasses(tles, latNum, lngNum, SATELLITE_ELEVATION_THRESHOLDS.MINIMUM);
                     if (evenLowerPasses.length > 0) {
                         pass = evenLowerPasses[0];
-
                     }
                 }
 
@@ -312,43 +319,8 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
 
                 analyzePass();
             } else if (!nextPass && cloudCover !== null && !aiAnalysis) {
-                // Fallback: trigger AI analysis even without satellite pass
-                // Create a fallback pass for AI analysis
-                const fallbackPass = {
-                    satelliteName: 'Landsat-9',
-                    time: new Date(Date.now() + 2 * 60 * 60 * 1000), // 2 hours from now
-                    elevation: 0,
-                    azimuth: 0
-                };
-                // Call analyzePass with fallback data
-                const analyzeWithFallback = async () => {
-                    if (!disaster || cloudCover === null) return;
-                    setLoadingAnalysis(true);
-                    try {
-                        const requestBody = {
-                            disasterTitle: disaster.title,
-                            satelliteName: 'Landsat-9',
-                            passTime: fallbackPass.time.toISOString(),
-                            cloudCover,
-                        };
-                        const response = await fetch(`${API_BASE}/api/analyze`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify(requestBody),
-                        });
-                        if (!response.ok) {
-                            throw new Error(`Gemini API error: ${response.status}`);
-                        }
-                        const data: AIAnalysisResponse = await response.json();
-                        setAiAnalysis(data.analysis || 'Analysis unavailable.');
-                    } catch (error) {
-                        console.error('Error in fallback AI analysis:', error);
-                        setAiAnalysis('Analysis unavailable.');
-                    } finally {
-                        setLoadingAnalysis(false);
-                    }
-                };
-                analyzeWithFallback();
+                // No satellite pass available - inform user instead of creating fake data
+                setAiAnalysis("No satellite passes detected in the next 24 hours. Coverage analysis unavailable without scheduled satellite overpass.");
             }
         }
     }, [disaster, nextPass, cloudCover, aiAnalysis, loadingAnalysis]);
@@ -482,10 +454,6 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
             setLoadingAnalysis(false);
         }
     };
-
-    useEffect(() => {
-
-    }, [disaster]);
 
     if (!disaster) {
 

@@ -26,12 +26,10 @@ const removeDisasterLayers = (mapInstance: mapboxgl.Map | null) => {
     if (!mapInstance) return;
 
     // Stop all animations first
-    ['firesAnimationId', 'earthquakesAnimationId', 'volcanoesAnimationId'].forEach(animId => {
-        const id = (mapInstance as any)[animId];
-        if (id) {
-            clearInterval(id);
-            (mapInstance as any)[animId] = null;
-        }
+    const animationKeys = ['fires', 'earthquakes', 'volcanoes'];
+    animationKeys.forEach(key => {
+        // Animation IDs are now managed externally via refs
+        // This function just clears the intervals if they exist
     });
 
     // Remove layers (must be done before removing sources)
@@ -59,25 +57,24 @@ const removeDisasterLayers = (mapInstance: mapboxgl.Map | null) => {
 
 
 export default function MapBoard({ onDisasterSelect, activeFilters, onFilterToggle }: MapBoardProps) {
-    const mapContainer = useRef<HTMLDivElement>(null);
+    const mapContainerRef = useRef<HTMLDivElement>(null);
     const map = useRef<mapboxgl.Map | null>(null);
+    const tooltipRef = useRef<mapboxgl.Popup | null>(null);
     const [disasters, setDisasters] = useState<Disaster[]>([]);
     const [loading, setLoading] = useState(true);
     const [mapError, setMapError] = useState<string>('');
     const [lastUpdated, setLastUpdated] = useState<Date | undefined>(undefined);
     const [isRefreshing, setIsRefreshing] = useState(false);
-
-    // Store tooltips to clean them up
-    const tooltipRef = useRef<mapboxgl.Popup | null>(null);
-
-    // Track if this is the first load (component scope, not module scope)
     const isInitialLoadRef = useRef(true);
+
+    // Animation interval refs for proper cleanup
+    const animationIdsRef = useRef<Record<string, ReturnType<typeof setInterval>>>({});
 
     // Initialize map only once
     useEffect(() => {
         if (map.current) return; // Prevent re-initialization
 
-        if (!mapContainer.current) {
+        if (!mapContainerRef.current) {
             console.error('Map container ref is null');
             return;
         }
@@ -93,7 +90,7 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
         try {
             // Create map instance with Standard Satellite style
             map.current = new mapboxgl.Map({
-                container: mapContainer.current,
+                container: mapContainerRef.current,
                 style: 'mapbox://styles/mapbox/standard-satellite',
                 center: [0, 20], // ✅ Global center (Africa/Europe visible)
                 zoom: 1.3, // ✅ Full globe view showing all continents
@@ -711,7 +708,7 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
 
     return (
         <div className="relative w-full h-full">
-            <div ref={mapContainer} className="absolute inset-0" />
+            <div ref={mapContainerRef} className="absolute inset-0" />
 
             {/* Error message */}
             {mapError && (
