@@ -28,7 +28,7 @@ const GEMINI_CONFIG = {
 		'gemini-2.0-flash',              // ✅ Legacy support (Feb 2025)
 	],
 	apiVersion: 'v1beta',             // v1beta required for Gemini 3.0 models
-	cacheVersion: 'v2',                // Increment to invalidate 1.5 caches
+	cacheVersion: 'v3',                // Increment to invalidate truncated 500-token responses
 	appVersion: '1.1.0',               // Bumped from 1.0.0
 } as const;
 
