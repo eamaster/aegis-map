@@ -36,6 +36,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
   } | null>(null);
   const [modisDate, setModisDate] = useState<string>('');
   const [firmsDate, setFirmsDate] = useState<string>('');
+  const [overlayLoadError, setOverlayLoadError] = useState(false);
 
   const [fetchingFire, setFetchingFire] = useState(false);
 
@@ -146,6 +147,9 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
       // VIIRS has near real-time availability (3-hour latency), use today's date
       const firmsDateStr = new Date().toISOString().split('T')[0];
       setFirmsDate(new Date().toLocaleDateString());
+
+      // Reset overlay error state when updating imagery
+      setOverlayLoadError(false);
 
       console.log('🔥 Fire Hotspots WMS Config:', {
         center: { lat, lng },
@@ -459,13 +463,22 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
 
             {/* Absolute positioned overlay layer - covers entire image */}
             <div className="absolute w-full h-full pointer-events-none" style={{ top: 0, left: 0 }}>
-              {/* Fire Overlay (if applicable) */}
-              {overlayUrl && (
+              {/* Fire Overlay (if applicable) - hide if load fails */}
+              {overlayUrl && !overlayLoadError && (
                 <img
                   src={overlayUrl}
-                  alt="Fire overlay"
+                  alt=""
                   className="absolute inset-0 w-full h-full object-cover pointer-events-none"
                   style={{ mixBlendMode: 'screen' }}
+                  onError={(e) => {
+                    console.warn('GIBS overlay image failed to load (data may not be available for this date/location)');
+                    setOverlayLoadError(true);
+                    // Hide the broken image
+                    (e.target as HTMLImageElement).style.display = 'none';
+                  }}
+                  onLoad={() => {
+                    console.log('✅ GIBS fire overlay loaded successfully');
+                  }}
                 />
               )}
 
