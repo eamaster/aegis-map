@@ -5,6 +5,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
+import 'mapbox-gl/dist/mapbox-gl.css';
+import { API_BASE } from '../config/api';
 import toast from 'react-hot-toast';
 import type { Disaster } from '../types';
 import MapLegend from './MapLegend';
@@ -154,8 +156,6 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
     // Load disasters from backend
     const loadDisasters = async () => {
         try {
-            const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787';
-
             // DEBUG: Log API call
             (window as any).aegisDebug?.log('backend', `Fetching disasters from ${API_BASE}/api/disasters`, 'info');
 

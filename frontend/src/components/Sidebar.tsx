@@ -9,6 +9,7 @@ import type { Disaster, WeatherData, AIAnalysisResponse } from '../types';
 import { getNextPass, predictPasses, type SatellitePass } from '../utils/orbitalEngine';
 import SatelliteImagery from './SatelliteImagery';
 import { useDesignSystem } from '../hooks/useDesignSystem';
+import { API_BASE } from '../config/api';
 
 interface SidebarProps {
     disaster: Disaster | null;
@@ -23,8 +24,6 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
     const [aiAnalysis, setAiAnalysis] = useState<string>('');
     const [loadingAnalysis, setLoadingAnalysis] = useState(false);
     const [timeUntilPass, setTimeUntilPass] = useState<string>('');
-
-    const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787';
 
     // Fetch TLE data and calculate next pass
     useEffect(() => {
