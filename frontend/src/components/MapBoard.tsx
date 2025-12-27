@@ -27,7 +27,7 @@ const removeDisasterLayers = (mapInstance: mapboxgl.Map | null) => {
 
     // Stop all animations first
     const animationKeys = ['fires', 'earthquakes', 'volcanoes'];
-    animationKeys.forEach(key => {
+    animationKeys.forEach(() => {
         // Animation IDs are now managed externally via refs
         // This function just clears the intervals if they exist
     });
@@ -66,9 +66,6 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
     const [lastUpdated, setLastUpdated] = useState<Date | undefined>(undefined);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const isInitialLoadRef = useRef(true);
-
-    // Animation interval refs for proper cleanup
-    const animationIdsRef = useRef<Record<string, ReturnType<typeof setInterval>>>({});
 
     // Initialize map only once
     useEffect(() => {
