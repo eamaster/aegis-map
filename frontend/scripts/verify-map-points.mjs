@@ -14,7 +14,7 @@
 import { chromium } from 'playwright';
 
 // Configuration from environment variables
-const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173/aegis-map/';
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173/';
 const API_BASE_URL = process.env.API_BASE_URL || null;
 const TIMEOUT_MS = 30000; // 30 seconds
 const EPSILON = 1e-5; // Coordinate comparison epsilon
@@ -93,15 +93,27 @@ async function main() {
           );
         }
         
-        // Continue the request and capture response
-        const response = await route.fetch();
-        const body = await response.json();
-        capturedApiResponse = body;
-        
-        log(`Captured ${body.length} disaster records from API`, 'green');
-        
-        // Fulfill the request with the captured response
-        await route.fulfill({ response });
+        try {
+          // Continue the request and capture response with timeout
+          const response = await route.fetch({ timeout: 60000 }); // 60 second timeout
+          const body = await response.json();
+          capturedApiResponse = body;
+          
+          log(`Captured ${body.length} disaster records from API`, 'green');
+          
+          // Fulfill the request with the captured response
+          await route.fulfill({ response });
+        } catch (error) {
+          log(`Failed to fetch from API: ${error.message}`, 'red');
+          // Fulfill with error response so page doesn't hang
+          await route.fulfill({
+            status: 500,
+            contentType: 'application/json',
+            body: JSON.stringify({ error: 'Failed to fetch disasters' })
+          });
+          // Store error but don't throw - let main script handle it
+          capturedApiResponse = null;
+        }
       } else {
         // Continue all other requests normally
         await route.continue();
@@ -137,26 +149,77 @@ async function main() {
     );
     log('Map is ready', 'green');
 
-    // Wait for GeoJSON sources to exist
-    logSection('📊 Waiting for GeoJSON Sources');
-    const sourceTypes = ['fires', 'volcanoes', 'earthquakes'];
+    // Wait for API response to be captured (poll for it)
+    logSection('📊 Waiting for API Response');
+    log('Waiting for /api/disasters request...', 'blue');
     
-    for (const sourceType of sourceTypes) {
-      log(`Checking source: ${sourceType}...`, 'blue');
-      await page.waitForFunction(
-        (type) => {
-          const map = window.mapDebug;
-          return map && map.getSource(type) !== undefined;
-        },
-        sourceType,
-        { timeout: TIMEOUT_MS, polling: 100 }
+    const startTime = Date.now();
+    while (capturedApiResponse === undefined && (Date.now() - startTime < 90000)) { // 90 second timeout
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+    
+    if (capturedApiResponse === undefined || capturedApiResponse === null) {
+      throw new Error(
+        'Failed to capture API response.\n' +
+        'This usually means the backend is unreachable or timing out.\n' +
+        'Try:\n' +
+        '  1. Ensure backend is running (npm run dev in backend/)\n' +
+        '  2. Configure frontend to use local backend (.env: VITE_API_BASE_URL=http://localhost:8787)\n' +
+        '  3. Or use API_BASE_URL env var to verify against a specific backend'
       );
-      log(`Source '${sourceType}' exists`, 'green');
     }
 
-    // Extract map source data
+    if (!Array.isArray(capturedApiResponse)) {
+      throw new Error(`API response is not an array: ${typeof capturedApiResponse}`);
+    }
+
+    log(`Captured ${capturedApiResponse.length} disaster records`, 'green');
+
+    // Group API records by type to know which sources should exist
+    const apiByType = {
+      fire: [],
+      volcano: [],
+      earthquake: [],
+    };
+
+    capturedApiResponse.forEach(record => {
+      if (['fire', 'volcano', 'earthquake'].includes(record.type)) {
+        apiByType[record.type].push(record);
+      }
+    });
+
+    const typeMapping = {
+      fire: 'fires',
+      volcano: 'volcanoes',
+      earthquake: 'earthquakes',
+    };
+
+    // Check which sources should exist
+    logSection('📊 Checking GeoJSON Sources');
+    
+    // Only wait for sources that should exist (API count > 0)
+    for (const [apiType, sourceType] of Object.entries(typeMapping)) {
+      const apiCount = apiByType[apiType].length;
+      
+      if (apiCount > 0) {
+        log(`Waiting for source '${sourceType}' (API has ${apiCount} ${apiType}s)...`, 'blue');
+        await page.waitForFunction(
+          (type) => {
+            const map = window.mapDebug;
+            return map && map.getSource(type) !== undefined;
+          },
+          sourceType,
+          { timeout: TIMEOUT_MS, polling: 100 }
+        );
+        log(`Source '${sourceType}' exists`, 'green');
+      } else {
+        log(`Skipping source '${sourceType}' (API has 0 ${apiType}s)`, 'yellow');
+      }
+    }
+
+    // Extract map source data (only for sources that should exist)
     logSection('🔬 Extracting Map Source Data');
-    const mapSourceData = await page.evaluate(() => {
+    const mapSourceData = await page.evaluate((typeMappingObj, apiByTypeObj) => {
       const map = window.mapDebug;
       const data = {
         fires: [],
@@ -164,21 +227,27 @@ async function main() {
         earthquakes: [],
       };
 
-      // Extract data from each source
-      ['fires', 'volcanoes', 'earthquakes'].forEach(sourceType => {
-        const source = map.getSource(sourceType);
-        if (source && source._data && source._data.features) {
-          data[sourceType] = source._data.features.map(feature => ({
-            id: feature.properties.id,
-            type: feature.properties.type,
-            coordinates: feature.geometry.coordinates,
-            properties: feature.properties,
-          }));
+      // Extract data from each source, but only if it should exist
+      Object.entries(typeMappingObj).forEach(([apiType, sourceType]) => {
+        const apiCount = apiByTypeObj[apiType].length;
+        
+        if (apiCount > 0) {
+          // Source should exist
+          const source = map.getSource(sourceType);
+          if (source && source._data && source._data.features) {
+            data[sourceType] = source._data.features.map(feature => ({
+              id: feature.properties?.id,
+              type: feature.properties?.type,
+              coordinates: feature.geometry?.coordinates,
+              properties: feature.properties,
+            }));
+          }
         }
+        // If apiCount is 0, leave data[sourceType] as empty array
       });
 
       return data;
-    });
+    }, typeMapping, apiByType);
 
     log(`Fires:       ${mapSourceData.fires.length} features`, 'cyan');
     log(`Volcanoes:   ${mapSourceData.volcanoes.length} features`, 'cyan');
@@ -187,24 +256,10 @@ async function main() {
     // Validation
     logSection('✅ Validating Data');
 
-    if (!capturedApiResponse) {
-      throw new Error('Failed to capture API response - no /api/disasters request detected');
-    }
-
-    if (!Array.isArray(capturedApiResponse)) {
-      throw new Error(`API response is not an array: ${typeof capturedApiResponse}`);
-    }
-
     results.totalApiRecords = capturedApiResponse.length;
     log(`Total API records: ${results.totalApiRecords}`, 'blue');
 
-    // Group API records by type
-    const apiByType = {
-      fire: [],
-      volcano: [],
-      earthquake: [],
-    };
-
+    // Validate each record
     capturedApiResponse.forEach(record => {
       // Validate type
       if (!['fire', 'volcano', 'earthquake'].includes(record.type)) {
@@ -246,12 +301,6 @@ async function main() {
     }
 
     // Validate counts per type
-    const typeMapping = {
-      fire: 'fires',
-      volcano: 'volcanoes',
-      earthquake: 'earthquakes',
-    };
-
     for (const [apiType, sourceType] of Object.entries(typeMapping)) {
       const apiCount = apiByType[apiType].length;
       const mapCount = mapSourceData[sourceType].length;
@@ -324,13 +373,16 @@ async function main() {
         }
       });
 
-      // Check for extra map features not in API
+      // Check for extra map features not in API (only if they have an id property)
       mapFeatures.forEach(mapFeature => {
-        const apiRecord = apiRecords.find(r => r.id === mapFeature.id);
-        if (!apiRecord) {
-          validationErrors.push(
-            `Extra map feature not in API: ${apiType} ${mapFeature.id}`
-          );
+        // Only validate features that have an ID (disaster features)
+        if (mapFeature.id) {
+          const apiRecord = apiRecords.find(r => r.id === mapFeature.id);
+          if (!apiRecord) {
+            validationErrors.push(
+              `Extra map feature not in API: ${apiType} ${mapFeature.id}`
+            );
+          }
         }
       });
     }

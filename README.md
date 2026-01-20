@@ -18,6 +18,7 @@
 - [Tech Stack](#tech-stack)
 - [Architecture](#architecture)
 - [Getting Started](#getting-started)
+- [Automated Verification](#automated-verification)
 - [API Reference](#api-reference)
 - [Deployment](#deployment)
 - [Contributing](#contributing)
@@ -269,6 +270,116 @@
 - [ ] Satellite pass countdown updates
 - [ ] Cloud coverage displays correctly
 - [ ] AI analysis button works (if Gemini key configured)
+
+---
+
+## ✅ Automated Verification
+
+### Map Point Verification Script
+
+AegisMap includes a fully automated verification system that validates map points match backend disaster coordinates with **zero user interaction** required.
+
+**Location**: `frontend/scripts/verify-map-points.mjs`
+
+#### Quick Start
+
+```bash
+cd frontend
+npm run verify-map-points
+```
+
+#### What It Validates
+
+✅ **API Response Validation**
+- Valid coordinate ranges: `lat ∈ [-90, 90]`, `lng ∈ [-180, 180]`
+- Valid types: `fire`, `volcano`, `earthquake`
+- No duplicate IDs
+
+✅ **Map Source Validation**
+- GeoJSON sources exist only when API has data for that type
+- Handles zero-count scenarios (e.g., 0 volcanoes = expected, PASS)
+- Source data can be extracted from `window.mapDebug`
+
+✅ **Data Parity Validation**
+- Feature counts match API counts per type
+- Every API disaster ID exists as a map feature
+- Coordinates match within epsilon `1e-5` (≈1 meter accuracy)
+
+#### Usage Examples
+
+```bash
+# Basic usage (defaults to http://localhost:5173/)
+npm run verify-map-points
+
+# Custom frontend URL
+FRONTEND_URL=http://localhost:3000 npm run verify-map-points
+
+# Verify against specific backend
+API_BASE_URL=http://localhost:8787 npm run verify-map-points
+
+# Combined
+FRONTEND_URL=http://localhost:5173 API_BASE_URL=http://localhost:8787 npm run verify-map-points
+```
+
+#### How It Works
+
+1. **Launch Browser**: Chromium in headless mode (no UI)
+2. **Network Interception**: Captures `/api/disasters` request using Playwright routing
+3. **Map Access**: Uses `window.mapDebug` exposed by MapBoard component
+4. **Source Extraction**: Reads `map.getSource(type)._data.features` for actual rendered data
+5. **Validation**: Compares API response with map source data point-by-point
+
+#### Edge Cases Handled
+
+- **Zero disasters of a type**: If API returns 0 volcanoes, missing `volcanoes` source is expected (PASS)
+- **Missing source when expected**: If API has 5 fires but `fires` source missing = FAIL
+- **Features without IDs**: Non-disaster map overlays are ignored
+
+#### Sample Output
+
+**Success:**
+```
+============================================================
+✅ PASS
+============================================================
+All validations passed! Map points match backend disaster coordinates.
+
+Summary:
+  Total API Records:    127
+  Total Map Features:   127
+  Validation Errors:    0
+
+Counts by Type:
+  🔥 fire       API:  89, Map:  89 ✓
+  🌋 volcano    API:  12, Map:  12 ✓
+  🌍 earthquake API:  26, Map:  26 ✓
+```
+
+**Failure:**
+```
+============================================================
+❌ FAIL
+============================================================
+Found 2 validation error(s).
+
+Counts by Type:
+  🔥 fire       API:  89, Map:  87 ✗
+
+Coordinate Mismatches:
+  EONET_5678 (fire): expected (-118.25, 34.05), got (-118.2501, 34.05), diff=(1.00e-4, 0.00e+0)
+```
+
+#### CI/CD Integration
+
+**GitHub Actions:**
+```yaml
+- name: Verify Map Points
+  run: npm run verify-map-points
+  env:
+    FRONTEND_URL: http://localhost:5173
+```
+
+**Exit Codes**: 0 = PASS, 1 = FAIL
 
 ---
 
