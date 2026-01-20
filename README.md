@@ -132,33 +132,33 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                        FRONTEND (React)                      │
-│  ┌────────────┐  ┌─────────────┐  ┌───────────────────┐   │
-│  │  MapBoard  │  │   Sidebar   │  │  TutorialOverlay  │   │
-│  │  (Mapbox)  │  │  (Analysis) │  │   (Onboarding)    │   │
-│  └────────────┘  └─────────────┘  └───────────────────┘   │
-│         │               │                                    │
-│         └───────────────┴──── Orbital Engine (Client-side) │
-│                         │                                    │
-└─────────────────────────┼────────────────────────────────────┘
+│                       FRONTEND (React)                      │
+│  ┌────────────┐  ┌─────────────┐  ┌───────────────────┐     │
+│  │  MapBoard  │  │   Sidebar   │  │  TutorialOverlay  │     │
+│  │  (Mapbox)  │  │  (Analysis) │  │   (Onboarding)    │     │
+│  └────────────┘  └─────────────┘  └───────────────────┘     │
+│         │               │                                   │
+│         └───────────────┴──── Orbital Engine (Client-side)  │
+│                         │                                   │
+└─────────────────────────┼───────────────────────────────────┘
                           │ HTTPS
                           ▼
 ┌─────────────────────────────────────────────────────────────┐
 │              BACKEND (Cloudflare Workers + KV)              │
-│  ┌──────────────┐  ┌───────────────┐  ┌──────────────┐    │
-│  │ GET /disasters│  │ GET /tles     │  │ POST /analyze │   │
-│  │ (10min cache) │  │ (12hr cache)  │  │ (AI + cache)  │   │
-│  └──────────────┘  └───────────────┘  └──────────────┘    │
+│  ┌───────────────┐  ┌───────────────┐  ┌──────────────┐     │
+│  │ GET /disasters│  │ GET /tles     │  │ POST /analyze│     │
+│  │ (10min cache) │  │ (12hr cache)  │  │ (AI + cache) │     │
+│  └───────────────┘  └───────────────┘  └──────────────┘     │
 └─────────────────────────────────────────────────────────────┘
          │                  │                    │
          ▼                  ▼                    ▼
     ┌─────────┐      ┌──────────┐        ┌──────────┐
-    │ NASA    │      │ CelesTrak│        │  Google  │
-    │ EONET   │      │          │        │  Gemini  │
+    │  NASA   │      │CelesTrak │        │  Google  │
+    │  EONET  │      │          │        │  Gemini  │
     ├─────────┤      └──────────┘        └──────────┘
-    │ USGS    │
+    │  USGS   │
     ├─────────┤
-    │ FIRMS   │
+    │  FIRMS  │
     └─────────┘
 ```
 
@@ -702,7 +702,6 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 - **Mapbox** for map rendering
 - **Google** for Gemini AI
 - **Cloudflare** for Workers and KV infrastructure
-- **Ready Player Me** for animation inspiration (previous iterations)
 
 ---
 
