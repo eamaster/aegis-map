@@ -218,7 +218,7 @@ export default function MapLegend({
                                 color: ds.text.secondary,
                             }}
                         >
-                            Active Events
+                            Reported Events
                         </span>
                     </div>
 
