@@ -175,16 +175,16 @@ async function main() {
 
     log(`Captured ${capturedApiResponse.length} disaster records`, 'green');
 
-    // Group API records by type to know which sources should exist
-    const apiByType = {
-      fire: [],
-      volcano: [],
-      earthquake: [],
+    // Count API records by type to know which sources should exist
+    const apiCountsByType = {
+      fire: 0,
+      volcano: 0,
+      earthquake: 0,
     };
 
     capturedApiResponse.forEach(record => {
       if (['fire', 'volcano', 'earthquake'].includes(record.type)) {
-        apiByType[record.type].push(record);
+        apiCountsByType[record.type]++;
       }
     });
 
@@ -199,7 +199,7 @@ async function main() {
     
     // Only wait for sources that should exist (API count > 0)
     for (const [apiType, sourceType] of Object.entries(typeMapping)) {
-      const apiCount = apiByType[apiType].length;
+      const apiCount = apiCountsByType[apiType];
       
       if (apiCount > 0) {
         log(`Waiting for source '${sourceType}' (API has ${apiCount} ${apiType}s)...`, 'blue');
@@ -219,7 +219,7 @@ async function main() {
 
     // Extract map source data (only for sources that should exist)
     logSection('🔬 Extracting Map Source Data');
-    const mapSourceData = await page.evaluate((typeMappingObj, apiByTypeObj) => {
+    const mapSourceData = await page.evaluate((typeMappingObj, apiCountsByTypeObj) => {
       const map = window.mapDebug;
       const data = {
         fires: [],
@@ -229,7 +229,7 @@ async function main() {
 
       // Extract data from each source, but only if it should exist
       Object.entries(typeMappingObj).forEach(([apiType, sourceType]) => {
-        const apiCount = apiByTypeObj[apiType].length;
+        const apiCount = apiCountsByTypeObj[apiType];
         
         if (apiCount > 0) {
           // Source should exist
@@ -247,7 +247,7 @@ async function main() {
       });
 
       return data;
-    }, typeMapping, apiByType);
+    }, typeMapping, apiCountsByType);
 
     log(`Fires:       ${mapSourceData.fires.length} features`, 'cyan');
     log(`Volcanoes:   ${mapSourceData.volcanoes.length} features`, 'cyan');
@@ -258,6 +258,13 @@ async function main() {
 
     results.totalApiRecords = capturedApiResponse.length;
     log(`Total API records: ${results.totalApiRecords}`, 'blue');
+
+    // Group API records by type for validation (fresh, not duplicated)
+    const apiByType = {
+      fire: [],
+      volcano: [],
+      earthquake: [],
+    };
 
     // Validate each record
     capturedApiResponse.forEach(record => {
