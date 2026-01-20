@@ -381,9 +381,18 @@ app.post('/api/analyze', async (c) => {
 		const models = GEMINI_CONFIG.models;
 		const apiVersions = [GEMINI_CONFIG.apiVersion];
 
-		const prompt = `You are a satellite imagery analyst. A disaster "${disasterTitle}" will be observed by satellite "${satelliteName}" at ${new Date(passTime).toLocaleString()} UTC. Cloud cover: ${cloudCover}%.
+		// Create disaster-specific guidance for the AI
+		const disasterGuidance = disasterType === 'earthquake'
+			? 'For earthquake damage assessment, prioritize SAR (Synthetic Aperture Radar) for ground deformation, building damage, and infrastructure integrity. Optical imagery is secondary.'
+			: disasterType === 'volcano'
+				? 'For volcanic activity, prioritize thermal infrared for lava flows and heat anomalies. SAR for ground deformation. Optical for ash plumes and visibility.'
+				: 'For fire monitoring, prioritize thermal infrared bands for active fire perimeters and heat anomalies. Optical imagery for smoke plumes and burn scars.';
 
-Assess: Will this pass provide useful imagery? Consider optical limitations and alternative sensors.
+		const prompt = `You are a satellite imagery analyst. A ${disasterType} disaster "${disasterTitle}" will be observed by satellite "${satelliteName}" at ${new Date(passTime).toLocaleString()} UTC. Cloud cover: ${cloudCover}%.
+
+${disasterGuidance}
+
+Assess: Will this pass provide useful imagery for ${disasterType} assessment? Consider optical limitations and recommend appropriate sensors.
 
 Provide exactly 2 sentences for emergency responders. Be concise and actionable.`;
 
