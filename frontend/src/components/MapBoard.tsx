@@ -160,34 +160,38 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
             debugLog('backend', `Fetching disasters from ${API_BASE}/api/disasters`, 'info');
 
             const response = await fetch(`${API_BASE}/api/disasters`);
-            const data: Disaster[] = await response.json();
+            if (!response.ok) {
+                throw new Error(`Disaster API error: ${response.status}`);
+            }
+            const data: unknown = await response.json();
 
             // DEBUG: Validate disaster data
             if (!Array.isArray(data)) {
                 debugLog('disasters', 'ERROR: Response is not an array', 'error', { data });
                 setLoading(false);
                 isInitialLoadRef.current = false; // Mark as no longer initial load even on error
+                toast.error('Disaster API returned an unexpected response.', { duration: 5000 });
                 return;
             }
 
-
-            const fireCount = data.filter(d => d.type === 'fire').length;
-            const volcanoCount = data.filter(d => d.type === 'volcano').length;
-            const earthquakeCount = data.filter(d => d.type === 'earthquake').length;
+            const disastersList = data as Disaster[];
+            const fireCount = disastersList.filter(d => d.type === 'fire').length;
+            const volcanoCount = disastersList.filter(d => d.type === 'volcano').length;
+            const earthquakeCount = disastersList.filter(d => d.type === 'earthquake').length;
 
             // DEBUG: Log disaster stats
             debugLog(
                 'disasters',
-                `Loaded ${data.length} disasters: ${fireCount} fires, ${volcanoCount} volcanoes, ${earthquakeCount} earthquakes`,
+                `Loaded ${disastersList.length} disasters: ${fireCount} fires, ${volcanoCount} volcanoes, ${earthquakeCount} earthquakes`,
                 'success',
-                { count: data.length, types: { fires: fireCount, volcanoes: volcanoCount, earthquakes: earthquakeCount } }
+                { count: disastersList.length, types: { fires: fireCount, volcanoes: volcanoCount, earthquakes: earthquakeCount } }
             );
 
             // DEBUG: Confirm backend is online
             debugLog('backend', 'Backend connection successful', 'success');
 
             // Validate coordinates
-            const invalid = data.filter(d =>
+            const invalid = disastersList.filter(d =>
                 Math.abs(d.lat) > 90 || Math.abs(d.lng) > 180
             );
             if (invalid.length > 0) {
@@ -199,7 +203,7 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
                 );
             }
 
-            setDisasters(data);
+            setDisasters(disastersList);
             setLoading(false);
             setLastUpdated(new Date());
             setIsRefreshing(false);
@@ -209,7 +213,7 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
             // Show success toast only on manual refresh, not initial load
             if (!isInitialLoadRef.current) {
                 toast.success(
-                    `✓ Refreshed: ${data.length} disasters\n${fireCount} 🔥 ${earthquakeCount} 🌍 ${volcanoCount} 🌋`,
+                    `✓ Refreshed: ${disastersList.length} disasters\n${fireCount} 🔥 ${earthquakeCount} 🌍 ${volcanoCount} 🌋`,
                     {
                         duration: 3000,
                         style: {

@@ -62,24 +62,35 @@ export const DEFAULT_CORS_ORIGINS = [
 	'https://eamaster.github.io',
 ] as const;
 
+/** Accept only scheme + host (+ optional port); reject paths/queries/fragments. */
+export function isValidCorsOrigin(value: string): boolean {
+	try {
+		const url = new URL(value);
+		if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+		return value === url.origin;
+	} catch {
+		return false;
+	}
+}
+
 /** Merge defaults with optional comma-separated Worker var (deduped, trimmed). */
 export function resolveAllowedOrigins(extra?: string | null): string[] {
 	const allowed = new Set<string>(DEFAULT_CORS_ORIGINS);
 	if (extra) {
 		for (const part of extra.split(',')) {
 			const origin = part.trim();
-			if (origin) allowed.add(origin);
+			if (origin && isValidCorsOrigin(origin)) allowed.add(origin);
 		}
 	}
 	return [...allowed];
 }
 
-/** Reflect request Origin only when it is on the allowlist. */
+/** Reflect request Origin only when it is on the allowlist (exact match). */
 export function reflectCorsOrigin(
 	requestOrigin: string | undefined,
 	allowed: readonly string[],
 ): string | undefined {
-	if (!requestOrigin) return undefined;
+	if (!requestOrigin || !isValidCorsOrigin(requestOrigin)) return undefined;
 	return allowed.includes(requestOrigin) ? requestOrigin : undefined;
 }
 

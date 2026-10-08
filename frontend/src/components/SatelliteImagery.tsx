@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Satellite, Download, ExternalLink, Flame, AlertCircle, MapPin } from 'lucide-react';
 import { useDesignSystem } from '../hooks/useDesignSystem';
+import { apiUrl } from '../config/api';
 
 interface SatelliteImageryProps {
   lat: number;
@@ -120,10 +121,10 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
     setFetchingFire(true);
 
     try {
-      // Use our backend proxy to hide the API key and avoid CORS issues
-      const url = `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787'}/api/fire-hotspots?lat=${lat}&lng=${lng}`;
-
-      const response = await fetch(url);
+      // Backend FIRMS proxy (API key stays server-side)
+      const response = await fetch(
+        apiUrl(`/api/fire-hotspots?lat=${lat}&lng=${lng}`),
+      );
       if (!response.ok) {
         console.warn(`FIRMS API error: ${response.status}`);
         return;
