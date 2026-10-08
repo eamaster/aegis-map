@@ -2,6 +2,8 @@
  * Capability metadata for the monitored satellite fleet only.
  * Sourced from public mission docs (Landsat OLI/TIRS, Sentinel-2 MSI, Terra/Aqua MODIS).
  * None of these platforms carry SAR — do not invent SAR for them.
+ *
+ * Matching uses exact normalized aliases only (no substring / reverse-substring).
  */
 
 export type SensorCapabilities = {
@@ -71,37 +73,46 @@ const BY_NORAD: Record<number, { names: string[]; capabilities: SensorCapabiliti
 	},
 };
 
-function normalizeName(name: string): string {
-	return name.trim().toUpperCase().replace(/\s+/g, ' ');
+/** Normalize for exact alias comparison: trim, upper, collapse whitespace, unify hyphens. */
+export function normalizeSatelliteName(name: string): string {
+	return name.trim().toUpperCase().replace(/[-_]+/g, ' ').replace(/\s+/g, ' ');
 }
+
+function compactSatelliteName(name: string): string {
+	return normalizeSatelliteName(name).replace(/\s+/g, '');
+}
+
+/** Build exact-alias lookup once (spaced + compact forms). */
+const ALIAS_INDEX: Map<string, { noradId: number; capabilities: SensorCapabilities }> = (() => {
+	const map = new Map<string, { noradId: number; capabilities: SensorCapabilities }>();
+	for (const [id, entry] of Object.entries(BY_NORAD)) {
+		const noradId = Number(id);
+		for (const alias of entry.names) {
+			const spaced = normalizeSatelliteName(alias);
+			const compact = compactSatelliteName(alias);
+			map.set(spaced, { noradId, capabilities: entry.capabilities });
+			map.set(compact, { noradId, capabilities: entry.capabilities });
+		}
+	}
+	return map;
+})();
 
 /**
  * Resolve capabilities for a TLE/satellite display name from the monitored fleet.
- * Returns null when the satellite is not in the known registry (capabilities unknown).
+ * Exact normalized aliases only — unknown and ambiguous names stay unknown.
  */
 export function resolveSatelliteCapabilities(satelliteName: string): {
 	noradId: number | null;
 	capabilities: SensorCapabilities | null;
 } {
-	const normalized = normalizeName(satelliteName);
-	const compact = normalized.replace(/[\s_-]+/g, '');
+	const spaced = normalizeSatelliteName(satelliteName);
+	const compact = compactSatelliteName(satelliteName);
 
-	for (const [id, entry] of Object.entries(BY_NORAD)) {
-		for (const alias of entry.names) {
-			const aliasNorm = normalizeName(alias);
-			const aliasCompact = aliasNorm.replace(/[\s_-]+/g, '');
-			if (
-				normalized === aliasNorm ||
-				compact === aliasCompact ||
-				normalized.includes(aliasNorm) ||
-				aliasNorm.includes(normalized)
-			) {
-				return { noradId: Number(id), capabilities: entry.capabilities };
-			}
-		}
+	const hit = ALIAS_INDEX.get(spaced) ?? ALIAS_INDEX.get(compact);
+	if (!hit) {
+		return { noradId: null, capabilities: null };
 	}
-
-	return { noradId: null, capabilities: null };
+	return hit;
 }
 
 export function formatCapabilityContext(

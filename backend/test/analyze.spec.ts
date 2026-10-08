@@ -10,7 +10,7 @@ import {
 	parseAnalyzeRequest,
 	runAnalyze,
 } from '../src/analyze';
-import { DEFAULT_AI_MODEL, resolveAiModel } from '../src/config';
+import { ANALYSIS_CACHE_VERSION, DEFAULT_AI_MODEL, resolveAiModel } from '../src/config';
 import { resolveSatelliteCapabilities } from '../src/satellites';
 
 describe('config + satellites', () => {
@@ -28,13 +28,40 @@ describe('config + satellites', () => {
 			thermal: true,
 			sar: false,
 		});
+		expect(resolveSatelliteCapabilities('LANDSAT-9').capabilities?.optical).toBe(true);
+		expect(resolveSatelliteCapabilities('LANDSAT9').capabilities?.thermal).toBe(true);
 		expect(resolveSatelliteCapabilities('SENTINEL-2A').capabilities).toMatchObject({
 			optical: true,
 			thermal: false,
 			sar: false,
 		});
 		expect(resolveSatelliteCapabilities('TERRA').capabilities?.sar).toBe(false);
+		expect(resolveSatelliteCapabilities('AQUA').capabilities?.optical).toBe(true);
+	});
+
+	it('uses exact aliases only — partial and fake names stay unknown', () => {
+		expect(resolveSatelliteCapabilities('L').capabilities).toBeNull();
+		expect(resolveSatelliteCapabilities('LANDSAT').capabilities).toBeNull();
+		expect(resolveSatelliteCapabilities('LANDSAT 8 FAKE').capabilities).toBeNull();
 		expect(resolveSatelliteCapabilities('UNKNOWN-SAT').capabilities).toBeNull();
+		expect(resolveSatelliteCapabilities('LANDSAT 8').capabilities?.optical).toBe(true);
+	});
+
+	it('resolves actual monitored fleet / TLE display names', () => {
+		for (const name of [
+			'LANDSAT 8',
+			'LANDSAT 9',
+			'SENTINEL-2A',
+			'SENTINEL-2B',
+			'TERRA',
+			'AQUA',
+			'S2A',
+			'S2B',
+			'EOS TERRA',
+			'EOS AQUA',
+		]) {
+			expect(resolveSatelliteCapabilities(name).capabilities).not.toBeNull();
+		}
 	});
 });
 
@@ -65,10 +92,23 @@ describe('parseAnalyzeRequest', () => {
 		expect(() => parseAnalyzeRequest({ ...base, cloudCover: '15' })).toThrow(AnalyzeHttpError);
 		expect(() => parseAnalyzeRequest({ ...base, cloudCover: true })).toThrow(AnalyzeHttpError);
 		expect(() => parseAnalyzeRequest({ ...base, cloudCover: 101 })).toThrow(AnalyzeHttpError);
-		expect(() => parseAnalyzeRequest({ ...base, passTime: 'not-a-date' })).toThrow(
+		expect(() => parseAnalyzeRequest({ ...base, disasterTitle: '' })).toThrow(AnalyzeHttpError);
+	});
+
+	it('requires zoned ISO datetimes and rejects date-only / timezone-less / impossible days', () => {
+		expect(() => parseAnalyzeRequest({ ...base, passTime: '2026-10-08' })).toThrow(
 			AnalyzeHttpError,
 		);
-		expect(() => parseAnalyzeRequest({ ...base, disasterTitle: '' })).toThrow(AnalyzeHttpError);
+		expect(() => parseAnalyzeRequest({ ...base, passTime: '2026-10-08T15:00:00' })).toThrow(
+			AnalyzeHttpError,
+		);
+		expect(() => parseAnalyzeRequest({ ...base, passTime: '2026-02-30T15:00:00Z' })).toThrow(
+			AnalyzeHttpError,
+		);
+		const z = parseAnalyzeRequest({ ...base, passTime: '2026-10-08T15:00:00Z' });
+		expect(z.passTime).toBe('2026-10-08T15:00:00.000Z');
+		const offset = parseAnalyzeRequest({ ...base, passTime: '2026-10-08T18:30:00+03:30' });
+		expect(offset.passTime).toBe('2026-10-08T15:00:00.000Z');
 	});
 
 	it('formats pass times in UTC without locale mislabeling', () => {
@@ -209,7 +249,29 @@ describe('runAnalyze + cache', () => {
 		expect(a).not.toBe(b);
 	});
 
-	it('misses cache when model or pass time changes', async () => {
+	it('does not collide delimiter-ambiguous title/satellite pairs', async () => {
+		const a = await buildAnalysisCacheKey({
+			disasterTitle: 'Alpha|Beta',
+			satelliteName: 'UNKNOWN-SAT',
+			passTimeIso: '2026-10-08T15:00:00.000Z',
+			cloudCover: 10,
+			disasterType: 'fire',
+			capabilities: null,
+			model: DEFAULT_AI_MODEL,
+		});
+		const b = await buildAnalysisCacheKey({
+			disasterTitle: 'Alpha',
+			satelliteName: 'Beta|UNKNOWN-SAT',
+			passTimeIso: '2026-10-08T15:00:00.000Z',
+			cloudCover: 10,
+			disasterType: 'fire',
+			capabilities: null,
+			model: DEFAULT_AI_MODEL,
+		});
+		expect(a).not.toBe(b);
+	});
+
+	it('misses cache when event, pass, model, capabilities, or prompt version inputs change', async () => {
 		const base = {
 			disasterTitle: 'Fire',
 			satelliteName: 'LANDSAT 9',
@@ -220,16 +282,25 @@ describe('runAnalyze + cache', () => {
 			model: DEFAULT_AI_MODEL,
 		};
 		const k1 = await buildAnalysisCacheKey(base);
-		const k2 = await buildAnalysisCacheKey({
-			...base,
-			passTimeIso: '2026-10-08T16:00:00.000Z',
-		});
-		const k3 = await buildAnalysisCacheKey({
-			...base,
-			model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
-		});
-		expect(k1).not.toBe(k2);
-		expect(k1).not.toBe(k3);
+		expect(k1).toContain(ANALYSIS_CACHE_VERSION);
+		expect(k1).not.toBe(
+			await buildAnalysisCacheKey({ ...base, disasterTitle: 'Other Fire' }),
+		);
+		expect(k1).not.toBe(
+			await buildAnalysisCacheKey({ ...base, passTimeIso: '2026-10-08T16:00:00.000Z' }),
+		);
+		expect(k1).not.toBe(
+			await buildAnalysisCacheKey({
+				...base,
+				model: '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+			}),
+		);
+		expect(k1).not.toBe(
+			await buildAnalysisCacheKey({
+				...base,
+				capabilities: resolveSatelliteCapabilities('SENTINEL-2A').capabilities,
+			}),
+		);
 	});
 
 	it('does not cache malformed provider output', async () => {
@@ -249,6 +320,52 @@ describe('runAnalyze + cache', () => {
 			),
 		).rejects.toMatchObject({ code: 'malformed_output' });
 		expect(put).not.toHaveBeenCalled();
+	});
+
+	it('continues with one inference when cache get rejects', async () => {
+		const run = vi.fn(async () => ({
+			response: 'Optical context remains useful. Thermal bands can help if haze increases.',
+		}));
+		const put = vi.fn(async () => undefined);
+		const get = vi.fn(async () => {
+			throw new Error('kv get failed');
+		});
+		const result = await runAnalyze(
+			{
+				disasterTitle: 'Fire',
+				satelliteName: 'LANDSAT 9',
+				passTime: '2026-10-08T15:00:00.000Z',
+				cloudCover: 10,
+				disasterType: 'fire',
+			},
+			{ AI: { run }, AEGIS_CACHE: { get, put } as unknown as KVNamespace },
+		);
+		expect(result.cached).toBe(false);
+		expect(run).toHaveBeenCalledTimes(1);
+		expect(put).toHaveBeenCalledTimes(1);
+	});
+
+	it('returns generated analysis when cache put rejects', async () => {
+		const run = vi.fn(async () => ({
+			response: 'Optical context remains useful. Thermal bands can help if haze increases.',
+		}));
+		const get = vi.fn(async () => null);
+		const put = vi.fn(async () => {
+			throw new Error('kv put failed');
+		});
+		const result = await runAnalyze(
+			{
+				disasterTitle: 'Fire',
+				satelliteName: 'LANDSAT 9',
+				passTime: '2026-10-08T15:00:00.000Z',
+				cloudCover: 10,
+				disasterType: 'fire',
+			},
+			{ AI: { run }, AEGIS_CACHE: { get, put } as unknown as KVNamespace },
+		);
+		expect(result.source).toBe('workers-ai');
+		expect(result.analysis.length).toBeGreaterThan(10);
+		expect(run).toHaveBeenCalledTimes(1);
 	});
 
 	it('fails closed when AI binding is missing', async () => {

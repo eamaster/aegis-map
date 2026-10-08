@@ -11,6 +11,11 @@ import SatelliteImagery from './SatelliteImagery';
 import { useDesignSystem } from '../hooks/useDesignSystem';
 import { API_BASE } from '../config/api';
 import { debugLog } from '../utils/debug';
+import {
+    analysisRequestIdentity,
+    isCurrentGeneration,
+    nextGeneration,
+} from '../utils/selectionGeneration';
 
 interface SidebarProps {
     disaster: Disaster | null;
@@ -18,28 +23,13 @@ interface SidebarProps {
     isOpen: boolean;
 }
 
-/**
- * Satellite Elevation Thresholds
- * - OPTIMAL: Best quality imagery (>25°)
- * - ACCEPTABLE: Degraded but usable (>15°)
- * - MINIMUM: Last resort, significant quality loss (>5°)
- */
 const SATELLITE_ELEVATION_THRESHOLDS = {
     OPTIMAL: 25,
     ACCEPTABLE: 15,
     MINIMUM: 5
 } as const;
 
-type CloudState = number | null | undefined; // undefined = still loading; null = unavailable
-
-function analysisRequestKey(
-    disasterId: string,
-    satelliteName: string,
-    passIso: string,
-    cloud: number | null,
-): string {
-    return `${disasterId}|${satelliteName}|${passIso}|${cloud === null ? 'unknown' : cloud}`;
-}
+type CloudState = number | null | undefined;
 
 export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarProps) {
     const ds = useDesignSystem();
@@ -49,296 +39,159 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
     const [analysisUnavailable, setAnalysisUnavailable] = useState(false);
     const [loadingAnalysis, setLoadingAnalysis] = useState(false);
     const [timeUntilPass, setTimeUntilPass] = useState<string>('');
-    const analysisSeqRef = useRef(0);
+    const [retryToken, setRetryToken] = useState(0);
+    const selectionGenRef = useRef(0);
     const inFlightKeyRef = useRef<string | null>(null);
+    const analyzeAbortRef = useRef<AbortController | null>(null);
 
-    // Fetch TLE data and calculate next pass
     useEffect(() => {
         if (!disaster) return;
 
-        // Reset state when disaster changes
-        analysisSeqRef.current += 1;
+        const generation = nextGeneration(selectionGenRef.current);
+        selectionGenRef.current = generation;
         inFlightKeyRef.current = null;
+        analyzeAbortRef.current?.abort();
+        analyzeAbortRef.current = null;
+
         setNextPass(null);
         setCloudCover(undefined);
         setAiAnalysis('');
         setAnalysisUnavailable(false);
         setLoadingAnalysis(false);
         setTimeUntilPass('');
+        setRetryToken(0);
+
+        const tleAbort = new AbortController();
+
+        const fetchWeather = async (lat: number, lng: number, passTime: Date) => {
+            try {
+                const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&hourly=cloud_cover&forecast_days=2`;
+                debugLog('weather', `Fetching weather for (${lat.toFixed(2)}, ${lng.toFixed(2)})`, 'info');
+                const response = await fetch(url, { signal: tleAbort.signal });
+                if (!response.ok) throw new Error(`Weather API error: ${response.status}`);
+                const data: WeatherData = await response.json();
+                if (!isCurrentGeneration(generation, selectionGenRef.current)) return;
+                if (!data.hourly || !data.hourly.cloud_cover) {
+                    setCloudCover(null);
+                    return;
+                }
+                const closestIndex = data.hourly.time.findIndex((time) => new Date(time + 'Z') >= passTime);
+                setCloudCover(closestIndex >= 0 ? data.hourly.cloud_cover[closestIndex] : null);
+            } catch (error) {
+                if (error instanceof DOMException && error.name === 'AbortError') return;
+                if (!isCurrentGeneration(generation, selectionGenRef.current)) return;
+                debugLog('weather', 'FAILED to fetch weather', 'error');
+                setCloudCover(null);
+            }
+        };
 
         const fetchData = async () => {
             try {
-
-                // DEBUG: Log TLE fetch
-                debugLog(
-                    'tles',
-                    `Fetching TLEs from ${API_BASE}/api/tles`,
-                    'info'
-                );
-
-                // Fetch TLEs
-
-                const tleResponse = await fetch(`${API_BASE}/api/tles`);
-
-                // Check content type to determine if it's JSON (error) or text (TLE data)
+                debugLog('tles', `Fetching TLEs from ${API_BASE}/api/tles`, 'info');
+                const tleResponse = await fetch(`${API_BASE}/api/tles`, { signal: tleAbort.signal });
                 const contentType = tleResponse.headers.get('content-type') || '';
                 const isJson = contentType.includes('application/json');
-
                 if (!tleResponse.ok) {
                     const errorText = isJson ? JSON.stringify(await tleResponse.json()) : await tleResponse.text();
-                    throw new Error(`TLE API error: ${tleResponse.status} ${tleResponse.statusText} - ${errorText}`);
+                    throw new Error(`TLE API error: ${tleResponse.status} - ${errorText}`);
                 }
-
-                // Get response text (it could be TLE data or JSON error)
                 const responseText = await tleResponse.text();
-
-                // If response looks like JSON (starts with { or [), it's likely an error message
-                if (isJson || (responseText.trim().startsWith('{') || responseText.trim().startsWith('['))) {
+                if (!isCurrentGeneration(generation, selectionGenRef.current)) return;
+                if (isJson || responseText.trim().startsWith('{') || responseText.trim().startsWith('[')) {
                     try {
                         const errorData = JSON.parse(responseText) as { error?: string };
-                        console.error('❌ TLE API returned JSON (error):', errorData);
                         throw new Error(`TLE API error: ${errorData.error || JSON.stringify(errorData)}`);
                     } catch (err) {
-                        if (err instanceof Error && err.message.startsWith('TLE API error')) {
-                            throw err;
-                        }
-                        console.warn('⚠️ Response looked like JSON but parse failed, treating as text');
+                        if (err instanceof Error && err.message.startsWith('TLE API error')) throw err;
                     }
                 }
-
-                const tles = responseText;
-
-                // Log raw response for debugging
-                if (!tles || tles.trim().length === 0) {
-                    throw new Error('TLE data is empty - no data received from API');
-                }
-
-                const tleLines = tles.trim().split('\n').filter(line => line.trim().length > 0);
-                const satelliteCount = Math.floor(tleLines.length / 3);
-
-                if (tleLines.length < 3) {
-                    console.error('❌ Invalid TLE data details:', {
-                        receivedLength: tles.length,
-                        lineCount: tleLines.length,
-                        first100Chars: tles.substring(0, 100),
-                        isJson: tles.trim().startsWith('{'),
-                        responseText: tles.substring(0, 500)
-                    });
-                    throw new Error(`Invalid TLE data: expected at least 3 lines, got ${tleLines.length}. Raw response: ${tles.substring(0, 200)}`);
-                }
-
-                // DEBUG: Validate TLE format
-                if (tleLines.length % 3 !== 0) {
-                    debugLog(
-                        'tles',
-                        `WARNING: TLE format incorrect. Expected multiple of 3 lines, got ${tleLines.length}`,
-                        'warning'
-                    );
-                }
-
-                debugLog(
-                    'tles',
-                    `Loaded TLEs for ${satelliteCount} satellites`,
-                    ' success',
-                    { satellites: satelliteCount, lines: tleLines.length }
-                );
+                if (!responseText.trim()) throw new Error('TLE data is empty');
+                const tleLines = responseText.trim().split('\n').filter((line) => line.trim().length > 0);
+                if (tleLines.length < 3) throw new Error(`Invalid TLE data: expected at least 3 lines, got ${tleLines.length}`);
 
                 const latNum = disaster.lat;
                 const lngNum = disaster.lng;
-
-                // Validate coordinates - allow (0,0) which is a valid location (Gulf of Guinea)
-                if (isNaN(latNum) || isNaN(lngNum) ||
-                    Math.abs(latNum) > 90 || Math.abs(lngNum) > 180) {
-                    console.error('❌ Invalid coordinates in sidebar:', { latNum, lngNum, disaster });
-                    setAiAnalysis("Invalid coordinates. Unable to calculate satellite passes.");
+                if (Number.isNaN(latNum) || Number.isNaN(lngNum) || Math.abs(latNum) > 90 || Math.abs(lngNum) > 180) {
+                    setAiAnalysis('Invalid coordinates. Unable to calculate satellite passes.');
                     setAnalysisUnavailable(true);
                     return;
                 }
 
-                // Calculate next pass
-
-                debugLog(
-                    'orbital',
-                    `Calculating satellite passes for disaster at (${latNum}, ${lngNum})`,
-                    'info'
-                );
-
-                // Try with lower elevation threshold if no passes found
-                let pass = getNextPass(tles, latNum, lngNum); // Uses OPTIMAL threshold (25°)
-
-                // If no pass found with optimal threshold, try acceptable threshold
+                let pass = getNextPass(responseText, latNum, lngNum);
                 if (!pass) {
-                    const lowerPasses = predictPasses(tles, latNum, lngNum, SATELLITE_ELEVATION_THRESHOLDS.ACCEPTABLE);
-                    if (lowerPasses.length > 0) {
-                        pass = lowerPasses[0];
-                    }
+                    const lower = predictPasses(responseText, latNum, lngNum, SATELLITE_ELEVATION_THRESHOLDS.ACCEPTABLE);
+                    if (lower.length > 0) pass = lower[0];
                 }
-
-                // If still no pass, try minimum threshold as last resort
                 if (!pass) {
-                    const evenLowerPasses = predictPasses(tles, latNum, lngNum, SATELLITE_ELEVATION_THRESHOLDS.MINIMUM);
-                    if (evenLowerPasses.length > 0) {
-                        pass = evenLowerPasses[0];
-                    }
+                    const min = predictPasses(responseText, latNum, lngNum, SATELLITE_ELEVATION_THRESHOLDS.MINIMUM);
+                    if (min.length > 0) pass = min[0];
                 }
-
-
+                if (!isCurrentGeneration(generation, selectionGenRef.current)) return;
 
                 if (!pass) {
-                    console.warn('⚠️ No satellite passes found in next 24 hours even with lower threshold');
-                    debugLog(
-                        'orbital',
-                        'No satellite passes found in next 24 hours',
-                        'warning'
-                    );
                     setNextPass(null);
-                    setAiAnalysis("No satellite passes detected in the next 24 hours. Coverage unavailable.");
+                    setAiAnalysis('No satellite passes detected in the next 24 hours. Coverage unavailable.');
                     setAnalysisUnavailable(true);
-                    // Still fetch weather to show cloud cover for context
-                    fetchWeather(latNum, lngNum, new Date(Date.now() + 2 * 60 * 60 * 1000));
+                    await fetchWeather(latNum, lngNum, new Date(Date.now() + 2 * 60 * 60 * 1000));
                     return;
-                } else {
-                    const timeUntil = (pass.time.getTime() - new Date().getTime()) / 1000 / 60; // minutes
-                    debugLog(
-                        'orbital',
-                        `Next pass: ${pass.satelliteName} at ${pass.time.toLocaleString()} (in ${Math.round(timeUntil)} min) - Elevation: ${pass.elevation.toFixed(1)}°`,
-                        'success',
-                        { satellite: pass.satelliteName, elevation: pass.elevation, azimuth: pass.azimuth, time: pass.time.toISOString() }
-                    );
                 }
-
                 setNextPass(pass);
-
-                // Fetch weather data
-                fetchWeather(latNum, lngNum, pass.time);
+                await fetchWeather(latNum, lngNum, pass.time);
             } catch (error) {
-                console.error('❌ Error fetching data in sidebar:', error);
-                const errorMessage = error instanceof Error ? error.message : String(error);
-                console.error('Error details:', { error, errorMessage, stack: error instanceof Error ? error.stack : undefined });
-                debugLog(
-                    'tles',
-                    `FAILED to fetch TLEs: ${errorMessage}`,
-                    'error',
-                    { error: errorMessage, fullError: error }
-                );
-                setAiAnalysis(`Unable to retrieve satellite data: ${errorMessage}`);
+                if (error instanceof DOMException && error.name === 'AbortError') return;
+                if (!isCurrentGeneration(generation, selectionGenRef.current)) return;
+                debugLog('tles', 'FAILED to fetch TLEs', 'error');
+                setAiAnalysis('Unable to retrieve satellite data.');
                 setAnalysisUnavailable(true);
                 setNextPass(null);
                 setCloudCover(null);
             }
         };
 
-        fetchData();
+        void fetchData();
+        return () => {
+            tleAbort.abort();
+            selectionGenRef.current = nextGeneration(selectionGenRef.current);
+            analyzeAbortRef.current?.abort();
+        };
     }, [disaster]);
 
-    // Fetch weather data from Open-Meteo
-    const fetchWeather = async (lat: number, lng: number, passTime: Date) => {
-        try {
-            const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&hourly=cloud_cover&forecast_days=2`;
-
-            debugLog(
-                'weather',
-                `Fetching weather for (${lat.toFixed(2)}, ${lng.toFixed(2)})`,
-                'info'
-            );
-
-            const response = await fetch(url);
-            if (!response.ok) {
-                throw new Error(`Weather API error: ${response.status} ${response.statusText}`);
-            }
-            const data: WeatherData = await response.json();
-            if (!data.hourly || !data.hourly.cloud_cover) {
-                debugLog(
-                    'weather',
-                    'WARNING: Invalid weather data format',
-                    'warning',
-                    data
-                );
-                setCloudCover(null);
-                return;
-            }
-
-            // Find cloud cover closest to pass time
-            const closestIndex = data.hourly.time.findIndex(
-                (time) => {
-                    // Open-Meteo returns time as "YYYY-MM-DDTHH:MM" (no offset) — treat as UTC
-                    const weatherTime = new Date(time + 'Z');
-                    return weatherTime >= passTime;
-                }
-            );
-
-            if (closestIndex >= 0) {
-                const cloudValue = data.hourly.cloud_cover[closestIndex];
-                setCloudCover(cloudValue);
-                debugLog(
-                    'weather',
-                    `Cloud coverage at pass time: ${cloudValue}% (${cloudValue < 20 ? 'Clear' : 'Cloudy'})`,
-                    'success',
-                    { cloudCover: cloudValue, time: data.hourly.time[closestIndex] }
-                );
-            } else {
-                console.warn('⚠️ Could not find cloud data for pass time:', passTime.toISOString());
-                debugLog(
-                    'weather',
-                    'WARNING: Could not find cloud data for pass time',
-                    'warning'
-                );
-                setCloudCover(null);
-            }
-        } catch (error) {
-            console.error('❌ Error fetching weather:', error);
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            debugLog(
-                'weather',
-                `FAILED to fetch weather: ${errorMessage}`,
-                'error',
-                { error: errorMessage, fullError: error }
-            );
-            // Unknown weather — never coerce to 0 (clear skies)
-            setCloudCover(null);
-        }
-    };
-
-    // Update countdown timer
     useEffect(() => {
         if (!nextPass) return;
-
         const updateTimer = () => {
-            const now = new Date();
-            const diff = nextPass.time.getTime() - now.getTime();
-
+            const diff = nextPass.time.getTime() - Date.now();
             if (diff > 0) {
                 const hours = Math.floor(diff / (1000 * 60 * 60)).toString().padStart(2, '0');
                 const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60)).toString().padStart(2, '0');
                 const seconds = Math.floor((diff % (1000 * 60)) / 1000).toString().padStart(2, '0');
                 setTimeUntilPass(`${hours}:${minutes}:${seconds}`);
-            } else {
-                setTimeUntilPass('PASSING');
-            }
+            } else setTimeUntilPass('PASSING');
         };
-
         updateTimer();
         const interval = setInterval(updateTimer, 1000);
-
         return () => clearInterval(interval);
     }, [nextPass]);
 
-    // Trigger AI analysis when pass + cloud state are ready (cloud may be null = unknown)
     useEffect(() => {
-        if (!disaster || !nextPass || cloudCover === undefined || loadingAnalysis || aiAnalysis) {
-            return;
-        }
+        if (!disaster || !nextPass || cloudCover === undefined || loadingAnalysis || aiAnalysis) return;
 
+        const generation = selectionGenRef.current;
         const passIso = nextPass.time.toISOString();
-        const reqKey = analysisRequestKey(disaster.id, nextPass.satelliteName, passIso, cloudCover);
-        if (inFlightKeyRef.current === reqKey) {
-            return;
-        }
+        const reqKey = analysisRequestIdentity({
+            disasterId: disaster.id,
+            satelliteName: nextPass.satelliteName,
+            passIso,
+            cloudCover,
+            retryToken,
+        });
+        if (inFlightKeyRef.current === reqKey) return;
 
-        const seq = ++analysisSeqRef.current;
         inFlightKeyRef.current = reqKey;
         setLoadingAnalysis(true);
         setAnalysisUnavailable(false);
+        analyzeAbortRef.current?.abort();
+        const abort = new AbortController();
+        analyzeAbortRef.current = abort;
 
         const requestBody = {
             disasterTitle: disaster.title,
@@ -347,7 +200,6 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
             cloudCover,
             disasterType: disaster.type,
         };
-
         debugLog('ai', `Requesting AI analysis for ${disaster.title}`, 'info', requestBody);
 
         (async () => {
@@ -356,68 +208,48 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(requestBody),
+                    signal: abort.signal,
                 });
+                // Aborting the client fetch does not cancel remote Workers AI inference once accepted.
 
                 const responseText = await response.text();
                 let data: AIAnalysisResponse = {};
-                try {
-                    data = JSON.parse(responseText) as AIAnalysisResponse;
-                } catch {
-                    // non-JSON error body
-                }
-
-                if (seq !== analysisSeqRef.current) {
-                    return; // stale — newer selection/request owns the UI
-                }
+                try { data = JSON.parse(responseText) as AIAnalysisResponse; } catch { /* ignore */ }
+                if (!isCurrentGeneration(generation, selectionGenRef.current)) return;
 
                 if (!response.ok) {
-                    const msg =
-                        data.message ||
-                        data.error ||
-                        `Analysis unavailable (${response.status})`;
-                    debugLog('ai', `Analysis unavailable: ${msg}`, 'error', {
-                        status: response.status,
-                        code: data.code,
-                    });
                     setAnalysisUnavailable(true);
-                    setAiAnalysis(msg);
+                    setAiAnalysis(data.message || data.error || `Analysis unavailable (${response.status})`);
                     return;
                 }
-
                 if (!data.analysis || data.analysis.trim().length === 0 || data.source !== 'workers-ai') {
                     setAnalysisUnavailable(true);
                     setAiAnalysis('Analysis unavailable: empty or unexpected response.');
-                    debugLog('ai', 'Empty or unexpected analysis response', 'warning', data);
                     return;
                 }
-
-                const trimmed = data.analysis.trim();
-                debugLog(
-                    'ai',
-                    `AI analysis received (${trimmed.length} chars)${data.cached ? ' [cache]' : ''}`,
-                    'success',
-                    { length: trimmed.length, cached: data.cached },
-                );
-                setAiAnalysis(trimmed);
+                setAiAnalysis(data.analysis.trim());
                 setAnalysisUnavailable(false);
             } catch (error) {
-                if (seq !== analysisSeqRef.current) {
-                    return;
-                }
-                const errorMessage = error instanceof Error ? error.message : String(error);
-                debugLog('ai', `FAILED to get AI analysis: ${errorMessage}`, 'error', {
-                    error: errorMessage,
-                });
+                if (error instanceof DOMException && error.name === 'AbortError') return;
+                if (!isCurrentGeneration(generation, selectionGenRef.current)) return;
                 setAnalysisUnavailable(true);
                 setAiAnalysis('Analysis unavailable. Map and satellite tools remain usable.');
             } finally {
-                if (seq === analysisSeqRef.current) {
+                if (isCurrentGeneration(generation, selectionGenRef.current)) {
                     setLoadingAnalysis(false);
-                    inFlightKeyRef.current = null;
+                    if (inFlightKeyRef.current === reqKey) inFlightKeyRef.current = null;
                 }
             }
         })();
-    }, [disaster, nextPass, cloudCover, aiAnalysis, loadingAnalysis]);
+    }, [disaster, nextPass, cloudCover, aiAnalysis, loadingAnalysis, retryToken]);
+
+    const handleRetryAnalysis = () => {
+        if (!disaster || !nextPass || cloudCover === undefined || loadingAnalysis) return;
+        inFlightKeyRef.current = null;
+        setAiAnalysis('');
+        setAnalysisUnavailable(false);
+        setRetryToken((t) => t + 1);
+    };
 
     if (!disaster) {
 
@@ -619,6 +451,20 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                         AI-assisted metadata guidance from predicted pass, weather, and known sensors —
                         not confirmed imagery or authoritative emergency instruction.
                     </p>
+                    {analysisUnavailable && !loadingAnalysis && nextPass && cloudCover !== undefined && (
+                        <button
+                            type="button"
+                            onClick={handleRetryAnalysis}
+                            className="relative z-10 mt-2 text-xs font-semibold px-3 py-1.5 rounded-md transition-colors"
+                            style={{
+                                color: ds.colors.accent.blueLight,
+                                background: ds.surface.overlaySubtle,
+                                border: `1px solid ${ds.surface.border}`,
+                            }}
+                        >
+                            Retry analysis
+                        </button>
+                    )}
                 </div>
 
                 {/* Satellite Imagery */}

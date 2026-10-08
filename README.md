@@ -153,7 +153,7 @@
          │                  │                    │
          ▼                  ▼                    ▼
     ┌─────────┐      ┌──────────┐        ┌──────────┐
-    │  NASA   │      │CelesTrak │        │  Google  │
+    │  NASA   │      │CelesTrak │        │Cloudflare│
     │  EONET  │      │          │        │Workers AI│
     ├─────────┤      └──────────┘        └──────────┘
     │  USGS   │
@@ -176,9 +176,10 @@
 
 ### Prerequisites
 
-- **Node.js** ≥ 18.0.0
+- **Node.js** ≥ 22.0.0 (required by Wrangler 4.148+)
 - **npm** ≥ 9.0.0
 - **Cloudflare Account** (for deployment)
+- See [docs/COORDINATED_RELEASE.md](docs/COORDINATED_RELEASE.md) before merging frontend + backend together
 - **API Keys**:
   - [Mapbox Access Token](https://account.mapbox.com/access-tokens/)
   - Cloudflare account with Workers AI enabled (native binding; no Gemini key)
@@ -521,6 +522,9 @@ POST /api/analyze
 Notes:
 - `disasterType` is optional for legacy clients; when omitted it is treated as unknown (neutral guidance).
 - `cloudCover` may be `null` when weather data is unavailable (never coerced to clear skies).
+- `passTime` must be an ISO-8601 datetime **with timezone** (`Z` or `±HH:MM`). Date-only and timezone-less values are rejected; valid offsets are normalized to UTC.
+- Client abort cancels the HTTP fetch only; it does not cancel remote Workers AI inference once accepted.
+- CORS allowlisting is not authentication. See [docs/COORDINATED_RELEASE.md](docs/COORDINATED_RELEASE.md) for release gates and abuse-control blockers.
 
 **Success Response:**
 ```json

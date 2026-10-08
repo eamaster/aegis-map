@@ -7,10 +7,10 @@
 	"name": "aegis-map-backend",
 	"main": "src/index.ts",
 	/**
-	 * Match the Workers runtime version bundled with the installed Wrangler
-	 * (audit observed fallback from 2025-11-21 → 2025-09-06).
+	 * Production compatibility date (restored). Test pool may pin a separate
+	 * wrangler config if the local vitest workerd build lags this date.
 	 */
-	"compatibility_date": "2025-09-06",
+	"compatibility_date": "2025-11-21",
 	"compatibility_flags": [
 		"global_fetch_strictly_public"
 	],

@@ -1,0 +1,25 @@
+/**
+ * Test-only Wrangler config for @cloudflare/vitest-pool-workers.
+ * Pins compatibility_date to the workerd build bundled with the installed
+ * pool/wrangler so tests do not warn/fallback. Production uses wrangler.jsonc.
+ */
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "aegis-map-backend-test",
+	"main": "src/index.ts",
+	"compatibility_date": "2025-09-06",
+	"compatibility_flags": [
+		"global_fetch_strictly_public"
+	],
+	"kv_namespaces": [
+		{
+			"binding": "AEGIS_CACHE",
+			"id": "7f6c89c7faa84c288f31941bef51b14c"
+		}
+	],
+	"ai": {
+		"binding": "AI",
+		"remote": true
+	},
+	"vars": {}
+}

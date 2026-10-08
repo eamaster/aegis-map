@@ -12,7 +12,7 @@ export const APP_VERSION = '1.2.0';
  * Bump when prompt text, capability context, or response semantics change.
  * Independent of APP_VERSION and provider API versions.
  */
-export const ANALYSIS_CACHE_VERSION = 'wai-v1';
+export const ANALYSIS_CACHE_VERSION = 'wai-v2';
 
 /** Supported Workers AI text-generation model IDs for this project. */
 export const SUPPORTED_AI_MODELS = [

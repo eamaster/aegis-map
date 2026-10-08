@@ -1,6 +1,9 @@
 /**
  * Satellite pass analysis: validation, prompt, Workers AI invocation, cache.
  * Single production AI path via env.AI.run — no Gemini.
+ *
+ * Note: mapping timeout errors does not itself enforce a request deadline;
+ * env.AI.run has no local cancellation that stops remote Neuron consumption.
  */
 
 import {
@@ -20,6 +23,10 @@ import {
 
 const MAX_TITLE_LEN = 300;
 const MAX_SAT_NAME_LEN = 120;
+
+/** Full ISO-8601 datetime with explicit timezone (Z or ±HH:MM). */
+const ISO_ZONED_DATETIME =
+	/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
 
 export type AnalyzeRequest = {
 	disasterTitle: string;
@@ -72,15 +79,88 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function parsePassTimeIso(value: unknown): string {
+function safeLog(label: string, detail?: string): void {
+	const cleaned = (detail ?? '')
+		.replace(/[A-Za-z0-9_-]{24,}/g, '[REDACTED]')
+		.replace(/\s+/g, ' ')
+		.trim()
+		.slice(0, 160);
+	console.error(cleaned ? `${label}: ${cleaned}` : label);
+}
+
+/**
+ * Require an explicitly zoned ISO datetime. Reject date-only, timezone-less,
+ * and impossible calendar values. Normalize valid offsets to UTC ISO.
+ */
+export function parsePassTimeIso(value: unknown): string {
 	if (typeof value !== 'string' || value.trim() === '') {
-		throw new AnalyzeHttpError(400, 'invalid_request', 'passTime must be a non-empty ISO-8601 timestamp');
+		throw new AnalyzeHttpError(
+			400,
+			'invalid_request',
+			'passTime must be an ISO-8601 datetime with timezone (Z or ±HH:MM)',
+		);
 	}
-	const date = new Date(value);
+	const raw = value.trim();
+	const match = ISO_ZONED_DATETIME.exec(raw);
+	if (!match) {
+		throw new AnalyzeHttpError(
+			400,
+			'invalid_request',
+			'passTime must be an ISO-8601 datetime with timezone (Z or ±HH:MM)',
+		);
+	}
+
+	const year = Number(match[1]);
+	const month = Number(match[2]);
+	const day = Number(match[3]);
+	const hour = Number(match[4]);
+	const minute = Number(match[5]);
+	const second = Number(match[6]);
+
+	if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 59) {
+		throw new AnalyzeHttpError(400, 'invalid_request', 'passTime contains an impossible calendar value');
+	}
+
+	const date = new Date(raw);
 	if (Number.isNaN(date.getTime())) {
 		throw new AnalyzeHttpError(400, 'invalid_request', 'passTime is not a valid timestamp');
 	}
-	return date.toISOString();
+
+	// Reject values Date parses by rolling (e.g. 2026-02-30 → March)
+	const iso = date.toISOString();
+	const utcParts = ISO_ZONED_DATETIME.exec(iso);
+	if (!utcParts) {
+		throw new AnalyzeHttpError(400, 'invalid_request', 'passTime is not a valid timestamp');
+	}
+	if (
+		Number(utcParts[1]) !== date.getUTCFullYear() ||
+		Number(utcParts[2]) !== date.getUTCMonth() + 1 ||
+		Number(utcParts[3]) !== date.getUTCDate()
+	) {
+		throw new AnalyzeHttpError(400, 'invalid_request', 'passTime contains an impossible calendar value');
+	}
+
+	// Compare original civil date components in the stated offset by round-tripping:
+	// If the input claimed Y-M-D but UTC normalization implies a different civil day
+	// from a non-existent date, Date already rolled — detect via UTC reconstruction
+	// of the same absolute instant with the original Y-M-D fields as UTC numbers.
+	const asUtcGuess = Date.UTC(year, month - 1, day, hour, minute, second);
+	const rolled =
+		new Date(asUtcGuess).getUTCFullYear() !== year ||
+		new Date(asUtcGuess).getUTCMonth() + 1 !== month ||
+		new Date(asUtcGuess).getUTCDate() !== day;
+	// For zoned offsets, also verify that formatting the parsed instant back does not
+	// imply the original local Y-M-D was impossible: use Date.UTC roll check on Y-M-D alone.
+	const dayOnlyUtc = Date.UTC(year, month - 1, day);
+	const dayRolled =
+		new Date(dayOnlyUtc).getUTCFullYear() !== year ||
+		new Date(dayOnlyUtc).getUTCMonth() + 1 !== month ||
+		new Date(dayOnlyUtc).getUTCDate() !== day;
+	if (dayRolled || (raw.endsWith('Z') && rolled)) {
+		throw new AnalyzeHttpError(400, 'invalid_request', 'passTime contains an impossible calendar value');
+	}
+
+	return iso;
 }
 
 function parseCloudCover(value: unknown): number | null {
@@ -241,23 +321,29 @@ async function sha256Hex(input: string): Promise<string> {
 	return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+/** Deterministic JSON material for cache identity (no delimiter ambiguity). */
+export function buildAnalysisCacheMaterial(n: NormalizedAnalyze): string {
+	return JSON.stringify({
+		v: ANALYSIS_CACHE_VERSION,
+		model: n.model,
+		disasterType: n.disasterType,
+		disasterTitle: n.disasterTitle,
+		satelliteName: n.satelliteName,
+		capabilities: n.capabilities
+			? {
+					optical: n.capabilities.optical,
+					thermal: n.capabilities.thermal,
+					sar: n.capabilities.sar,
+				}
+			: null,
+		passTimeIso: n.passTimeIso,
+		cloudCover: n.cloudCover,
+	});
+}
+
 /** Cache identity from normalized inputs (hash — no raw prompts in the key). */
 export async function buildAnalysisCacheKey(n: NormalizedAnalyze): Promise<string> {
-	const cloudKey = n.cloudCover === null ? 'cloud:unknown' : `cloud:${n.cloudCover}`;
-	const capKey = n.capabilities
-		? `cap:o${n.capabilities.optical ? 1 : 0}t${n.capabilities.thermal ? 1 : 0}s${n.capabilities.sar ? 1 : 0}`
-		: 'cap:unknown';
-	const material = [
-		ANALYSIS_CACHE_VERSION,
-		n.model,
-		n.disasterType,
-		n.disasterTitle,
-		n.satelliteName,
-		capKey,
-		n.passTimeIso,
-		cloudKey,
-	].join('|');
-	const hash = await sha256Hex(material);
+	const hash = await sha256Hex(buildAnalysisCacheMaterial(n));
 	return `analyze:${ANALYSIS_CACHE_VERSION}:${hash}`;
 }
 
@@ -309,17 +395,20 @@ export function mapAiBindingError(err: unknown): AnalyzeHttpError {
 		return new AnalyzeHttpError(503, 'config', 'AI binding is not configured');
 	}
 
-	console.error('Workers AI invocation failed:', message.slice(0, 300));
+	safeLog('Workers AI invocation failed', message);
 	return new AnalyzeHttpError(503, 'provider', 'Analysis temporarily unavailable');
 }
 
 /** Minimal AI binding surface used by analyze (compatible with env.AI and test mocks). */
 export type AiBindingLike = {
-	run: (model: SupportedAiModel, input: {
-		messages: Array<{ role: string; content: string }>;
-		max_tokens: number;
-		temperature: number;
-	}) => Promise<unknown>;
+	run: (
+		model: SupportedAiModel,
+		input: {
+			messages: Array<{ role: string; content: string }>;
+			max_tokens: number;
+			temperature: number;
+		},
+	) => Promise<unknown>;
 };
 
 export async function runAnalyze(
@@ -335,9 +424,13 @@ export async function runAnalyze(
 	const cacheKey = await buildAnalysisCacheKey(n);
 
 	if (env.AEGIS_CACHE) {
-		const cached = await env.AEGIS_CACHE.get(cacheKey);
-		if (cached && cached.trim().length > 0) {
-			return { analysis: cached.trim(), cached: true, source: 'workers-ai' };
+		try {
+			const cached = await env.AEGIS_CACHE.get(cacheKey);
+			if (cached && cached.trim().length > 0) {
+				return { analysis: cached.trim(), cached: true, source: 'workers-ai' };
+			}
+		} catch {
+			safeLog('Analysis cache read failed; continuing with inference');
 		}
 	}
 
@@ -360,9 +453,13 @@ export async function runAnalyze(
 	}
 
 	if (env.AEGIS_CACHE) {
-		await env.AEGIS_CACHE.put(cacheKey, analysis, {
-			expirationTtl: ANALYSIS_CACHE_TTL_SECONDS,
-		});
+		try {
+			await env.AEGIS_CACHE.put(cacheKey, analysis, {
+				expirationTtl: ANALYSIS_CACHE_TTL_SECONDS,
+			});
+		} catch {
+			safeLog('Analysis cache write failed; returning generated analysis');
+		}
 	}
 
 	return { analysis, cached: false, source: 'workers-ai' };
@@ -382,7 +479,7 @@ export function analyzeErrorResponse(err: unknown): {
 			},
 		};
 	}
-	console.error('Unexpected analyze error:', err instanceof Error ? err.message : String(err));
+	safeLog('Unexpected analyze error', err instanceof Error ? err.message : String(err));
 	return {
 		status: 503,
 		body: {
