@@ -104,7 +104,7 @@ npm run preview
 
 ### 2. **Coverage Analysis Sidebar (Sidebar.tsx)**
 
-- **AI Insight:** Gemini AI analysis of satellite coverage feasibility
+- **AI Insight:** Workers AI metadata guidance for satellite pass feasibility
 - **Next Pass:** Real-time countdown to next satellite overpass
 - **Cloud Cover:** Current weather conditions at disaster location
 - **Connectivity:** Starlink satellite pass information
@@ -141,7 +141,7 @@ Coverage analysis panel with:
 - TLE data fetching and parsing
 - Satellite pass predictions
 - Weather data integration (Open-Meteo API)
-- Gemini AI analysis integration
+- Workers AI analysis integration
 - Real-time countdown timer
 - Fallback handling for missing data
 

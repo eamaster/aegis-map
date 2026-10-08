@@ -1,5 +1,33 @@
 # Backend Testing Guide
 
+## Workers AI analysis
+
+Unit/integration tests mock `env.AI` and must not call remote inference:
+
+```bash
+npm test
+```
+
+Bounded live check (requires authenticated Wrangler with working remote AI preview; uses free Neurons):
+
+```bash
+npm run dev
+# other terminal:
+npm run verify:analyze
+```
+
+Default model: `@cf/meta/llama-3.1-8b-instruct-fp8` (override via allowlisted `AI_MODEL` var).
+Wrangler **4.148+** / **Node ≥ 22** required for remote AI preview.
+Production `compatibility_date` is `2025-11-21` (`wrangler.jsonc`); vitest uses `vitest.wrangler.jsonc` pinned to the local workerd build.
+
+**Timeouts:** mapping provider timeout codes to HTTP 504 does **not** enforce a local request deadline. Client `AbortController` aborts the fetch only — it does not cancel remote `env.AI.run` Neuron consumption once accepted.
+
+**Verification levels (do not conflate):**
+- Mocked application tests (`npm test`)
+- Bounded model probe (temp Worker / `env.AI.run`)
+- Application route live (`POST /api/analyze` via `npm run verify:analyze`)
+- Deployed production (Worker + Pages after coordinated release)
+
 ## FIRMS Hotspot Verification
 
 ### Purpose

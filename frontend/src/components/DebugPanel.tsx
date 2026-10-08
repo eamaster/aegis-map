@@ -20,8 +20,8 @@ interface DebugStats {
     disastersLoaded: number;
     tlesLoaded: boolean;
     satellitesCount: number;
-    geminiCalls: number;
-    geminiErrors: number;
+    aiCalls: number;
+    aiErrors: number;
     weatherCalls: number;
     cacheHits: number;
     cacheMisses: number;
@@ -36,8 +36,8 @@ export default function DebugPanel() {
         disastersLoaded: 0,
         tlesLoaded: false,
         satellitesCount: 0,
-        geminiCalls: 0,
-        geminiErrors: 0,
+        aiCalls: 0,
+        aiErrors: 0,
         weatherCalls: 0,
         cacheHits: 0,
         cacheMisses: 0,
@@ -70,11 +70,11 @@ export default function DebugPanel() {
                     satellitesCount: data.satellites,
                 }));
             }
-            if (category === 'gemini') {
+            if (category === 'ai') {
                 setStats((prev) => ({
                     ...prev,
-                    geminiCalls: prev.geminiCalls + 1,
-                    geminiErrors: status === 'error' ? prev.geminiErrors + 1 : prev.geminiErrors,
+                    aiCalls: prev.aiCalls + 1,
+                    aiErrors: status === 'error' ? prev.aiErrors + 1 : prev.aiErrors,
                 }));
             }
             if (category === 'weather') {
@@ -165,9 +165,9 @@ export default function DebugPanel() {
                     <div className="text-sm font-bold text-white">{stats.satellitesCount}/6</div>
                 </div>
                 <div className="text-center">
-                    <div className="text-xs text-gray-400 mb-1">Gemini</div>
+                    <div className="text-xs text-gray-400 mb-1">AI</div>
                     <div className="text-sm font-bold text-white">
-                        {stats.geminiCalls} ({stats.geminiErrors} ✗)
+                        {stats.aiCalls} ({stats.aiErrors} ✗)
                     </div>
                 </div>
             </div>

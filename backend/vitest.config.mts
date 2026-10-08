@@ -4,7 +4,8 @@ export default defineWorkersConfig({
 	test: {
 		poolOptions: {
 			workers: {
-				wrangler: { configPath: './wrangler.jsonc' },
+				// Test-only config: production semantics live in wrangler.jsonc
+				wrangler: { configPath: './vitest.wrangler.jsonc' },
 			},
 		},
 	},
