@@ -1,5 +1,24 @@
 # Backend Testing Guide
 
+## Workers AI analysis
+
+Unit/integration tests mock `env.AI` and must not call remote inference:
+
+```bash
+npm test
+```
+
+Bounded live check (requires authenticated Wrangler with working remote AI preview; uses free Neurons):
+
+```bash
+npm run dev
+# other terminal:
+npm run verify:analyze
+```
+
+Default model: `@cf/meta/llama-3.1-8b-instruct-fp8` (override via allowlisted `AI_MODEL` var).
+Wrangler **4.148+** is required for reliable remote AI preview on this account; 4.50 failed remote preview exchange (HTTP 400).
+
 ## FIRMS Hotspot Verification
 
 ### Purpose

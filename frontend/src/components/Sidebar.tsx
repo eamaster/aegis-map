@@ -3,7 +3,7 @@
  * Shows satellite pass predictions, weather, and AI analysis
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { X, Sparkles, Cloud, Satellite } from 'lucide-react';
 import type { Disaster, WeatherData, AIAnalysisResponse } from '../types';
 import { getNextPass, predictPasses, type SatellitePass } from '../utils/orbitalEngine';
@@ -30,22 +30,39 @@ const SATELLITE_ELEVATION_THRESHOLDS = {
     MINIMUM: 5
 } as const;
 
+type CloudState = number | null | undefined; // undefined = still loading; null = unavailable
+
+function analysisRequestKey(
+    disasterId: string,
+    satelliteName: string,
+    passIso: string,
+    cloud: number | null,
+): string {
+    return `${disasterId}|${satelliteName}|${passIso}|${cloud === null ? 'unknown' : cloud}`;
+}
+
 export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarProps) {
     const ds = useDesignSystem();
     const [nextPass, setNextPass] = useState<SatellitePass | null>(null);
-    const [cloudCover, setCloudCover] = useState<number | null>(null);
+    const [cloudCover, setCloudCover] = useState<CloudState>(undefined);
     const [aiAnalysis, setAiAnalysis] = useState<string>('');
+    const [analysisUnavailable, setAnalysisUnavailable] = useState(false);
     const [loadingAnalysis, setLoadingAnalysis] = useState(false);
     const [timeUntilPass, setTimeUntilPass] = useState<string>('');
+    const analysisSeqRef = useRef(0);
+    const inFlightKeyRef = useRef<string | null>(null);
 
     // Fetch TLE data and calculate next pass
     useEffect(() => {
         if (!disaster) return;
 
         // Reset state when disaster changes
+        analysisSeqRef.current += 1;
+        inFlightKeyRef.current = null;
         setNextPass(null);
-        setCloudCover(null);
-        setAiAnalysis(''); // Reset analysis when disaster changes
+        setCloudCover(undefined);
+        setAiAnalysis('');
+        setAnalysisUnavailable(false);
         setLoadingAnalysis(false);
         setTimeUntilPass('');
 
@@ -78,11 +95,13 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                 // If response looks like JSON (starts with { or [), it's likely an error message
                 if (isJson || (responseText.trim().startsWith('{') || responseText.trim().startsWith('['))) {
                     try {
-                        const errorData = JSON.parse(responseText);
+                        const errorData = JSON.parse(responseText) as { error?: string };
                         console.error('❌ TLE API returned JSON (error):', errorData);
                         throw new Error(`TLE API error: ${errorData.error || JSON.stringify(errorData)}`);
-                    } catch (parseError) {
-                        // If it's not valid JSON, treat it as text and continue
+                    } catch (err) {
+                        if (err instanceof Error && err.message.startsWith('TLE API error')) {
+                            throw err;
+                        }
                         console.warn('⚠️ Response looked like JSON but parse failed, treating as text');
                     }
                 }
@@ -124,19 +143,15 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                     { satellites: satelliteCount, lines: tleLines.length }
                 );
 
-                // Handle both uppercase and lowercase coordinates - normalize to lowercase
-                const disasterAny = disaster as any;
-                // Try all possible coordinate property names
-                const lat = disaster.lat ?? disasterAny.lat ?? disasterAny.Lat ?? disasterAny.latitude ?? disasterAny.Latitude;
-                const lng = disaster.lng ?? disasterAny.lng ?? disasterAny.Lng ?? disasterAny.longitude ?? disasterAny.Longitude;
-                const latNum = typeof lat === 'number' ? lat : parseFloat(String(lat || '0'));
-                const lngNum = typeof lng === 'number' ? lng : parseFloat(String(lng || '0'));
+                const latNum = disaster.lat;
+                const lngNum = disaster.lng;
 
                 // Validate coordinates - allow (0,0) which is a valid location (Gulf of Guinea)
                 if (isNaN(latNum) || isNaN(lngNum) ||
                     Math.abs(latNum) > 90 || Math.abs(lngNum) > 180) {
-                    console.error('❌ Invalid coordinates in sidebar:', { lat, lng, latNum, lngNum, disaster: disasterAny });
+                    console.error('❌ Invalid coordinates in sidebar:', { latNum, lngNum, disaster });
                     setAiAnalysis("Invalid coordinates. Unable to calculate satellite passes.");
+                    setAnalysisUnavailable(true);
                     return;
                 }
 
@@ -176,12 +191,11 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                         'No satellite passes found in next 24 hours',
                         'warning'
                     );
-                    // Set a default cloud cover so AI analysis can still run
-                    setCloudCover(0);
                     setNextPass(null);
                     setAiAnalysis("No satellite passes detected in the next 24 hours. Coverage unavailable.");
-                    // Still fetch weather to show cloud cover
-                    fetchWeather(latNum, lngNum, new Date(Date.now() + 2 * 60 * 60 * 1000)); // 2 hours from now
+                    setAnalysisUnavailable(true);
+                    // Still fetch weather to show cloud cover for context
+                    fetchWeather(latNum, lngNum, new Date(Date.now() + 2 * 60 * 60 * 1000));
                     return;
                 } else {
                     const timeUntil = (pass.time.getTime() - new Date().getTime()) / 1000 / 60; // minutes
@@ -208,6 +222,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                     { error: errorMessage, fullError: error }
                 );
                 setAiAnalysis(`Unable to retrieve satellite data: ${errorMessage}`);
+                setAnalysisUnavailable(true);
                 setNextPass(null);
                 setCloudCover(null);
             }
@@ -221,8 +236,6 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
         try {
             const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&hourly=cloud_cover&forecast_days=2`;
 
-
-            // DEBUG: Log weather API call
             debugLog(
                 'weather',
                 `Fetching weather for (${lat.toFixed(2)}, ${lng.toFixed(2)})`,
@@ -234,7 +247,6 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                 throw new Error(`Weather API error: ${response.status} ${response.statusText}`);
             }
             const data: WeatherData = await response.json();
-            // DEBUG: Validate weather response
             if (!data.hourly || !data.hourly.cloud_cover) {
                 debugLog(
                     'weather',
@@ -242,14 +254,14 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                     'warning',
                     data
                 );
+                setCloudCover(null);
                 return;
             }
 
             // Find cloud cover closest to pass time
             const closestIndex = data.hourly.time.findIndex(
                 (time) => {
-                    // Open-Meteo returns time as "YYYY-MM-DDTHH:MM" (ISO 8601 without offset)
-                    // We must treat it as UTC to match satellite pass times (which are in UTC)
+                    // Open-Meteo returns time as "YYYY-MM-DDTHH:MM" (no offset) — treat as UTC
                     const weatherTime = new Date(time + 'Z');
                     return weatherTime >= passTime;
                 }
@@ -258,8 +270,6 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
             if (closestIndex >= 0) {
                 const cloudValue = data.hourly.cloud_cover[closestIndex];
                 setCloudCover(cloudValue);
-
-                // DEBUG: Log weather result
                 debugLog(
                     'weather',
                     `Cloud coverage at pass time: ${cloudValue}% (${cloudValue < 20 ? 'Clear' : 'Cloudy'})`,
@@ -273,18 +283,19 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                     'WARNING: Could not find cloud data for pass time',
                     'warning'
                 );
+                setCloudCover(null);
             }
         } catch (error) {
             console.error('❌ Error fetching weather:', error);
             const errorMessage = error instanceof Error ? error.message : String(error);
-            console.error('Weather error details:', { error, errorMessage });
             debugLog(
                 'weather',
                 `FAILED to fetch weather: ${errorMessage}`,
                 'error',
                 { error: errorMessage, fullError: error }
             );
-            setCloudCover(0); // Default to 0 if weather fetch fails so AI analysis can still run
+            // Unknown weather — never coerce to 0 (clear skies)
+            setCloudCover(null);
         }
     };
 
@@ -312,149 +323,101 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
         return () => clearInterval(interval);
     }, [nextPass]);
 
-    // Trigger AI analysis automatically when data is ready
+    // Trigger AI analysis when pass + cloud state are ready (cloud may be null = unknown)
     useEffect(() => {
-        // Trigger AI analysis if we have all required data OR if we have disaster but no pass (fallback)
-        if (disaster && !loadingAnalysis) {
-            if (nextPass && cloudCover !== null && !aiAnalysis) {
-
-                analyzePass();
-            } else if (!nextPass && cloudCover !== null && !aiAnalysis) {
-                // No satellite pass available - inform user instead of creating fake data
-                setAiAnalysis("No satellite passes detected in the next 24 hours. Coverage analysis unavailable without scheduled satellite overpass.");
-            }
-        }
-    }, [disaster, nextPass, cloudCover, aiAnalysis, loadingAnalysis]);
-
-    // Get AI analysis
-    const analyzePass = async () => {
-        if (!disaster) {
-            console.warn('⚠️ analyzePass called without disaster');
-            return;
-        }
-        if (!nextPass) {
-            console.warn('⚠️ analyzePass called without nextPass');
-            return;
-        }
-        if (cloudCover === null) {
-            console.warn('⚠️ analyzePass called without cloudCover');
+        if (!disaster || !nextPass || cloudCover === undefined || loadingAnalysis || aiAnalysis) {
             return;
         }
 
+        const passIso = nextPass.time.toISOString();
+        const reqKey = analysisRequestKey(disaster.id, nextPass.satelliteName, passIso, cloudCover);
+        if (inFlightKeyRef.current === reqKey) {
+            return;
+        }
 
+        const seq = ++analysisSeqRef.current;
+        inFlightKeyRef.current = reqKey;
         setLoadingAnalysis(true);
-        try {
-            const requestBody = {
-                disasterTitle: disaster.title,
-                satelliteName: nextPass.satelliteName,
-                passTime: nextPass.time.toISOString(),
-                cloudCover,
-            };
+        setAnalysisUnavailable(false);
 
-            // DEBUG: Log Gemini API request
-            debugLog(
-                'gemini',
-                `Requesting AI analysis for ${disaster.title}`,
-                'info',
-                requestBody
-            );
+        const requestBody = {
+            disasterTitle: disaster.title,
+            satelliteName: nextPass.satelliteName,
+            passTime: passIso,
+            cloudCover,
+            disasterType: disaster.type,
+        };
 
+        debugLog('ai', `Requesting AI analysis for ${disaster.title}`, 'info', requestBody);
 
-            const response = await fetch(`${API_BASE}/api/analyze`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(requestBody),
-            });
+        (async () => {
+            try {
+                const response = await fetch(`${API_BASE}/api/analyze`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestBody),
+                });
 
-            // Check status first, then parse JSON with error handling
-            if (!response.ok) {
-                // Read response body as text first (can only be read once)
                 const responseText = await response.text();
-
-                // Special handling for 503 Service Unavailable with fallback analysis
-                if (response.status === 503) {
-                    try {
-                        const data: AIAnalysisResponse = JSON.parse(responseText);
-                        if (data.analysis) {
-                            console.warn('⚠️ Gemini API unavailable, using fallback analysis');
-                            setAiAnalysis(data.analysis);
-                            setLoadingAnalysis(false);
-                            return;
-                        }
-                    } catch (jsonError) {
-                        // If JSON parsing fails, fall through to error handling
-                        console.error('Failed to parse 503 response JSON:', jsonError);
-                    }
-                }
-
-                // For other errors or if 503 doesn't have fallback, try to parse error details
+                let data: AIAnalysisResponse = {};
                 try {
-                    const errorData: AIAnalysisResponse = JSON.parse(responseText);
-                    // JSON parsing succeeded, throw structured error with API details
-                    throw new Error(`Gemini API error: ${response.status} ${response.statusText} - ${errorData.error || JSON.stringify(errorData)}`);
-                } catch (parseError) {
-                    // Only catch JSON parsing errors (SyntaxError), re-throw our intentional errors
-                    if (parseError instanceof SyntaxError) {
-                        // JSON parsing failed, use text response
-                        throw new Error(`Gemini API error: ${response.status} ${response.statusText} - ${responseText}`);
-                    }
-                    // Re-throw our intentionally thrown error (preserves structured error details)
-                    throw parseError;
+                    data = JSON.parse(responseText) as AIAnalysisResponse;
+                } catch {
+                    // non-JSON error body
+                }
+
+                if (seq !== analysisSeqRef.current) {
+                    return; // stale — newer selection/request owns the UI
+                }
+
+                if (!response.ok) {
+                    const msg =
+                        data.message ||
+                        data.error ||
+                        `Analysis unavailable (${response.status})`;
+                    debugLog('ai', `Analysis unavailable: ${msg}`, 'error', {
+                        status: response.status,
+                        code: data.code,
+                    });
+                    setAnalysisUnavailable(true);
+                    setAiAnalysis(msg);
+                    return;
+                }
+
+                if (!data.analysis || data.analysis.trim().length === 0 || data.source !== 'workers-ai') {
+                    setAnalysisUnavailable(true);
+                    setAiAnalysis('Analysis unavailable: empty or unexpected response.');
+                    debugLog('ai', 'Empty or unexpected analysis response', 'warning', data);
+                    return;
+                }
+
+                const trimmed = data.analysis.trim();
+                debugLog(
+                    'ai',
+                    `AI analysis received (${trimmed.length} chars)${data.cached ? ' [cache]' : ''}`,
+                    'success',
+                    { length: trimmed.length, cached: data.cached },
+                );
+                setAiAnalysis(trimmed);
+                setAnalysisUnavailable(false);
+            } catch (error) {
+                if (seq !== analysisSeqRef.current) {
+                    return;
+                }
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                debugLog('ai', `FAILED to get AI analysis: ${errorMessage}`, 'error', {
+                    error: errorMessage,
+                });
+                setAnalysisUnavailable(true);
+                setAiAnalysis('Analysis unavailable. Map and satellite tools remain usable.');
+            } finally {
+                if (seq === analysisSeqRef.current) {
+                    setLoadingAnalysis(false);
+                    inFlightKeyRef.current = null;
                 }
             }
-
-            // Response is OK, parse JSON normally
-            const data: AIAnalysisResponse = await response.json();
-            // DEBUG: Validate Gemini response
-            if (!data.analysis || data.analysis.trim().length === 0) {
-                console.error('❌ AI analysis is empty or whitespace only:', data);
-                debugLog(
-                    'gemini',
-                    'WARNING: AI analysis response is empty or whitespace only',
-                    'warning',
-                    data
-                );
-                setAiAnalysis('Analysis unavailable: Empty response from AI service.');
-                return;
-            }
-
-            if (data.analysis.trim().length < 10) {
-                console.warn('⚠️ AI analysis is very short:', data.analysis);
-                debugLog(
-                    'gemini',
-                    'WARNING: AI analysis response is too short',
-                    'warning',
-                    { analysis: data.analysis, length: data.analysis.length }
-                );
-            }
-
-            // Trim and set the analysis
-            const trimmedAnalysis = data.analysis.trim();
-            // Check if analysis mentions the disaster
-            const mentionsDisaster = trimmedAnalysis.toLowerCase().includes(disaster.title.toLowerCase().split(' ')[0]);
-            debugLog(
-                'gemini',
-                `AI analysis received (${trimmedAnalysis.length} chars). Relevant: ${mentionsDisaster ? 'YES' : 'MAYBE'}`,
-                'success',
-                { analysis: trimmedAnalysis.slice(0, 100) + '...', length: trimmedAnalysis.length, mentionsDisaster }
-            );
-
-            setAiAnalysis(trimmedAnalysis);
-        } catch (error) {
-            console.error('❌ Error getting AI analysis:', error);
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            console.error('AI analysis error details:', { error, errorMessage, stack: error instanceof Error ? error.stack : undefined });
-            debugLog(
-                'gemini',
-                `FAILED to get AI analysis: ${errorMessage}`,
-                'error',
-                { error: errorMessage, fullError: error }
-            );
-            setAiAnalysis(`Analysis unavailable: ${errorMessage}`);
-        } finally {
-            setLoadingAnalysis(false);
-        }
-    };
+        })();
+    }, [disaster, nextPass, cloudCover, aiAnalysis, loadingAnalysis]);
 
     if (!disaster) {
 
@@ -608,7 +571,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                                 background: ds.surface.overlaySubtle,
                             }}
                         >
-                            Google Gemini
+                            {analysisUnavailable ? 'Unavailable' : 'Workers AI'}
                         </span>
                     </div>
 
@@ -617,7 +580,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                         className="leading-relaxed relative z-10"
                         style={{
                             fontSize: '0.75rem',
-                            color: ds.text.secondary,
+                            color: analysisUnavailable ? ds.colors.status.warning : ds.text.secondary,
                         }}
                     >
                         {loadingAnalysis ? (
@@ -630,7 +593,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                                     className="font-medium"
                                     style={{ color: ds.colors.accent.blueLight }}
                                 >
-                                    Analyzing satellite telemetry...
+                                    Analyzing satellite pass metadata...
                                 </span>
                             </span>
                         ) : aiAnalysis && aiAnalysis.trim().length > 0 ? (
@@ -643,6 +606,18 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                                 Waiting for analysis...
                             </span>
                         )}
+                    </p>
+                    <p
+                        className="relative z-10"
+                        style={{
+                            fontSize: '0.625rem',
+                            color: ds.text.tertiary,
+                            marginTop: '8px',
+                            lineHeight: 1.4,
+                        }}
+                    >
+                        AI-assisted metadata guidance from predicted pass, weather, and known sensors —
+                        not confirmed imagery or authoritative emergency instruction.
                     </p>
                 </div>
 
@@ -744,7 +719,29 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                             Cloud Forecast
                         </p>
 
-                        {cloudCover !== null ? (
+                        {cloudCover === undefined ? (
+                            <p
+                                className="text-xs"
+                                style={{ color: ds.text.tertiary }}
+                            >
+                                Loading...
+                            </p>
+                        ) : cloudCover === null ? (
+                            <>
+                                <div
+                                    className="font-black"
+                                    style={{ fontSize: '1.25rem', color: ds.text.primary, marginBottom: '4px' }}
+                                >
+                                    Unknown
+                                </div>
+                                <p
+                                    className="font-medium"
+                                    style={{ fontSize: '0.6875rem', color: ds.text.secondary }}
+                                >
+                                    Weather data unavailable
+                                </p>
+                            </>
+                        ) : (
                             <>
                                 <div className="flex items-baseline gap-1" style={{ marginBottom: '4px' }}>
                                     <span
@@ -773,16 +770,9 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                                         color: ds.text.secondary,
                                     }}
                                 >
-                                    {cloudCover < 20 ? 'Clear ☀️' : cloudCover < 60 ? 'Partly Cloudy ⛅' : 'Overcast ☁️'}
+                                    {cloudCover < 20 ? 'Clear' : cloudCover < 60 ? 'Partly Cloudy' : 'Overcast'}
                                 </p>
                             </>
-                        ) : (
-                            <p
-                                className="text-xs"
-                                style={{ color: ds.text.tertiary }}
-                            >
-                                Loading...
-                            </p>
                         )}
 
                         {nextPass && (

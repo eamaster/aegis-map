@@ -33,7 +33,7 @@
 ### What Makes AegisMap Unique?
 
 - **🛰️ Real-Time Orbital Predictions**: Calculate next satellite overpass times using SGP4 propagation
-- **🤖 AI-Powered Analysis**: Google Gemini AI evaluates imaging feasibility based on cloud cover and sensor capabilities
+- **🤖 AI-Powered Analysis**: Cloudflare Workers AI evaluates imaging feasibility from pass metadata, cloud cover, and known sensor capabilities
 - **🔥 Live Fire Hotspot Tracking**: NASA FIRMS data integration with thermal intensity visualization
 - **🌦️ Weather-Aware**: Automatic cloud forecast integration for pass quality assessment
 - **📊 Multi-Source Data Fusion**: Combines NASA EONET, USGS, and FIRMS data streams
@@ -61,16 +61,15 @@
   - Real-time countdown timers
 
 ### 3. **AI Coverage Analysis**
-- **Powered by**: Google Gemini 3 Flash (upgraded December 2025)
+- **Powered by**: Cloudflare Workers AI (default `@cf/meta/llama-3.1-8b-instruct-fp8`)
 - **Smart Caching System**:
-  - Templates cached by disaster type + satellite class + cloud coverage bucket
-  - 2-hour TTL with personalized response generation
-  - ~$0/month operational cost with effective caching
+  - Final assessments cached by normalized inputs (model, prompt version, type, satellite, pass, cloud)
+  - 2-hour TTL; failures and unavailable states are not cached as AI
+  - Uses Workers AI free Neurons allocation (10,000/day) when within limits
 - **Analysis Includes**:
-  - Optical vs. thermal sensor suitability
-  - Cloud cover impact assessment
-  - Alternative sensor recommendations
-  - 2-sentence actionable summaries
+  - Optical vs. thermal suitability grounded in the monitored fleet
+  - Honest handling of unknown cloud cover and unknown sensors
+  - Two-sentence metadata guidance (not pixel-level image analysis)
 
 ### 4. **Advanced Map Visualization**
 - **Mapbox GL JS** with dark/light theme support
@@ -123,7 +122,7 @@
 | **Open-Meteo** | Weather forecasts | FREE | 10,000 req/day |
 | **NASA GIBS** | Satellite imagery tiles | FREE | Fair use |
 | **Mapbox** | Base maps | FREE | 50k loads/month |
-| **Google Gemini** | AI analysis | Pay-as-you-go | Varies by model |
+| **Cloudflare Workers AI** | AI analysis | Free allocation (10k Neurons/day) | Account limits |
 
 ---
 
@@ -155,7 +154,7 @@
          ▼                  ▼                    ▼
     ┌─────────┐      ┌──────────┐        ┌──────────┐
     │  NASA   │      │CelesTrak │        │  Google  │
-    │  EONET  │      │          │        │  Gemini  │
+    │  EONET  │      │          │        │Workers AI│
     ├─────────┤      └──────────┘        └──────────┘
     │  USGS   │
     ├─────────┤
@@ -169,7 +168,7 @@
 2. **Satellite TLEs**: Backend fetches from CelesTrak → KV cache (12hr TTL) → Frontend orbital engine
 3. **Pass Predictions**: Client-side SGP4 calculations using Satellite.js
 4. **Weather Data**: Client-side fetch from Open-Meteo during satellite pass calculation
-5. **AI Analysis**: Backend calls Gemini API → Smart cache (2hr TTL) → Personalized response
+5. **AI Analysis**: Backend `env.AI.run` (Workers AI) → KV cache (2hr TTL) → `{ analysis, cached, source }`
 
 ---
 
@@ -182,8 +181,8 @@
 - **Cloudflare Account** (for deployment)
 - **API Keys**:
   - [Mapbox Access Token](https://account.mapbox.com/access-tokens/)
-  - [Google Gemini API Key](https://aistudio.google.com/app/apikey) (optional, has fallback)
-  - [NASA FIRMS Map Key](https://firms.modaps.eosdis.nasa.gov/api/) (optional, has fallback)
+  - Cloudflare account with Workers AI enabled (native binding; no Gemini key)
+  - [NASA FIRMS Map Key](https://firms.modaps.eosdis.nasa.gov/api/) (optional, backend-only)
 
 ### Backend Setup
 
@@ -199,10 +198,12 @@
 
 3. **Create `.dev.vars` file:**
    ```bash
-   # Required for local development
-   GEMINI_API_KEY=your_gemini_api_key_here
+   # Optional — fire hotspots
    FIRMS_MAP_KEY=your_firms_map_key_here
+   # Optional — override default Workers AI model (must be allowlisted in src/config.ts)
+   # AI_MODEL=@cf/meta/llama-3.1-8b-instruct-fp8
    ```
+   Workers AI uses the Wrangler AI binding (`ai.binding = AI`, `remote: true` for local). No API token is required in the Worker for the native binding path.
 
 4. **Start development server:**
    ```bash
@@ -269,7 +270,7 @@
 - [ ] Clicking disaster marker opens sidebar
 - [ ] Satellite pass countdown updates
 - [ ] Cloud coverage displays correctly
-- [ ] AI analysis button works (if Gemini key configured)
+- [ ] AI analysis runs for a selected disaster (Workers AI binding configured)
 
 ---
 
@@ -504,50 +505,44 @@ GET /api/fire-hotspots?lat=34.0522&lng=-118.2437
 ```http
 POST /api/analyze
 ```
-**Description**: AI-powered satellite pass analysis using Google Gemini with smart caching.
+**Description**: Workers AI satellite pass feasibility analysis (metadata guidance, not pixel inspection).
 
 **Request Body:**
 ```json
 {
   "disasterTitle": "California Wildfire",
-  "satelliteName": "Landsat-9",
-  "passTime": "2025-12-27T10:00:00Z",
-  "cloudCover": 15
+  "satelliteName": "LANDSAT 9",
+  "passTime": "2026-10-08T15:00:00.000Z",
+  "cloudCover": 15,
+  "disasterType": "fire"
 }
 ```
 
-**Response:**
+Notes:
+- `disasterType` is optional for legacy clients; when omitted it is treated as unknown (neutral guidance).
+- `cloudCover` may be `null` when weather data is unavailable (never coerced to clear skies).
+
+**Success Response:**
 ```json
 {
-  "analysis": "Landsat-9's thermal sensors will capture high-quality wildfire imagery at 10:00 UTC with excellent 15% cloud coverage. This pass offers optimal conditions for damage assessment and fire perimeter mapping.",
-  "cached": false
+  "analysis": "…two-sentence guidance…",
+  "cached": false,
+  "source": "workers-ai"
+}
+```
+
+**Unavailable Response (non-2xx):**
+```json
+{
+  "error": "analysis_unavailable",
+  "code": "quota_exhausted",
+  "message": "AI daily free allocation exhausted"
 }
 ```
 
 **Caching Strategy**:
-- Templates cached by `{disasterType}:{satelliteClass}:{cloudCoverBucket}`
-- Cloud cover bucketed in 5% intervals (e.g., 12% → 10%, 17% → 15%)
-- Personalized responses generated from templates
-- 2-hour TTL on cached templates
-
-#### 6. Test Gemini API
-```http
-GET /api/test-gemini
-```
-**Description**: Diagnostic endpoint to verify Gemini API configuration.
-
-**Response:**
-```json
-{
-  "status": 200,
-  "ok": true,
-  "keyLength": 39,
-  "keyPrefix": "AIzaSyBxxx...",
-  "response": {
-    "candidates": [...]
-  }
-}
-```
+- Hashed keys from model, prompt/cache version, disaster type/title, satellite + capabilities, pass ISO time, and cloud (including explicit unknown)
+- 2-hour TTL; provider failures are not cached as successful AI
 
 ---
 
@@ -573,11 +568,9 @@ GET /api/test-gemini
    }
    ```
 
-3. **Set production secrets:**
+3. **Set production secrets / bindings:**
    ```bash
-   wrangler secret put GEMINI_API_KEY
-   # Paste your API key when prompted
-
+   # AI binding is declared in wrangler.jsonc (no GEMINI_API_KEY)
    wrangler secret put FIRMS_MAP_KEY
    # Paste your FIRMS key when prompted
    ```
@@ -689,15 +682,15 @@ The frontend uses **Satellite.js** to perform client-side orbital mechanics calc
 
 ### Backend Issues
 
-**Problem**: `GEMINI_API_KEY is undefined`
-- **Solution**: Create `.dev.vars` file in `backend/` directory with your API key
-- **Note**: For production, use `wrangler secret put GEMINI_API_KEY`
+**Problem**: `analysis_unavailable` / AI binding config errors
+- **Solution**: Confirm `wrangler.jsonc` has `"ai": { "binding": "AI", "remote": true }` and run `npm run cf-typegen`
+- **Note**: Native binding does not use `GEMINI_API_KEY`. Local `wrangler dev` must authenticate to the Cloudflare account.
 
 **Problem**: KV namespace errors
 - **Solution**: Placeholder IDs in `wrangler.jsonc` are for local dev only. Create real KV namespaces for deployment.
 
 **Problem**: CORS errors
-- **Solution**: CORS is enabled for all origins. Ensure `VITE_API_BASE_URL` in `.env` matches your Worker URL exactly.
+- **Solution**: Origins are allowlisted (localhost Vite ports + GitHub Pages). Ensure `VITE_API_BASE_URL` matches your Worker URL.
 
 ### Frontend Issues
 
@@ -714,8 +707,8 @@ The frontend uses **Satellite.js** to perform client-side orbital mechanics calc
 
 **Problem**: AI analysis not working
 - **Solution**: 
-  - Check Gemini API key is valid
-  - Verify regional restrictions (Gemini not available in all countries)
+  - Confirm Workers AI binding (`env.AI`) and free Neurons allocation
+  - Check Cloudflare dashboard for Workers AI errors (quota 3036 / capacity 3040)
   - Check backend logs for error details
   - Fallback analysis will display if API unavailable
 
@@ -800,7 +793,7 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 - **NASA FIRMS**: Public domain
 - **NASA GIBS**: Public domain
 - **Open-Meteo**: CC BY 4.0
-- **Google Gemini**: Pay-as-you-go - [Gemini Terms](https://ai.google.dev/terms)
+- **Cloudflare Workers AI**: Free allocation / Neurons - [Workers AI Terms](https://developers.cloudflare.com/workers-ai/)
 
 ---
 
@@ -811,7 +804,7 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 - **CelesTrak** for satellite TLE data
 - **Open-Meteo** for weather forecasts
 - **Mapbox** for map rendering
-- **Google** for Gemini AI
+- **Cloudflare** for Workers AI
 - **Cloudflare** for Workers and KV infrastructure
 
 ---

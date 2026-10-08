@@ -8,13 +8,14 @@
 		"start": "wrangler dev",
 		"test": "vitest",
 		"verify:firms": "node scripts/verify-firms-hotspots.mjs",
+		"verify:analyze": "node test-analyze.mjs",
 		"cf-typegen": "wrangler types"
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-pool-workers": "^0.8.19",
 		"typescript": "^5.5.2",
 		"vitest": "~3.2.0",
-		"wrangler": "^4.50.0"
+		"wrangler": "^4.148.0"
 	},
 	"dependencies": {
 		"hono": "^4.10.6"

@@ -6,7 +6,11 @@
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "aegis-map-backend",
 	"main": "src/index.ts",
-	"compatibility_date": "2025-11-21",
+	/**
+	 * Match the Workers runtime version bundled with the installed Wrangler
+	 * (audit observed fallback from 2025-11-21 → 2025-09-06).
+	 */
+	"compatibility_date": "2025-09-06",
 	"compatibility_flags": [
 		"global_fetch_strictly_public"
 	],
@@ -23,10 +27,18 @@
 		}
 	],
 	/**
-	 * Environment Variables
-	 * https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
+	 * Workers AI binding (native env.AI.run).
+	 * remote: true is required for local wrangler dev to reach Workers AI.
+	 * Usage counts against the account free Neurons allocation even in local dev.
 	 */
-	// Note: Use .dev.vars for local development secrets
-	// Use secrets for production: wrangler secret put GEMINI_API_KEY
+	"ai": {
+		"binding": "AI",
+		"remote": true
+	},
+	/**
+	 * Optional server-side model override (must be a supported Workers AI model ID).
+	 * Prefer leaving unset to use the default in src/config.ts.
+	 * Secrets: use .dev.vars for local FIRMS_MAP_KEY; wrangler secret put FIRMS_MAP_KEY for production.
+	 */
 	"vars": {}
 }
