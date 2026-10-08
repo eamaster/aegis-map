@@ -39,6 +39,9 @@
 	 * Optional server-side model override (must be a supported Workers AI model ID).
 	 * Prefer leaving unset to use the default in src/config.ts.
 	 * Secrets: use .dev.vars for local FIRMS_MAP_KEY; wrangler secret put FIRMS_MAP_KEY for production.
+	 * CORS_ORIGINS: comma-separated extra browser origins merged with defaults in src/config.ts.
 	 */
-	"vars": {}
+	"vars": {
+		"CORS_ORIGINS": "https://hesam.me,https://www.hesam.me"
+	}
 }

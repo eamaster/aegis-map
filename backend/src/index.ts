@@ -7,7 +7,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { analyzeErrorResponse, parseAnalyzeRequest, runAnalyze } from './analyze';
-import { ALLOWED_ORIGINS, APP_VERSION } from './config';
+import { APP_VERSION, reflectCorsOrigin, resolveAllowedOrigins } from './config';
 import { MONITORED_NORAD_IDS } from './satellites';
 
 type Bindings = {
@@ -16,23 +16,21 @@ type Bindings = {
 	FIRMS_MAP_KEY: string;
 	/** Optional server-side model override (must be in SUPPORTED_AI_MODELS). */
 	AI_MODEL?: string;
+	/** Optional comma-separated extra browser origins (merged with defaults). */
+	CORS_ORIGINS?: string;
 };
 
 const app = new Hono<{ Bindings: Bindings }>();
 
-app.use(
-	'/*',
-	cors({
-		origin: (origin) => {
-			if (!origin) {
-				return ALLOWED_ORIGINS[0];
-			}
-			return (ALLOWED_ORIGINS as readonly string[]).includes(origin) ? origin : '';
-		},
+app.use('/*', async (c, next) => {
+	const allowed = resolveAllowedOrigins(c.env.CORS_ORIGINS);
+	const middleware = cors({
+		origin: (origin) => reflectCorsOrigin(origin, allowed) ?? '',
 		allowMethods: ['GET', 'POST', 'OPTIONS'],
 		allowHeaders: ['Content-Type'],
-	}),
-);
+	});
+	return middleware(c, next);
+});
 
 app.get('/', (c) => {
 	return c.json({ status: 'AegisMap API Online', version: APP_VERSION });

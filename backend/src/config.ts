@@ -49,14 +49,39 @@ export function resolveAiModel(override?: string | null): SupportedAiModel {
 	throw new Error(`Unsupported AI model override: ${trimmed}`);
 }
 
-/** CORS origins for browser clients (not auth; restricts browser cross-origin only). */
-export const ALLOWED_ORIGINS = [
+/**
+ * Built-in CORS origins for local Vite and GitHub Pages.
+ * Additional production hosts come from the `CORS_ORIGINS` Worker var
+ * (comma-separated). CORS is not authentication.
+ */
+export const DEFAULT_CORS_ORIGINS = [
 	'http://localhost:5173',
 	'http://127.0.0.1:5173',
 	'http://localhost:4173',
 	'http://127.0.0.1:4173',
 	'https://eamaster.github.io',
 ] as const;
+
+/** Merge defaults with optional comma-separated Worker var (deduped, trimmed). */
+export function resolveAllowedOrigins(extra?: string | null): string[] {
+	const allowed = new Set<string>(DEFAULT_CORS_ORIGINS);
+	if (extra) {
+		for (const part of extra.split(',')) {
+			const origin = part.trim();
+			if (origin) allowed.add(origin);
+		}
+	}
+	return [...allowed];
+}
+
+/** Reflect request Origin only when it is on the allowlist. */
+export function reflectCorsOrigin(
+	requestOrigin: string | undefined,
+	allowed: readonly string[],
+): string | undefined {
+	if (!requestOrigin) return undefined;
+	return allowed.includes(requestOrigin) ? requestOrigin : undefined;
+}
 
 export const DISASTER_TYPES = ['fire', 'volcano', 'earthquake'] as const;
 export type DisasterType = (typeof DISASTER_TYPES)[number];

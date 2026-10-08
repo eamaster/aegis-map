@@ -21,5 +21,7 @@
 		"binding": "AI",
 		"remote": true
 	},
-	"vars": {}
+	"vars": {
+		"CORS_ORIGINS": "https://hesam.me,https://www.hesam.me"
+	}
 }

@@ -694,7 +694,7 @@ The frontend uses **Satellite.js** to perform client-side orbital mechanics calc
 - **Solution**: Placeholder IDs in `wrangler.jsonc` are for local dev only. Create real KV namespaces for deployment.
 
 **Problem**: CORS errors
-- **Solution**: Origins are allowlisted (localhost Vite ports + GitHub Pages). Ensure `VITE_API_BASE_URL` matches your Worker URL.
+- **Solution**: Browser origins are allowlisted (localhost Vite ports + GitHub Pages by default). Add production custom domains via the Worker var `CORS_ORIGINS` (comma-separated) in `wrangler.jsonc`, then redeploy. Ensure `VITE_API_BASE_URL` matches your Worker URL.
 
 ### Frontend Issues
 
