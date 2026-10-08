@@ -7,7 +7,7 @@
 ![React](https://img.shields.io/badge/React-19.2-61DAFB)
 ![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020)
 
-**[Live Demo](https://eamaster.github.io/aegis-map/)** • [Report Bug](https://github.com/eamaster/aegis-map/issues) • [Request Feature](https://github.com/eamaster/aegis-map/issues)
+**[Live Demo](https://hesam.me/aegis-map/)** · [GitHub Pages](https://eamaster.github.io/aegis-map/) · [Report Bug](https://github.com/eamaster/aegis-map/issues) · [Request Feature](https://github.com/eamaster/aegis-map/issues)
 
 ---
 
