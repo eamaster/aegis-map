@@ -30,10 +30,28 @@ const SATELLITE_ELEVATION_THRESHOLDS = {
 } as const;
 
 type CloudState = number | null | undefined;
+type PassState = 'loading' | 'pass' | 'no-pass' | 'unavailable';
+
+/** Partial/retained TLE status reported by /api/tles response headers. */
+function describeTleHeaders(headers: Headers): string | null {
+    const status = headers.get('X-TLE-Status');
+    const missing = headers.get('X-TLE-Missing');
+    const retained = headers.get('X-TLE-Retained');
+    const notes: string[] = [];
+    if (status === 'partial' && missing) {
+        notes.push(`Orbital elements unavailable for ${missing.split(',').length} of 6 monitored satellites`);
+    }
+    if (retained) {
+        notes.push(`${retained.split(',').length} satellite(s) use cached elements pending refresh`);
+    }
+    return notes.length ? `${notes.join('; ')}.` : null;
+}
 
 export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarProps) {
     const ds = useDesignSystem();
     const [nextPass, setNextPass] = useState<SatellitePass | null>(null);
+    const [passState, setPassState] = useState<PassState>('loading');
+    const [tleNotice, setTleNotice] = useState<string | null>(null);
     const [cloudCover, setCloudCover] = useState<CloudState>(undefined);
     const [aiAnalysis, setAiAnalysis] = useState<string>('');
     const [analysisUnavailable, setAnalysisUnavailable] = useState(false);
@@ -54,6 +72,8 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
         analyzeAbortRef.current = null;
 
         setNextPass(null);
+        setPassState('loading');
+        setTleNotice(null);
         setCloudCover(undefined);
         setAiAnalysis('');
         setAnalysisUnavailable(false);
@@ -127,6 +147,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                 }
                 const responseText = await tleResponse.text();
                 if (!isCurrentGeneration(generation, selectionGenRef.current)) return;
+                setTleNotice(describeTleHeaders(tleResponse.headers));
                 if (isJson || responseText.trim().startsWith('{') || responseText.trim().startsWith('[')) {
                     try {
                         const errorData = JSON.parse(responseText) as { error?: string };
@@ -141,9 +162,11 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
 
                 const latNum = disaster.lat;
                 const lngNum = disaster.lng;
-                if (Number.isNaN(latNum) || Number.isNaN(lngNum) || Math.abs(latNum) > 90 || Math.abs(lngNum) > 180) {
+                if (!Number.isFinite(latNum) || !Number.isFinite(lngNum) || Math.abs(latNum) > 90 || Math.abs(lngNum) > 180) {
                     setAiAnalysis('Invalid coordinates. Unable to calculate satellite passes.');
                     setAnalysisUnavailable(true);
+                    setPassState('unavailable');
+                    setCloudCover(null);
                     return;
                 }
 
@@ -160,12 +183,14 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
 
                 if (!pass) {
                     setNextPass(null);
+                    setPassState('no-pass');
                     setAiAnalysis('No satellite passes detected in the next 24 hours. Coverage unavailable.');
                     setAnalysisUnavailable(true);
                     await fetchWeather(latNum, lngNum, new Date(Date.now() + 2 * 60 * 60 * 1000));
                     return;
                 }
                 setNextPass(pass);
+                setPassState('pass');
                 await fetchWeather(latNum, lngNum, pass.time);
             } catch (error) {
                 if (error instanceof DOMException && error.name === 'AbortError') return;
@@ -174,6 +199,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                 setAiAnalysis('Unable to retrieve satellite data.');
                 setAnalysisUnavailable(true);
                 setNextPass(null);
+                setPassState('unavailable');
                 setCloudCover(null);
             }
         };
@@ -292,6 +318,13 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
         <div
             className={`sidebar-container flex flex-col overflow-hidden transition-transform duration-300 ${isOpen ? 'translate-x-0' : 'translate-x-full'
                 }`}
+            data-testid="sidebar"
+            data-disaster-id={disaster.id}
+            data-pass-state={passState}
+            data-pass-satellite={nextPass?.satelliteName ?? ''}
+            data-pass-time={nextPass ? nextPass.time.toISOString() : ''}
+            data-weather-state={cloudCover === undefined ? 'loading' : cloudCover === null ? 'unavailable' : 'known'}
+            data-cloud-cover={typeof cloudCover === 'number' ? String(cloudCover) : ''}
             style={{
                 ...ds.glass.panel,
                 borderLeft: `1px solid ${ds.headerBorderColor}`,
@@ -508,8 +541,37 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                     />
                 )}
 
+                {tleNotice && (
+                    <p
+                        data-testid="tle-notice"
+                        style={{ fontSize: '0.6875rem', color: ds.colors.status.warning, marginBottom: '8px' }}
+                    >
+                        {tleNotice}
+                    </p>
+                )}
+
                 {/* Two-Column Grid: Countdown + Cloud Forecast - COMPACT */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
+                    {!nextPass && (
+                        <div
+                            data-testid="pass-status"
+                            className="text-center"
+                            style={{
+                                padding: '14px',
+                                borderRadius: ds.borderRadius.lg,
+                                background: ds.surface.overlay,
+                                border: `1px solid ${ds.surface.border}`,
+                                fontSize: '0.75rem',
+                                color: passState === 'unavailable' ? ds.colors.status.warning : ds.text.secondary,
+                            }}
+                        >
+                            {passState === 'loading'
+                                ? 'Calculating satellite passes...'
+                                : passState === 'no-pass'
+                                    ? `No monitored satellite pass above ${SATELLITE_ELEVATION_THRESHOLDS.MINIMUM}° elevation in the next 24 hours.`
+                                    : 'Pass prediction unavailable (orbital data could not be loaded).'}
+                        </div>
+                    )}
                     {/* Countdown Timer */}
                     {nextPass && (
                         <div
@@ -651,6 +713,11 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                             </>
                         )}
 
+                        {passState === 'no-pass' && typeof cloudCover === 'number' && (
+                            <p style={{ fontSize: '0.5625rem', color: ds.text.tertiary, marginTop: '8px' }}>
+                                Forecast for ~2 h from now (no pass predicted)
+                            </p>
+                        )}
                         {nextPass && (
                             <p
                                 className="font-medium"

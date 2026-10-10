@@ -9,8 +9,15 @@ import 'mapbox-gl/dist/mapbox-gl.css';
 import { API_BASE } from '../config/api';
 import { debugLog } from '../utils/debug';
 import toast from 'react-hot-toast';
-import type { Disaster } from '../types';
+import type { Disaster, DisasterSourceStatus } from '../types';
+import { describeDisasterSources, isDisasterRecord, parseDisasterSourceHeaders } from '../utils/disasterSources';
 import MapLegend from './MapLegend';
+
+type LayerHandler = {
+    type: 'click' | 'mouseenter' | 'mouseleave';
+    layer: string;
+    fn: (e: mapboxgl.MapMouseEvent) => void;
+};
 
 // Set Mapbox access token
 const accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
@@ -23,8 +30,18 @@ interface MapBoardProps {
 }
 
 // Helper function to safely remove all disaster layers and sources
-const removeDisasterLayers = (mapInstance: mapboxgl.Map | null, animationIds?: Record<string, ReturnType<typeof setInterval>>) => {
+const removeDisasterLayers = (
+    mapInstance: mapboxgl.Map | null,
+    animationIds?: Record<string, ReturnType<typeof setInterval>>,
+    handlers?: LayerHandler[]
+) => {
     if (!mapInstance) return;
+
+    // Layer-delegated listeners outlive removeLayer, so detach them explicitly
+    if (handlers) {
+        handlers.forEach(({ type, layer, fn }) => mapInstance.off(type, layer, fn));
+        handlers.length = 0;
+    }
 
     // Stop all animations first
     if (animationIds) {
@@ -69,10 +86,14 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
     const [lastUpdated, setLastUpdated] = useState<Date | undefined>(undefined);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [isMapLoaded, setIsMapLoaded] = useState(false);
+    const [sourceStatus, setSourceStatus] = useState<DisasterSourceStatus | null>(null);
+    const [loadFailed, setLoadFailed] = useState(false);
     const isInitialLoadRef = useRef(true);
+    const disastersByIdRef = useRef<Map<string, Disaster>>(new Map());
 
     // Animation interval refs for proper cleanup
     const animationIdsRef = useRef<Record<string, ReturnType<typeof setInterval>>>({});
+    const layerHandlersRef = useRef<LayerHandler[]>([]);
 
     // Initialize map only once
     useEffect(() => {
@@ -165,6 +186,8 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
             debugLog('backend', `Fetching disasters from ${API_BASE}/api/disasters`, 'info');
 
             const response = await fetch(`${API_BASE}/api/disasters`);
+            const status = parseDisasterSourceHeaders(response.headers);
+            setSourceStatus(status);
             if (!response.ok) {
                 throw new Error(`Disaster API error: ${response.status}`);
             }
@@ -174,12 +197,23 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
             if (!Array.isArray(data)) {
                 debugLog('disasters', 'ERROR: Response is not an array', 'error', { data });
                 setLoading(false);
+                setIsRefreshing(false);
+                setLoadFailed(true);
                 isInitialLoadRef.current = false; // Mark as no longer initial load even on error
                 toast.error('Disaster API returned an unexpected response.', { duration: 5000 });
                 return;
             }
 
-            const disastersList = data as Disaster[];
+            const disastersList = data.filter(isDisasterRecord);
+            if (disastersList.length !== data.length) {
+                debugLog(
+                    'disasters',
+                    `WARNING: Dropped ${data.length - disastersList.length} malformed disaster records`,
+                    'warning'
+                );
+            }
+            disastersByIdRef.current = new Map(disastersList.map((d) => [d.id, d]));
+            setLoadFailed(false);
             const fireCount = disastersList.filter(d => d.type === 'fire').length;
             const volcanoCount = disastersList.filter(d => d.type === 'volcano').length;
             const earthquakeCount = disastersList.filter(d => d.type === 'earthquake').length;
@@ -195,30 +229,25 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
             // DEBUG: Confirm backend is online
             debugLog('backend', 'Backend connection successful', 'success');
 
-            // Validate coordinates
-            const invalid = disastersList.filter(d =>
-                Math.abs(d.lat) > 90 || Math.abs(d.lng) > 180
-            );
-            if (invalid.length > 0) {
-                debugLog(
-                    'disasters',
-                    `WARNING: Found ${invalid.length} disasters with invalid coordinates`,
-                    'warning',
-                    invalid
-                );
-            }
+            const fetchedAtHeader = response.headers.get('X-Disaster-Fetched-At');
+            const fetchedAt = fetchedAtHeader ? new Date(fetchedAtHeader) : null;
 
             setDisasters(disastersList);
             setLoading(false);
-            setLastUpdated(new Date());
+            setLastUpdated(fetchedAt && !Number.isNaN(fetchedAt.getTime()) ? fetchedAt : new Date());
             setIsRefreshing(false);
 
-            // ✅ Layers will be added by useEffect (line 266) when disasters state updates
+            // Layers are added by the effect below when disasters state updates
+
+            const degraded = describeDisasterSources(status);
+            if (degraded) {
+                toast(degraded, { duration: 6000, icon: '⚠️' });
+            }
 
             // Show success toast only on manual refresh, not initial load
             if (!isInitialLoadRef.current) {
                 toast.success(
-                    `✓ Refreshed: ${disastersList.length} disasters\n${fireCount} 🔥 ${earthquakeCount} 🌍 ${volcanoCount} 🌋`,
+                    `✓ Refreshed${degraded ? ' (partial)' : ''}: ${disastersList.length} disasters\n${fireCount} 🔥 ${earthquakeCount} 🌍 ${volcanoCount} 🌋`,
                     {
                         duration: 3000,
                         style: {
@@ -238,6 +267,7 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
             );
             setLoading(false);
             setIsRefreshing(false);
+            setLoadFailed(true);
             isInitialLoadRef.current = false; // Mark as no longer initial load even on error
 
             // Show error toast
@@ -250,29 +280,79 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
     // Manual refresh handler
     const handleRefresh = async () => {
         setIsRefreshing(true);
-
-        // Remove existing layers and sources before refreshing
-        if (map.current) {
-            removeDisasterLayers(map.current, animationIdsRef.current);
-        }
-
+        // Existing layers stay until new data arrives; the effect below swaps them
         await loadDisasters();
     };
 
     // Re-render layers when map is loaded, filters change, or disasters update
     useEffect(() => {
-        if (!map.current || !isMapLoaded || disasters.length === 0) return;
+        if (!map.current || !isMapLoaded) return;
 
-        removeDisasterLayers(map.current, animationIdsRef.current);
-        addDisasterLayers(disasters);
+        removeDisasterLayers(map.current, animationIdsRef.current, layerHandlersRef.current);
+        if (disasters.length > 0) addDisasterLayers(disasters);
     }, [isMapLoaded, activeFilters, disasters]);
+
+    // Selection always resolves to the backend record so valid zero values survive
+    const bindLayerInteractions = (layerId: string, icon: string) => {
+        if (!map.current) return;
+
+        const resolve = (e: mapboxgl.MapMouseEvent): Disaster | undefined => {
+            const id = e.features?.[0]?.properties?.id;
+            return typeof id === 'string' ? disastersByIdRef.current.get(id) : undefined;
+        };
+
+        const onClick = (e: mapboxgl.MapMouseEvent) => {
+            e.preventDefault();
+            e.originalEvent?.stopPropagation();
+            const selected = resolve(e);
+            if (!selected) {
+                console.warn(`Clicked ${layerId} feature has no matching disaster record`);
+                return;
+            }
+            onDisasterSelect(selected);
+        };
+
+        const onEnter = (e: mapboxgl.MapMouseEvent) => {
+            if (!map.current) return;
+            map.current.getCanvas().style.cursor = 'pointer';
+            const selected = resolve(e);
+            if (!selected) return;
+
+            tooltipRef.current?.remove();
+            const content = document.createElement('div');
+            content.className = 'text-sm font-medium';
+            content.textContent = `${icon} ${selected.title}${selected.magnitude !== undefined ? ` M${selected.magnitude}` : ''}`;
+            tooltipRef.current = new mapboxgl.Popup({
+                closeButton: false,
+                closeOnClick: false,
+                className: 'disaster-tooltip'
+            })
+                .setLngLat(e.lngLat)
+                .setDOMContent(content)
+                .addTo(map.current);
+        };
+
+        const onLeave = () => {
+            if (map.current) map.current.getCanvas().style.cursor = '';
+            tooltipRef.current?.remove();
+            tooltipRef.current = null;
+        };
+
+        const handlers: LayerHandler[] = [
+            { type: 'click', layer: layerId, fn: onClick },
+            { type: 'mouseenter', layer: layerId, fn: onEnter },
+            { type: 'mouseleave', layer: layerId, fn: onLeave },
+        ];
+        handlers.forEach(({ type, layer, fn }) => map.current?.on(type, layer, fn));
+        layerHandlersRef.current.push(...handlers);
+    };
 
     // Add disaster data layers to map
     const addDisasterLayers = (disasters: Disaster[]) => {
         if (!map.current) return;
 
         // Safety check: Clean up any existing layers first
-        removeDisasterLayers(map.current, animationIdsRef.current);
+        removeDisasterLayers(map.current, animationIdsRef.current, layerHandlersRef.current);
 
         // ✅ Filter disasters based on active filters
         const visibleDisasters = disasters.filter(d => activeFilters.has(d.type));
@@ -354,65 +434,7 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
             // Store animation ID for cleanup
             animationIdsRef.current.fires = firesAnimationId;
 
-            // Add click handler
-            map.current.on('click', 'fires-layer', (e) => {
-                e.preventDefault();
-                e.originalEvent?.stopPropagation();
-                if (e.features && e.features[0]) {
-                    const props = e.features[0].properties as any;
-                    // Handle both uppercase and lowercase coordinate properties
-                    const lat = props.lat || props.Lat || props.latitude || props.Latitude || e.lngLat.lat;
-                    const lng = props.lng || props.Lng || props.longitude || props.Longitude || e.lngLat.lng;
-                    const disaster = {
-                        id: props.id || `fire_${Date.now()}`,
-                        type: props.type || 'fire',
-                        title: props.title || props.name || 'Fire Event',
-                        lat: parseFloat(String(lat)),
-                        lng: parseFloat(String(lng)),
-                        date: props.date || props.start || new Date().toISOString(),
-                        severity: props.severity || 'medium',
-                    };
-                    onDisasterSelect(disaster);
-                }
-            });
-
-            // Change cursor on hover
-            map.current.on('mouseenter', 'fires-layer', (e) => {
-                if (map.current) map.current.getCanvas().style.cursor = 'pointer';
-
-                // Show tooltip
-                if (e.features && e.features[0]) {
-                    const props = e.features[0].properties as any;
-                    const title = props.title || props.name || 'Fire Event';
-
-                    // Remove existing tooltip
-                    if (tooltipRef.current) {
-                        tooltipRef.current.remove();
-                    }
-
-                    // Create new tooltip
-                    if (map.current) {
-                        tooltipRef.current = new mapboxgl.Popup({
-                            closeButton: false,
-                            closeOnClick: false,
-                            className: 'disaster-tooltip'
-                        })
-                            .setLngLat(e.lngLat)
-                            .setHTML(`<div class="text-sm font-medium">🔥 ${title}</div>`)
-                            .addTo(map.current);
-                    }
-                }
-            });
-
-            map.current.on('mouseleave', 'fires-layer', () => {
-                if (map.current) map.current.getCanvas().style.cursor = '';
-
-                // Remove tooltip
-                if (tooltipRef.current) {
-                    tooltipRef.current.remove();
-                    tooltipRef.current = null;
-                }
-            });
+            bindLayerInteractions('fires-layer', '🔥');
         }
 
         // Add earthquakes layer
@@ -478,77 +500,7 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
             const earthquakesAnimationId = setInterval(animateEarthquakes, 50);
             animationIdsRef.current.earthquakes = earthquakesAnimationId;
 
-            // Add click handler
-            map.current.on('click', 'earthquakes-layer', (e) => {
-                e.preventDefault();
-                e.originalEvent?.stopPropagation();
-                if (e.features && e.features[0]) {
-                    const props = e.features[0].properties as any;
-                    // Handle both uppercase and lowercase coordinate properties
-                    const latValue = props.lat || props.Lat || props.latitude || props.Latitude || e.lngLat.lat;
-                    const lngValue = props.lng || props.Lng || props.longitude || props.Longitude || e.lngLat.lng;
-                    const latNum = parseFloat(String(latValue));
-                    const lngNum = parseFloat(String(lngValue));
-
-                    // Validate coordinates
-                    if (isNaN(latNum) || isNaN(lngNum)) {
-                        console.error('❌ Invalid coordinates:', { latValue, lngValue, latNum, lngNum });
-                        return;
-                    }
-
-                    // Ensure lowercase lat/lng for consistency
-                    const disaster = {
-                        id: props.id || `earthquake_${Date.now()}`,
-                        type: props.type || 'earthquake',
-                        title: props.title || props.name || 'Earthquake Event',
-                        lat: latNum, // lowercase
-                        lng: lngNum, // lowercase
-                        date: props.date || props.start || new Date().toISOString(),
-                        severity: props.severity || 'medium',
-                        magnitude: props.magnitude ? parseFloat(props.magnitude) : undefined,
-                    };
-                    onDisasterSelect(disaster);
-                }
-            });
-
-            // Change cursor on hover
-            map.current.on('mouseenter', 'earthquakes-layer', (e) => {
-                if (map.current) map.current.getCanvas().style.cursor = 'pointer';
-
-                // Show tooltip
-                if (e.features && e.features[0]) {
-                    const props = e.features[0].properties as any;
-                    const title = props.title || props.name || 'Earthquake Event';
-                    const magnitude = props.magnitude ? ` M${props.magnitude}` : '';
-
-                    // Remove existing tooltip
-                    if (tooltipRef.current) {
-                        tooltipRef.current.remove();
-                    }
-
-                    // Create new tooltip
-                    if (map.current) {
-                        tooltipRef.current = new mapboxgl.Popup({
-                            closeButton: false,
-                            closeOnClick: false,
-                            className: 'disaster-tooltip'
-                        })
-                            .setLngLat(e.lngLat)
-                            .setHTML(`<div class="text-sm font-medium">🌍 ${title}${magnitude}</div>`)
-                            .addTo(map.current);
-                    }
-                }
-            });
-
-            map.current.on('mouseleave', 'earthquakes-layer', () => {
-                if (map.current) map.current.getCanvas().style.cursor = '';
-
-                // Remove tooltip
-                if (tooltipRef.current) {
-                    tooltipRef.current.remove();
-                    tooltipRef.current = null;
-                }
-            });
+            bindLayerInteractions('earthquakes-layer', '🌍');
         }
 
         // Add volcanoes layer (similar to fires but different color)
@@ -614,65 +566,7 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
             const volcanoesAnimationId = setInterval(animateVolcanoes, 50);
             animationIdsRef.current.volcanoes = volcanoesAnimationId;
 
-            // Add click handler
-            map.current.on('click', 'volcanoes-layer', (e) => {
-                e.preventDefault();
-                e.originalEvent?.stopPropagation();
-                if (e.features && e.features[0]) {
-                    const props = e.features[0].properties as any;
-                    // Handle both uppercase and lowercase coordinate properties
-                    const lat = props.lat || props.Lat || props.latitude || props.Latitude || e.lngLat.lat;
-                    const lng = props.lng || props.Lng || props.longitude || props.Longitude || e.lngLat.lng;
-                    const disaster = {
-                        id: props.id || `volcano_${Date.now()}`,
-                        type: props.type || 'volcano',
-                        title: props.title || props.name || 'Volcano Event',
-                        lat: parseFloat(String(lat)),
-                        lng: parseFloat(String(lng)),
-                        date: props.date || props.start || new Date().toISOString(),
-                        severity: props.severity || 'medium',
-                    };
-                    onDisasterSelect(disaster);
-                }
-            });
-
-            // Change cursor on hover
-            map.current.on('mouseenter', 'volcanoes-layer', (e) => {
-                if (map.current) map.current.getCanvas().style.cursor = 'pointer';
-
-                // Show tooltip
-                if (e.features && e.features[0]) {
-                    const props = e.features[0].properties as any;
-                    const title = props.title || props.name || 'Volcano Event';
-
-                    // Remove existing tooltip
-                    if (tooltipRef.current) {
-                        tooltipRef.current.remove();
-                    }
-
-                    // Create new tooltip
-                    if (map.current) {
-                        tooltipRef.current = new mapboxgl.Popup({
-                            closeButton: false,
-                            closeOnClick: false,
-                            className: 'disaster-tooltip'
-                        })
-                            .setLngLat(e.lngLat)
-                            .setHTML(`<div class="text-sm font-medium">🌋 ${title}</div>`)
-                            .addTo(map.current);
-                    }
-                }
-            });
-
-            map.current.on('mouseleave', 'volcanoes-layer', () => {
-                if (map.current) map.current.getCanvas().style.cursor = '';
-
-                // Remove tooltip
-                if (tooltipRef.current) {
-                    tooltipRef.current.remove();
-                    tooltipRef.current = null;
-                }
-            });
+            bindLayerInteractions('volcanoes-layer', '🌋');
         }
     };
 
@@ -898,6 +792,8 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
                     isRefreshing={isRefreshing}
                     activeFilters={activeFilters}
                     onFilterToggle={onFilterToggle}
+                    sourceStatus={sourceStatus}
+                    loadFailed={loadFailed}
                 />
             )}
 

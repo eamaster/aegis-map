@@ -1,6 +1,12 @@
 /**
  * Disaster Data Adapters (NASA EONET v3 + USGS Earthquakes)
- * Provides normalized, validated disaster records with partial-failure isolation.
+ * Provides normalized, validated disaster records with per-source status.
+ *
+ * Records with missing/invalid identity, timestamps, or coordinates are
+ * rejected and counted — never assigned the current time or (0, 0).
+ * Provider content that does not match the expected schema, or in which
+ * every record is invalid, is a source failure ('malformed'), not an
+ * empty dataset.
  */
 
 export type DisasterSeverity = 'low' | 'medium' | 'high';
@@ -16,234 +22,314 @@ export interface DisasterRecord {
 	magnitude?: number;
 }
 
-export interface EonetRawEvent {
-	id: string;
-	title: string;
-	categories: Array<{ id: string; title?: string }>;
-	geometry?: Array<{
-		date: string;
-		type?: string;
-		coordinates: any;
-	}>;
+export type DisasterSourceName = 'eonet' | 'usgs';
+export type DisasterSourceState = 'ok' | 'failed' | 'malformed';
+
+export interface DisasterSourceStatus {
+	status: DisasterSourceState;
+	count: number;
+	rejected: number;
 }
 
-export interface UsgsRawFeature {
-	id: string;
-	properties: {
-		mag: number | null;
-		place: string | null;
-		time: number;
-		updated?: number;
-	};
-	geometry: {
-		coordinates: number[];
-	};
+export type DisasterSources = Record<DisasterSourceName, DisasterSourceStatus>;
+
+export interface DisasterFetchResult {
+	disasters: DisasterRecord[];
+	sources: DisasterSources;
+	partial: boolean;
+}
+
+export class DisasterUpstreamError extends Error {
+	readonly sources: DisasterSources;
+	constructor(sources: DisasterSources) {
+		super('Both EONET and USGS upstream services failed');
+		this.name = 'DisasterUpstreamError';
+		this.sources = sources;
+	}
+}
+
+class MalformedSourceError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = 'MalformedSourceError';
+	}
+}
+
+export interface LngLat {
+	lng: number;
+	lat: number;
+}
+
+/** Strict [lng, lat] pair: both must be real finite numbers in range (0 is valid; null is not). */
+export function readLngLat(value: unknown): LngLat | null {
+	if (!Array.isArray(value) || value.length < 2) return null;
+	const [lng, lat] = value;
+	if (typeof lng !== 'number' || typeof lat !== 'number') return null;
+	if (!Number.isFinite(lng) || !Number.isFinite(lat)) return null;
+	if (Math.abs(lat) > 90 || Math.abs(lng) > 180) return null;
+	return { lng, lat };
+}
+
+function parseTimestamp(value: unknown): number | null {
+	if (typeof value !== 'string' || value.trim() === '') return null;
+	const ms = Date.parse(value);
+	return Number.isFinite(ms) ? ms : null;
 }
 
 /**
- * Extract representative [lng, lat] coordinates from EONET geometry.
- * Correctly handles both Point and Polygon geometries.
+ * Representative point for a polygon outer ring: the center of its
+ * longitude/latitude bounding box. This is not an area centroid.
+ * Longitudes are unwrapped along the ring so rings crossing the
+ * antimeridian are measured across it; the duplicated closing vertex does
+ * not affect the result. Any invalid vertex rejects the ring.
  */
-export function extractEonetCoordinates(geom: {
-	type?: string;
-	coordinates: any;
-}): { lng: number; lat: number } | null {
-	if (!geom || !geom.coordinates) return null;
+export function polygonRepresentativePoint(ring: unknown): LngLat | null {
+	if (!Array.isArray(ring)) return null;
+	const pts: LngLat[] = [];
+	for (const vertex of ring) {
+		const p = readLngLat(vertex);
+		if (!p) return null;
+		pts.push(p);
+	}
+	if (pts.length > 1 && pts[0].lng === pts[pts.length - 1].lng && pts[0].lat === pts[pts.length - 1].lat) {
+		pts.pop();
+	}
+	if (pts.length < 3) return null;
 
-	const geomType = geom.type || (Array.isArray(geom.coordinates[0]) ? 'Polygon' : 'Point');
-
-	if (geomType === 'Point' && Array.isArray(geom.coordinates)) {
-		const lng = Number(geom.coordinates[0]);
-		const lat = Number(geom.coordinates[1]);
-		if (Number.isFinite(lng) && Number.isFinite(lat) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
-			return { lng, lat };
-		}
-		return null;
+	let prev = pts[0].lng;
+	let minLng = prev;
+	let maxLng = prev;
+	let minLat = pts[0].lat;
+	let maxLat = pts[0].lat;
+	for (let i = 1; i < pts.length; i++) {
+		let lng = pts[i].lng;
+		while (lng - prev > 180) lng -= 360;
+		while (lng - prev < -180) lng += 360;
+		prev = lng;
+		minLng = Math.min(minLng, lng);
+		maxLng = Math.max(maxLng, lng);
+		minLat = Math.min(minLat, pts[i].lat);
+		maxLat = Math.max(maxLat, pts[i].lat);
 	}
 
-	if (geomType === 'Polygon' && Array.isArray(geom.coordinates) && Array.isArray(geom.coordinates[0])) {
-		// Outer ring of polygon coordinates
-		const ring = geom.coordinates[0];
-		let sumLng = 0;
-		let sumLat = 0;
-		let count = 0;
+	let lng = (minLng + maxLng) / 2;
+	lng = ((((lng + 180) % 360) + 360) % 360) - 180;
+	return { lng, lat: (minLat + maxLat) / 2 };
+}
 
-		for (const pt of ring) {
-			if (Array.isArray(pt) && pt.length >= 2) {
-				const lng = Number(pt[0]);
-				const lat = Number(pt[1]);
-				if (Number.isFinite(lng) && Number.isFinite(lat)) {
-					sumLng += lng;
-					sumLat += lat;
-					count++;
-				}
-			}
-		}
-
-		if (count > 0) {
-			const avgLng = sumLng / count;
-			const avgLat = sumLat / count;
-			if (Math.abs(avgLat) <= 90 && Math.abs(avgLng) <= 180) {
-				return { lng: avgLng, lat: avgLat };
-			}
-		}
+/** Point -> its coordinates; Polygon -> bounding-box center of the outer ring. */
+export function extractEonetCoordinates(geom: unknown): LngLat | null {
+	if (!geom || typeof geom !== 'object') return null;
+	const g = geom as { type?: unknown; coordinates?: unknown };
+	if (g.type === 'Point') return readLngLat(g.coordinates);
+	if (g.type === 'Polygon' && Array.isArray(g.coordinates)) {
+		return polygonRepresentativePoint(g.coordinates[0]);
 	}
-
 	return null;
 }
 
+export interface NormalizeResult {
+	records: DisasterRecord[];
+	rejected: number;
+}
+
 /**
- * Normalize raw EONET events into DisasterRecord items.
- * Evaluates all categories (not just categories[0]) and selects latest geometry observation.
+ * Normalize EONET events. All categories are considered; the latest
+ * geometry with a valid date and coordinates is used.
  */
-export function normalizeEonetEvents(events: readonly EonetRawEvent[]): DisasterRecord[] {
-	const results: DisasterRecord[] = [];
+export function normalizeEonetEvents(events: readonly unknown[]): NormalizeResult {
+	const records: DisasterRecord[] = [];
+	let rejected = 0;
 
-	for (const event of events) {
-		if (!event.categories || !Array.isArray(event.categories)) continue;
-
-		const categoryIds = event.categories.map((c) => c.id);
+	for (const raw of events) {
+		const event = raw as {
+			id?: unknown;
+			title?: unknown;
+			categories?: unknown;
+			geometry?: unknown;
+		} | null;
+		if (!event || typeof event.id !== 'string' || !event.id || !Array.isArray(event.categories)) {
+			rejected++;
+			continue;
+		}
+		const categoryIds = event.categories
+			.map((c) => (c && typeof c === 'object' ? (c as { id?: unknown }).id : undefined))
+			.filter((id): id is string => typeof id === 'string');
 		const hasWildfire = categoryIds.includes('wildfires');
 		const hasVolcano = categoryIds.includes('volcanoes');
-
 		if (!hasWildfire && !hasVolcano) continue;
-
 		const type: 'fire' | 'volcano' = hasWildfire ? 'fire' : 'volcano';
 
-		if (!event.geometry || !Array.isArray(event.geometry) || event.geometry.length === 0) {
+		if (!Array.isArray(event.geometry)) {
+			rejected++;
 			continue;
 		}
 
-		// Sort geometries by date ascending to pick the most recent observation
-		const sorted = [...event.geometry].sort(
-			(a, b) => new Date(a.date).getTime() - new Date(b.date).getTime(),
-		);
-		const latest = sorted[sorted.length - 1];
+		let latest: { ms: number; point: LngLat } | null = null;
+		for (const geom of event.geometry) {
+			const ms = parseTimestamp((geom as { date?: unknown } | null)?.date);
+			const point = extractEonetCoordinates(geom);
+			if (ms === null || !point) continue;
+			if (!latest || ms > latest.ms) latest = { ms, point };
+		}
+		if (!latest) {
+			rejected++;
+			continue;
+		}
 
-		const coords = extractEonetCoordinates(latest);
-		if (!coords) continue;
-
-		results.push({
+		const title = typeof event.title === 'string' && event.title.trim() ? event.title.trim() : null;
+		records.push({
 			id: event.id,
 			type,
-			title: event.title || (type === 'fire' ? 'Wildfire Event' : 'Volcano Event'),
-			lng: coords.lng,
-			lat: coords.lat,
-			date: latest.date,
+			title: title ?? (type === 'fire' ? 'Wildfire Event' : 'Volcano Event'),
+			lng: latest.point.lng,
+			lat: latest.point.lat,
+			date: new Date(latest.ms).toISOString(),
 			severity: 'medium',
 		});
 	}
 
-	return results;
+	return { records, rejected };
 }
 
 /**
- * Normalize USGS earthquake GeoJSON features into DisasterRecord items.
- * Preserves zero magnitude and correctly handles null/unknown magnitude.
+ * Normalize USGS GeoJSON features. Zero magnitude is preserved; a null
+ * magnitude is reported as unknown (no magnitude field).
  */
-export function normalizeUsgsFeatures(features: readonly UsgsRawFeature[]): DisasterRecord[] {
-	const results: DisasterRecord[] = [];
+export function normalizeUsgsFeatures(features: readonly unknown[]): NormalizeResult {
+	const records: DisasterRecord[] = [];
+	let rejected = 0;
 
-	for (const feature of features) {
-		if (!feature.geometry || !Array.isArray(feature.geometry.coordinates)) continue;
+	for (const raw of features) {
+		const feature = raw as {
+			id?: unknown;
+			properties?: { mag?: unknown; place?: unknown; time?: unknown } | null;
+			geometry?: { type?: unknown; coordinates?: unknown } | null;
+		} | null;
+		const point = feature?.geometry?.type === 'Point' ? readLngLat(feature.geometry.coordinates) : null;
+		const time = feature?.properties?.time;
+		const mag = feature?.properties?.mag;
+		const magValid = mag === null || mag === undefined || (typeof mag === 'number' && Number.isFinite(mag));
 
-		const coords = feature.geometry.coordinates;
-		if (coords.length < 2) continue;
-
-		const lng = Number(coords[0]);
-		const lat = Number(coords[1]);
-
-		if (!Number.isFinite(lng) || !Number.isFinite(lat) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+		if (
+			!feature ||
+			typeof feature.id !== 'string' ||
+			!feature.id ||
+			!point ||
+			typeof time !== 'number' ||
+			!Number.isFinite(time) ||
+			!magValid
+		) {
+			rejected++;
 			continue;
 		}
 
-		const rawMag = feature.properties?.mag;
-		const hasMag = typeof rawMag === 'number' && Number.isFinite(rawMag);
-		const magnitude = hasMag ? rawMag : undefined;
-
+		const magnitude = typeof mag === 'number' ? mag : undefined;
 		let severity: DisasterSeverity = 'low';
-		if (hasMag) {
-			if (rawMag >= 6.0) severity = 'high';
-			else if (rawMag >= 4.5) severity = 'medium';
+		if (magnitude !== undefined) {
+			if (magnitude >= 6.0) severity = 'high';
+			else if (magnitude >= 4.5) severity = 'medium';
 		}
 
-		const place = feature.properties?.place?.trim() || 'Unspecified location';
-		const date = Number.isFinite(feature.properties?.time)
-			? new Date(feature.properties.time).toISOString()
-			: new Date().toISOString();
-
-		results.push({
-			id: feature.id || `usgs-${lat}-${lng}-${date}`,
+		const place = feature.properties?.place;
+		records.push({
+			id: feature.id,
 			type: 'earthquake',
-			title: place,
-			lng,
-			lat,
-			date,
+			title: typeof place === 'string' && place.trim() ? place.trim() : 'Unspecified location',
+			lng: point.lng,
+			lat: point.lat,
+			date: new Date(time).toISOString(),
 			severity,
 			...(magnitude !== undefined ? { magnitude } : {}),
 		});
 	}
 
-	return results;
+	return { records, rejected };
+}
+
+export const EONET_URL =
+	'https://eonet.gsfc.nasa.gov/api/v3/events?status=open&category=wildfires,volcanoes&days=60';
+export const USGS_URL = 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson';
+
+export function parseEonetPayload(payload: unknown): NormalizeResult {
+	const events = (payload as { events?: unknown } | null)?.events;
+	if (!Array.isArray(events)) throw new MalformedSourceError('EONET payload has no events array');
+	return normalizeEonetEvents(events);
+}
+
+export function parseUsgsPayload(payload: unknown): NormalizeResult {
+	const p = payload as { type?: unknown; features?: unknown } | null;
+	if (!p || p.type !== 'FeatureCollection' || !Array.isArray(p.features)) {
+		throw new MalformedSourceError('USGS payload is not a FeatureCollection');
+	}
+	return normalizeUsgsFeatures(p.features);
+}
+
+type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
+
+async function loadSource(
+	name: DisasterSourceName,
+	url: string,
+	timeoutMs: number,
+	parse: (payload: unknown) => NormalizeResult,
+	fetchImpl: FetchLike,
+): Promise<{ status: DisasterSourceStatus; records: DisasterRecord[] }> {
+	try {
+		const res = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs) });
+		if (!res.ok) {
+			console.warn(`${name} fetch failed: HTTP ${res.status}`);
+			return { status: { status: 'failed', count: 0, rejected: 0 }, records: [] };
+		}
+		let payload: unknown;
+		try {
+			payload = await res.json();
+		} catch {
+			throw new MalformedSourceError(`${name} response is not JSON`);
+		}
+		const { records, rejected } = parse(payload);
+		if (records.length === 0 && rejected > 0) {
+			console.warn(`${name} malformed: all ${rejected} records invalid`);
+			return { status: { status: 'malformed', count: 0, rejected }, records: [] };
+		}
+		if (rejected > 0) console.warn(`${name}: rejected ${rejected} invalid records`);
+		return { status: { status: 'ok', count: records.length, rejected }, records };
+	} catch (err) {
+		if (err instanceof MalformedSourceError) {
+			console.warn(`${name} malformed: ${err.message}`);
+			return { status: { status: 'malformed', count: 0, rejected: 0 }, records: [] };
+		}
+		console.warn(`${name} fetch failed: ${err instanceof Error ? err.name : 'Error'}`);
+		return { status: { status: 'failed', count: 0, rejected: 0 }, records: [] };
+	}
 }
 
 /**
- * Fetch and combine disasters from EONET and USGS with partial-failure isolation.
+ * Fetch EONET and USGS independently. One failed source yields a partial
+ * result with that source's status; both failing throws DisasterUpstreamError.
  */
-export async function fetchDisasters(): Promise<{
-	disasters: DisasterRecord[];
-	eonetCount: number;
-	usgsCount: number;
-	partialFailure?: boolean;
-}> {
-	// Bounded EONET v3 query: open events in recent 60 days
-	const eonetUrl =
-		'https://eonet.gsfc.nasa.gov/api/v3/events?status=open&category=wildfires,volcanoes&days=60';
-	const usgsUrl =
-		'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson';
+export async function fetchDisasters(fetchImpl?: FetchLike): Promise<DisasterFetchResult> {
+	const doFetch: FetchLike = fetchImpl ?? ((input, init) => fetch(input, init));
+	const [eonet, usgs] = await Promise.all([
+		loadSource('eonet', EONET_URL, 15000, parseEonetPayload, doFetch),
+		loadSource('usgs', USGS_URL, 8000, parseUsgsPayload, doFetch),
+	]);
 
-	const fetchEonet = async (): Promise<DisasterRecord[]> => {
-		const res = await fetch(eonetUrl, { signal: AbortSignal.timeout(15000) });
-		if (!res.ok) throw new Error(`EONET API HTTP ${res.status}`);
-		const data = (await res.json()) as { events?: EonetRawEvent[] };
-		return normalizeEonetEvents(data.events || []);
-	};
-
-	const fetchUsgs = async (): Promise<DisasterRecord[]> => {
-		const res = await fetch(usgsUrl, { signal: AbortSignal.timeout(8000) });
-		if (!res.ok) throw new Error(`USGS API HTTP ${res.status}`);
-		const data = (await res.json()) as { features?: UsgsRawFeature[] };
-		return normalizeUsgsFeatures(data.features || []);
-	};
-
-	const [eonetSettled, usgsSettled] = await Promise.allSettled([fetchEonet(), fetchUsgs()]);
-
-	const eonetRecords = eonetSettled.status === 'fulfilled' ? eonetSettled.value : [];
-	const usgsRecords = usgsSettled.status === 'fulfilled' ? usgsSettled.value : [];
-
-	if (eonetSettled.status === 'rejected') {
-		console.warn('EONET fetch failed:', eonetSettled.reason);
-	}
-	if (usgsSettled.status === 'rejected') {
-		console.warn('USGS fetch failed:', usgsSettled.reason);
+	const sources: DisasterSources = { eonet: eonet.status, usgs: usgs.status };
+	if (eonet.status.status !== 'ok' && usgs.status.status !== 'ok') {
+		throw new DisasterUpstreamError(sources);
 	}
 
-	if (eonetRecords.length === 0 && usgsRecords.length === 0) {
-		if (eonetSettled.status === 'rejected' && usgsSettled.status === 'rejected') {
-			throw new Error('Both EONET and USGS upstream services failed');
-		}
-	}
-
-	// Deduplicate by ID
 	const map = new Map<string, DisasterRecord>();
-	for (const d of [...eonetRecords, ...usgsRecords]) {
-		map.set(d.id, d);
-	}
+	for (const d of [...eonet.records, ...usgs.records]) map.set(d.id, d);
 
 	return {
 		disasters: Array.from(map.values()),
-		eonetCount: eonetRecords.length,
-		usgsCount: usgsRecords.length,
-		partialFailure: eonetSettled.status === 'rejected' || usgsSettled.status === 'rejected',
+		sources,
+		partial: eonet.status.status !== 'ok' || usgs.status.status !== 'ok',
 	};
+}
+
+/** Header form: "eonet=ok;usgs=failed". */
+export function formatDisasterSourcesHeader(sources: DisasterSources): string {
+	return `eonet=${sources.eonet.status};usgs=${sources.usgs.status}`;
 }

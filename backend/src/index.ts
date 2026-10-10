@@ -8,18 +8,23 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { analyzeErrorResponse, parseAnalyzeRequest, runAnalyze } from './analyze';
 import { APP_VERSION, reflectCorsOrigin, resolveAllowedOrigins } from './config';
-import { fetchDisasters } from './disasters';
 import {
+	DisasterRecord,
+	DisasterSources,
+	DisasterUpstreamError,
+	fetchDisasters,
+	formatDisasterSourcesHeader,
+} from './disasters';
+import {
+	buildFirmsBboxes,
+	buildFirmsCacheKey,
 	fetch7DayFirmsHotspots,
 	FIRMS_CACHE_TTL_SECONDS,
-	validateCoordinates,
+	isUsableCachedFirms,
+	parseCoordinateQuery,
+	planFirmsWindows,
 } from './firms';
-import {
-	mergeTles,
-	MONITORED_NORAD_IDS,
-	ParsedTleRecord,
-	validateTleRecord,
-} from './satellites';
+import { loadMonitoredTles, serializeTles } from './satellites';
 
 type Bindings = {
 	AEGIS_CACHE: KVNamespace;
@@ -31,6 +36,18 @@ type Bindings = {
 	CORS_ORIGINS?: string;
 };
 
+/** Metadata headers browsers may read cross-origin. */
+const EXPOSED_HEADERS = [
+	'X-Disaster-Sources',
+	'X-Disaster-Partial',
+	'X-Disaster-Fetched-At',
+	'X-TLE-Status',
+	'X-TLE-Missing',
+	'X-TLE-Refreshed',
+	'X-TLE-Retained',
+	'X-TLE-Oldest-Epoch',
+];
+
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.use('/*', async (c, next) => {
@@ -39,6 +56,7 @@ app.use('/*', async (c, next) => {
 		origin: (origin) => reflectCorsOrigin(origin, allowed) ?? '',
 		allowMethods: ['GET', 'POST', 'OPTIONS'],
 		allowHeaders: ['Content-Type'],
+		exposeHeaders: EXPOSED_HEADERS,
 	});
 	return middleware(c, next);
 });
@@ -47,191 +65,179 @@ app.get('/', (c) => {
 	return c.json({ status: 'AegisMap API Online', version: APP_VERSION });
 });
 
-// Route 1: GET /api/disasters
-app.get('/api/disasters', async (c) => {
-	const cacheKey = 'disasters';
-	const cacheTTL = 600;
+const DISASTERS_CACHE_KEY = 'disasters:v2';
+const DISASTERS_CACHE_TTL_SECONDS = 600;
+/** Partial results are cached briefly so a recovered source is picked up soon. */
+const DISASTERS_PARTIAL_CACHE_TTL_SECONDS = 60;
 
-	let cached: string | null = null;
+interface DisastersCacheDocument {
+	version: 2;
+	disasters: DisasterRecord[];
+	sources: DisasterSources;
+	partial: boolean;
+	fetchedAt: string;
+}
+
+function readDisastersCache(raw: string | null): DisastersCacheDocument | null {
+	if (!raw) return null;
 	try {
-		cached = await c.env.AEGIS_CACHE?.get(cacheKey);
-		if (cached) {
-			console.log('Cache hit: disasters');
-			return c.json(JSON.parse(cached));
+		const doc = JSON.parse(raw) as Partial<DisastersCacheDocument>;
+		if (
+			doc.version === 2 &&
+			Array.isArray(doc.disasters) &&
+			doc.sources?.eonet &&
+			doc.sources?.usgs &&
+			typeof doc.partial === 'boolean' &&
+			typeof doc.fetchedAt === 'string'
+		) {
+			return doc as DisastersCacheDocument;
 		}
+	} catch {
+		// fall through: unreadable cache is ignored
+	}
+	return null;
+}
+
+function disasterHeaders(doc: Pick<DisastersCacheDocument, 'sources' | 'partial' | 'fetchedAt'>): Record<string, string> {
+	return {
+		'X-Disaster-Sources': formatDisasterSourcesHeader(doc.sources),
+		'X-Disaster-Partial': String(doc.partial),
+		'X-Disaster-Fetched-At': doc.fetchedAt,
+	};
+}
+
+// Route 1: GET /api/disasters
+// Body stays a plain array for existing consumers; source status is in headers.
+app.get('/api/disasters', async (c) => {
+	let cachedRaw: string | null = null;
+	try {
+		cachedRaw = (await c.env.AEGIS_CACHE?.get(DISASTERS_CACHE_KEY)) ?? null;
 	} catch (cacheErr) {
-		console.warn('Cache read error for disasters:', cacheErr);
+		console.warn('Cache read error for disasters:', cacheErr instanceof Error ? cacheErr.name : 'Error');
+	}
+	const cached = readDisastersCache(cachedRaw);
+	if (cached) {
+		return c.json(cached.disasters, 200, disasterHeaders(cached));
 	}
 
-	console.log('Cache miss: fetching disasters from sources');
 	try {
-		const { disasters, eonetCount, usgsCount } = await fetchDisasters();
-		console.log(`Fetched ${eonetCount} EONET events and ${usgsCount} USGS earthquakes`);
+		const result = await fetchDisasters();
+		const doc: DisastersCacheDocument = {
+			version: 2,
+			disasters: result.disasters,
+			sources: result.sources,
+			partial: result.partial,
+			fetchedAt: new Date().toISOString(),
+		};
+		console.log(
+			`Disasters: eonet=${result.sources.eonet.status}(${result.sources.eonet.count}) usgs=${result.sources.usgs.status}(${result.sources.usgs.count})`,
+		);
 
-		if (c.env.AEGIS_CACHE && disasters.length > 0) {
+		if (c.env.AEGIS_CACHE) {
 			try {
-				await c.env.AEGIS_CACHE.put(cacheKey, JSON.stringify(disasters), {
-					expirationTtl: cacheTTL,
+				await c.env.AEGIS_CACHE.put(DISASTERS_CACHE_KEY, JSON.stringify(doc), {
+					expirationTtl: result.partial ? DISASTERS_PARTIAL_CACHE_TTL_SECONDS : DISASTERS_CACHE_TTL_SECONDS,
 				});
 			} catch (putErr) {
-				console.warn('Cache write error for disasters:', putErr);
+				console.warn('Cache write error for disasters:', putErr instanceof Error ? putErr.name : 'Error');
 			}
 		}
 
-		return c.json(disasters);
+		return c.json(doc.disasters, 200, disasterHeaders(doc));
 	} catch (error) {
-		console.error('Error fetching disasters:', error);
-		if (cached) {
-			console.log('Serving stale cached disasters after upstream failure');
-			return c.json(JSON.parse(cached));
+		if (error instanceof DisasterUpstreamError) {
+			return c.json({ error: 'Failed to fetch disaster data', sources: error.sources }, 502, {
+				'X-Disaster-Sources': formatDisasterSourcesHeader(error.sources),
+			});
 		}
+		console.error('Error fetching disasters:', error instanceof Error ? error.name : 'Error');
 		return c.json({ error: 'Failed to fetch disaster data' }, 502);
 	}
 });
 
 // Route 2: GET /api/tles
+// text/plain TLE body (compatible); freshness/partial status in X-TLE-* headers.
 app.get('/api/tles', async (c) => {
-	const cacheKey = 'tles_v2';
-	const cacheTTL = 43200; // 12 hours
+	const result = await loadMonitoredTles(c.env.AEGIS_CACHE);
 
-	let cached: string | null = null;
-	try {
-		cached = await c.env.AEGIS_CACHE?.get(cacheKey);
-		if (cached && cached.trim().length > 0) {
-			console.log('Cache hit: TLEs');
-			return c.text(cached, 200, {
-				'Content-Type': 'text/plain; charset=utf-8',
-			});
-		}
-	} catch (cacheErr) {
-		console.warn('Cache read error for TLEs:', cacheErr);
+	if (result.records.size === 0) {
+		return c.json(
+			{ error: 'No valid TLE data available', missing: result.missing, failed: result.failed },
+			502,
+			{ 'X-TLE-Status': 'unavailable' },
+		);
 	}
 
-	console.log('Cache miss: fetching TLEs from CelesTrak');
-	try {
-		const satellites = [...MONITORED_NORAD_IDS];
+	const epochs = [...result.records.values()].map((r) => Date.parse(r.epoch));
+	const oldest = new Date(Math.min(...epochs)).toISOString();
 
-		const tlePromises = satellites.map(async (catNr): Promise<ParsedTleRecord | null> => {
-			try {
-				const response = await fetch(
-					`https://celestrak.org/NORAD/elements/gp.php?CATNR=${catNr}&FORMAT=tle`,
-					{
-						headers: {
-							'User-Agent': 'AegisMap/1.2 (Satellite-Monitor)',
-						},
-						signal: AbortSignal.timeout(6000),
-					},
-				);
-				if (!response.ok) {
-					console.warn(`Failed to fetch TLE for ${catNr}: ${response.status}`);
-					return null;
-				}
-				const text = await response.text();
-				const lines = text.trim().split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-				const validation = validateTleRecord(lines);
-				if (!validation.valid || !validation.record) {
-					console.warn(`Invalid TLE data for ${catNr}: ${validation.reason}`);
-					return null;
-				}
-				return validation.record;
-			} catch (fetchErr) {
-				console.warn(`Error fetching TLE for ${catNr}:`, fetchErr);
-				return null;
-			}
-		});
-
-		const results = await Promise.all(tlePromises);
-		const freshRecords = results.filter((r): r is ParsedTleRecord => r !== null);
-
-		const mergedTleData = mergeTles(cached, freshRecords);
-
-		if (!mergedTleData || mergedTleData.trim().length === 0) {
-			return c.json({ error: 'No TLE data available from upstream provider' }, 502);
-		}
-
-		if (c.env.AEGIS_CACHE && freshRecords.length > 0) {
-			try {
-				await c.env.AEGIS_CACHE.put(cacheKey, mergedTleData, {
-					expirationTtl: cacheTTL,
-				});
-			} catch (putErr) {
-				console.warn('Cache write error for TLEs:', putErr);
-			}
-		}
-
-		return c.text(mergedTleData, 200, {
-			'Content-Type': 'text/plain; charset=utf-8',
-		});
-	} catch (error) {
-		console.error('Error in /api/tles:', error);
-		if (cached && cached.trim().length > 0) {
-			return c.text(cached, 200, {
-				'Content-Type': 'text/plain; charset=utf-8',
-			});
-		}
-		return c.json({ error: 'Failed to fetch TLE data' }, 502);
-	}
+	return c.text(serializeTles(result.records), 200, {
+		'Content-Type': 'text/plain; charset=utf-8',
+		'X-TLE-Status': result.status,
+		'X-TLE-Missing': result.missing.join(','),
+		'X-TLE-Refreshed': result.refreshed.join(','),
+		'X-TLE-Retained': result.retained.join(','),
+		'X-TLE-Oldest-Epoch': oldest,
+	});
 });
 
 // Route 2.5: GET /api/fire-hotspots
 app.get('/api/fire-hotspots', async (c) => {
-	const { lat, lng } = c.req.query();
-
-	if (!lat || !lng) {
-		return c.json({ error: 'Missing lat or lng query parameter' }, 400);
-	}
-
-	const latNum = Number.parseFloat(lat);
-	const lngNum = Number.parseFloat(lng);
-
-	const validation = validateCoordinates(latNum, lngNum);
-	if (!validation.valid) {
-		return c.json({ error: validation.reason || 'Invalid coordinates' }, 400);
+	const parsed = parseCoordinateQuery(c.req.query('lat'), c.req.query('lng'));
+	if (!parsed.ok) {
+		return c.json({ error: parsed.reason }, 400);
 	}
 
 	const FIRMS_MAP_KEY = c.env.FIRMS_MAP_KEY;
 	if (!FIRMS_MAP_KEY || FIRMS_MAP_KEY === 'YOUR_FIRMS_MAP_KEY_HERE') {
-		console.warn('FIRMS_MAP_KEY not configured - returning empty data');
-		return c.json({
-			hotspots: [],
-			totalCount: 0,
-			highConfidence: 0,
-			maxBrightness: 0,
-			maxPower: 0,
-			message:
-				'FIRMS API key not configured. Register at https://firms.modaps.eosdis.nasa.gov/api/',
-		});
+		console.warn('FIRMS_MAP_KEY not configured');
+		return c.json(
+			{ error: 'FIRMS API key not configured on server', code: 'firms_not_configured' },
+			503,
+		);
 	}
 
-	const cacheKey = `firms:${latNum.toFixed(2)}:${lngNum.toFixed(2)}`;
+	const now = new Date();
+	const windows = planFirmsWindows(now);
+	const bboxes = buildFirmsBboxes(parsed.lat, parsed.lng);
+	const cacheKey = buildFirmsCacheKey(bboxes, windows[1].startDate, windows[0].endDate);
 
 	try {
-		const cached = await c.env.AEGIS_CACHE?.get(cacheKey);
-		if (cached) {
-			return c.json(JSON.parse(cached));
+		const cachedRaw = await c.env.AEGIS_CACHE?.get(cacheKey);
+		if (cachedRaw) {
+			const cached: unknown = JSON.parse(cachedRaw);
+			if (isUsableCachedFirms(cached)) return c.json(cached);
 		}
 	} catch (cacheErr) {
-		console.warn('Cache read error for FIRMS hotspots:', cacheErr);
+		console.warn('Cache read error for FIRMS hotspots:', cacheErr instanceof Error ? cacheErr.name : 'Error');
 	}
 
-	try {
-		const result = await fetch7DayFirmsHotspots(latNum, lngNum, FIRMS_MAP_KEY);
+	const result = await fetch7DayFirmsHotspots(parsed.lat, parsed.lng, FIRMS_MAP_KEY, { now });
 
-		if (c.env.AEGIS_CACHE) {
-			try {
-				await c.env.AEGIS_CACHE.put(cacheKey, JSON.stringify(result), {
-					expirationTtl: FIRMS_CACHE_TTL_SECONDS,
-				});
-			} catch (putErr) {
-				console.warn('Cache write error for FIRMS hotspots:', putErr);
-			}
+	if (result.coverage.status === 'unavailable') {
+		return c.json(
+			{
+				error: 'NASA FIRMS did not return usable data for the requested window',
+				code: 'firms_unavailable',
+				coverage: result.coverage,
+				source: result.source,
+				bboxes: result.bboxes,
+			},
+			502,
+		);
+	}
+
+	if (result.coverage.status === 'complete' && c.env.AEGIS_CACHE) {
+		try {
+			await c.env.AEGIS_CACHE.put(cacheKey, JSON.stringify(result), {
+				expirationTtl: FIRMS_CACHE_TTL_SECONDS,
+			});
+		} catch (putErr) {
+			console.warn('Cache write error for FIRMS hotspots:', putErr instanceof Error ? putErr.name : 'Error');
 		}
-
-		return c.json(result);
-	} catch (error) {
-		console.error('Error fetching FIRMS hotspots:', error);
-		return c.json({ error: 'Failed to fetch fire hotspot data' }, 502);
 	}
+
+	return c.json(result);
 });
 
 // Route 3: POST /api/analyze — Workers AI (single production path)

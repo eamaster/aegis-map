@@ -10,7 +10,7 @@
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
 		"test": "vitest",
-		"verify:firms": "node scripts/verify-firms-hotspots.mjs",
+		"verify:firms": "node --experimental-strip-types scripts/verify-firms-hotspots.mjs",
 		"verify:analyze": "node test-analyze.mjs",
 		"cf-typegen": "wrangler types"
 	},

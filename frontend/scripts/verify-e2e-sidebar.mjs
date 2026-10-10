@@ -1,168 +1,407 @@
+/**
+ * AegisMap end-to-end verification (Playwright).
+ *
+ * Scenarios:
+ *   success  - every integration must succeed with valid content; any provider
+ *              failure, partial coverage, or unavailable state fails the run.
+ *   failure  - FIRMS/TLE/GIBS failures and a partial disaster source are injected
+ *              with page.route; the UI must show honest unavailable/partial states.
+ *
+ * Run (Node 22.6+, frontend built against the local Worker):
+ *   node --experimental-strip-types scripts/verify-e2e-sidebar.mjs [--scenario success|failure|all]
+ *
+ * Env:
+ *   FRONTEND_URL  (default http://localhost:5173/aegis-map/)
+ *   API_BASE_URL  backend the frontend must use (default http://127.0.0.1:8787)
+ *   E2E_STEP_TIMEOUT_MS (default 45000)
+ *
+ * /api/analyze is stubbed in both scenarios so this script never runs Workers AI.
+ * EONET and USGS sit behind /api/disasters; the success scenario checks them
+ * with one direct request each and compares record identities and fields.
+ *
+ * Exit codes: 0 all checks passed, 1 a check failed, 2 the run could not start.
+ */
 import { chromium } from 'playwright';
+import { EONET_URL, USGS_URL, parseEonetPayload, parseUsgsPayload } from '../../backend/src/disasters.ts';
+import { MONITORED_NORAD_IDS, validateTleRecord } from '../../backend/src/satellites.ts';
+import { isDisasterRecord, parseDisasterSourceHeaders } from '../src/utils/disasterSources.ts';
 
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173/aegis-map/';
-const API_BASE_URL = process.env.API_BASE_URL || 'http://127.0.0.1:8787';
+const API_BASE_URL = (process.env.API_BASE_URL || 'http://127.0.0.1:8787').replace(/\/+$/, '');
+const API_ORIGIN = new URL(API_BASE_URL).origin;
+const STEP_TIMEOUT = Number(process.env.E2E_STEP_TIMEOUT_MS || 45000);
+const scenarioArg = process.argv.includes('--scenario') ? process.argv[process.argv.indexOf('--scenario') + 1] : 'all';
 
-async function run() {
-  console.log('🚀 Starting AegisMap E2E Sidebar & Integration Verification');
-  console.log(`Frontend URL: ${FRONTEND_URL}`);
-  console.log(`API Base:     ${API_BASE_URL}`);
+const isApi = (url, path) => {
+    const u = new URL(url);
+    return u.origin === API_ORIGIN && u.pathname === path;
+};
 
-  const browser = await chromium.launch({
-    headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
-  });
-
-  const page = await browser.newPage();
-
-  const networkCalls = {
-    disasters: null,
-    tles: null,
-    fireHotspots: null,
-    weather: null,
-    gibsWms: null,
-  };
-
-  const consoleLogs = [];
-  page.on('console', (msg) => {
-    const text = msg.text();
-    consoleLogs.push({ type: msg.type(), text });
-    console.log(`[BROWSER ${msg.type().toUpperCase()}] ${text}`);
-  });
-
-  page.on('pageerror', (err) => {
-    console.error(`[BROWSER UNHANDLED ERROR] ${err.message}`);
-  });
-
-  page.on('request', (req) => {
-    console.log(`[REQ] ${req.method()} ${req.url()}`);
-  });
-
-  page.on('response', async (res) => {
-    const url = res.url();
-    console.log(`[RES] ${res.status()} ${url}`);
-    if (url.includes('/api/disasters')) {
-      networkCalls.disasters = { status: res.status(), url };
-    } else if (url.includes('/api/tles')) {
-      networkCalls.tles = { status: res.status(), url };
-    } else if (url.includes('/api/fire-hotspots')) {
-      try {
-        const json = await res.json();
-        networkCalls.fireHotspots = { status: res.status(), count: json.totalCount, url };
-      } catch {
-        networkCalls.fireHotspots = { status: res.status(), url };
-      }
-    } else if (url.includes('open-meteo.com')) {
-      networkCalls.weather = { status: res.status(), url };
-    } else if (url.includes('gibs.earthdata.nasa.gov')) {
-      networkCalls.gibsWms = { status: res.status(), url };
+class Checks {
+    constructor(name) {
+        this.name = name;
+        this.items = [];
     }
-  });
-
-  console.log('Navigating to frontend...');
-  await page.goto(FRONTEND_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
-
-  console.log('Waiting for map to initialize and load disasters...');
-  await page.waitForFunction(() => {
-    const map = window.mapDebug;
-    if (!map || typeof map.getSource !== 'function') return false;
-    return map.getSource('fires') !== undefined || map.getSource('earthquakes') !== undefined;
-  }, { timeout: 45000 });
-
-  console.log('Disaster data source verified on map!');
-
-  // Select the first available feature
-  console.log('Selecting disaster to open Sidebar...');
-  const selectedFeature = await page.evaluate(() => {
-    const map = window.mapDebug;
-    const sourceName = map.getSource('fires') ? 'fires' : 'earthquakes';
-    const source = map.getSource(sourceName);
-    const feature = source._data.features[0];
-    const props = feature.properties;
-
-    const disaster = {
-      id: props.id,
-      title: props.title,
-      lng: props.lng,
-      lat: props.lat,
-      type: props.type,
-      severity: props.severity,
-      date: props.date,
-    };
-
-    if (typeof window.selectDisasterDebug === 'function') {
-      window.selectDisasterDebug(disaster);
+    record(ok, label, detail = '') {
+        this.items.push({ ok, label, detail });
+        console.log(`  ${ok ? 'PASS' : 'FAIL'}  ${label}${detail ? ` - ${detail}` : ''}`);
+        return ok;
     }
-
-    return disaster;
-  });
-
-  console.log('Disaster selected:', selectedFeature);
-
-  // Wait for sidebar to be visible
-  console.log('Waiting for Sidebar to appear...');
-  await page.waitForSelector('.sidebar-container', { timeout: 10000 });
-  console.log('Sidebar is open!');
-
-  // Give 5 seconds for subrequests (TLEs, satellite pass calculations, weather, FIRMS hotspots, GIBS imagery)
-  console.log('Waiting 5s for orbital passes, weather, and satellite imagery to resolve...');
-  await page.waitForTimeout(5000);
-
-  // Inspect the sidebar DOM content
-  const sidebarData = await page.evaluate(() => {
-    const sidebar = document.querySelector('.sidebar-container');
-    if (!sidebar) return null;
-
-    const text = sidebar.innerText;
-
-    // Check for pass predictions or honest no-pass state
-    const hasSatellites =
-      /landsat|sentinel|terra|aqua|pass|elevation|satellite/i.test(text);
-
-    // Check for weather
-    const hasWeather =
-      /cloud cover|weather|%/i.test(text);
-
-    // Check for thermal / imagery
-    const hasThermal =
-      /hotspot|thermal|firms|imagery/i.test(text);
-
-    return {
-      hasSatellites,
-      hasWeather,
-      hasThermal,
-      textSnippet: text.substring(0, 600),
-    };
-  });
-
-  console.log('\n--- Sidebar Content Audit ---');
-  console.log('Orbital Pass Predictions Detected:', sidebarData.hasSatellites);
-  console.log('Weather Section Detected:         ', sidebarData.hasWeather);
-  console.log('Thermal / Imagery Section:         ', sidebarData.hasThermal);
-
-  console.log('\n--- Network Integration Audit ---');
-  console.log('/api/disasters:     ', networkCalls.disasters);
-  console.log('/api/tles:          ', networkCalls.tles);
-  console.log('/api/fire-hotspots: ', networkCalls.fireHotspots);
-  console.log('Open-Meteo weather: ', networkCalls.weather);
-  console.log('NASA GIBS WMS:      ', networkCalls.gibsWms);
-
-  console.log('\n--- Captured Sidebar Text ---\n', sidebarData.textSnippet);
-
-  await page.screenshot({ path: 'sidebar_verified.png' });
-  console.log('\nScreenshot saved to sidebar_verified.png');
-
-  await browser.close();
-
-  if (!sidebarData || !sidebarData.hasSatellites) {
-    console.error('❌ FAILED: Sidebar did not render satellite pass predictions');
-    process.exit(1);
-  }
-
-  console.log('\n✅ PASS: End-to-end Sidebar and data integrations verified successfully!');
+    get failed() {
+        return this.items.filter((i) => !i.ok);
+    }
 }
 
-run().catch((err) => {
-  console.error('Fatal error in verification:', err);
-  process.exit(1);
+/** Validate a /api/tles body with the Worker's own validator; returns unique NORAD IDs and epochs. */
+function validateTleBody(text) {
+    const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+    if (lines.length === 0 || lines.length % 3 !== 0) return { ok: false, reason: `line count ${lines.length} is not a multiple of 3` };
+    const records = [];
+    for (let i = 0; i < lines.length; i += 3) {
+        const catalog = Number(lines[i + 1].substring(2, 7));
+        const result = validateTleRecord(lines.slice(i, i + 3), { expectedNoradId: catalog });
+        if (!result.valid) return { ok: false, reason: `record ${i / 3 + 1}: ${result.reason}` };
+        records.push(result.record);
+    }
+    const ids = records.map((r) => r.noradId);
+    if (new Set(ids).size !== ids.length) return { ok: false, reason: 'duplicate NORAD IDs' };
+    if (ids.some((id) => !MONITORED_NORAD_IDS.includes(id))) return { ok: false, reason: 'unexpected NORAD ID' };
+    return { ok: true, records };
+}
+
+/** Move the camera to a candidate, then click the top rendered feature at its pixel. */
+async function clickDisaster(page, candidates) {
+    for (const candidate of candidates) {
+        const target = await page.evaluate(async ({ lng, lat }) => {
+            const map = window.mapDebug;
+            await new Promise((resolve) => {
+                const timer = setTimeout(resolve, 15000);
+                map.once('idle', () => {
+                    clearTimeout(timer);
+                    resolve();
+                });
+                map.jumpTo({ center: [lng, lat], zoom: 6 });
+            });
+            const point = map.project([lng, lat]);
+            const layers = ['fires-layer', 'volcanoes-layer', 'earthquakes-layer'].filter((l) => map.getLayer(l));
+            const hit = map.queryRenderedFeatures([point.x, point.y], { layers })[0];
+            const rect = map.getCanvas().getBoundingClientRect();
+            return { x: rect.left + point.x, y: rect.top + point.y, id: hit?.properties?.id ?? null };
+        }, candidate);
+        if (target.id === candidate.id) {
+            await page.mouse.click(target.x, target.y);
+            return candidate;
+        }
+    }
+    return null;
+}
+
+async function waitForAttr(page, selector, attr, accept, label) {
+    await page.waitForFunction(
+        ({ selector, attr, accept }) => {
+            const el = document.querySelector(selector);
+            return !!el && accept.includes(el.getAttribute(attr));
+        },
+        { selector, attr, accept },
+        { timeout: STEP_TIMEOUT },
+    ).catch(() => {
+        throw new Error(`timed out waiting for ${label} (${selector}[${attr}] in ${accept.join('|')})`);
+    });
+    return page.locator(selector).getAttribute(attr);
+}
+
+function attachCommonListeners(page, checks, state) {
+    page.on('pageerror', (err) => state.pageErrors.push(err.message));
+    page.on('request', (req) => {
+        const u = new URL(req.url());
+        if (u.pathname.startsWith('/api/') && u.origin !== API_ORIGIN) state.foreignApi.push(req.url());
+    });
+    return page.route(`${API_ORIGIN}/api/analyze`, (route) =>
+        route.fulfill({
+            status: 503,
+            contentType: 'application/json',
+            body: JSON.stringify({ error: 'analysis_unavailable', code: 'e2e_stubbed', message: 'Analysis is not exercised by this verification.' }),
+        }),
+    );
+}
+
+async function loadApp(page, checks) {
+    const disastersResponse = page.waitForResponse((r) => isApi(r.url(), '/api/disasters'), { timeout: STEP_TIMEOUT });
+    await page.goto(FRONTEND_URL, { waitUntil: 'domcontentloaded', timeout: STEP_TIMEOUT });
+    const res = await disastersResponse;
+    const body = await res.json().catch(() => null);
+    await page.waitForFunction(() => {
+        const map = window.mapDebug;
+        return !!map && typeof map.getLayer === 'function' && ['fires-layer', 'volcanoes-layer', 'earthquakes-layer'].some((l) => map.getLayer(l));
+    }, undefined, { timeout: STEP_TIMEOUT });
+    checks.record(true, 'map rendered disaster layers');
+    return { res, body };
+}
+
+async function runSuccess(browser) {
+    const checks = new Checks('success');
+    const state = { pageErrors: [], foreignApi: [] };
+    const evidence = {};
+    console.log('\n=== Scenario: success (all integrations must succeed) ===');
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+        const page = await context.newPage();
+        await attachCommonListeners(page, checks, state);
+
+        const { res, body } = await loadApp(page, checks);
+        const sources = parseDisasterSourceHeaders({ get: (n) => res.headers()[n.toLowerCase()] ?? null });
+        checks.record(res.status() === 200, '/api/disasters HTTP 200 from expected backend', `${res.status()} ${res.url()}`);
+        const valid = Array.isArray(body) && body.length > 0 && body.every(isDisasterRecord);
+        checks.record(valid, '/api/disasters body is a non-empty array of valid records', Array.isArray(body) ? `${body.length} records` : typeof body);
+        checks.record(sources?.eonet === 'ok' && sources?.usgs === 'ok' && !sources.partial, 'disaster sources complete', res.headers()['x-disaster-sources'] ?? 'missing header');
+        const legendState = await waitForAttr(page, '[data-testid="map-legend"]', 'data-disaster-state', ['complete', 'partial', 'failed', 'unknown'], 'legend');
+        checks.record(legendState === 'complete', 'legend shows complete source state', legendState);
+        evidence.disasters = {
+            fetchedAt: res.headers()['x-disaster-fetched-at'],
+            sources: res.headers()['x-disaster-sources'],
+            counts: Array.isArray(body) ? { fire: body.filter((d) => d.type === 'fire').length, volcano: body.filter((d) => d.type === 'volcano').length, earthquake: body.filter((d) => d.type === 'earthquake').length } : null,
+        };
+
+        const fires = (Array.isArray(body) ? body : []).filter((d) => d.type === 'fire').slice(0, 8);
+        if (!checks.record(fires.length > 0, 'at least one fire event available for FIRMS checks')) return { checks, evidence, state };
+
+        evidence.appDisasters = Array.isArray(body) ? body : [];
+        const expectResponse = (predicate, label, timeout = STEP_TIMEOUT) =>
+            page.waitForResponse(predicate, { timeout }).catch(() => {
+                throw new Error(`no ${label} response within ${timeout} ms`);
+            });
+        const tleResponse = expectResponse((r) => isApi(r.url(), '/api/tles'), '/api/tles');
+        const firmsResponse = expectResponse((r) => isApi(r.url(), '/api/fire-hotspots'), '/api/fire-hotspots');
+        const weatherResponse = expectResponse((r) => r.url().startsWith('https://api.open-meteo.com/'), 'Open-Meteo', STEP_TIMEOUT * 2);
+        for (const p of [tleResponse, firmsResponse, weatherResponse]) p.catch(() => {});
+
+        const selected = await clickDisaster(page, fires);
+        if (!checks.record(!!selected, 'real map click selected a fire event', selected ? `${selected.id} (${selected.lat}, ${selected.lng})` : 'no candidate was the top rendered feature')) {
+            return { checks, evidence, state };
+        }
+        const sidebarId = await page.locator('[data-testid="sidebar"]').getAttribute('data-disaster-id', { timeout: STEP_TIMEOUT });
+        checks.record(sidebarId === selected.id, 'sidebar context matches clicked event', `sidebar=${sidebarId}`);
+        evidence.selected = { id: selected.id, title: selected.title, lat: selected.lat, lng: selected.lng, date: selected.date };
+
+        // Orbital elements
+        const tle = await tleResponse;
+        const tleText = await tle.text();
+        const tleCheck = tle.status() === 200 ? validateTleBody(tleText) : { ok: false, reason: `HTTP ${tle.status()}` };
+        checks.record(tleCheck.ok, '/api/tles returns valid checksummed elements', tleCheck.ok ? `${tleCheck.records.length} unique NORAD IDs` : tleCheck.reason);
+        checks.record(tle.headers()['x-tle-status'] === 'complete', 'TLE status complete', `X-TLE-Status=${tle.headers()['x-tle-status']} missing=${tle.headers()['x-tle-missing'] || '-'} retained=${tle.headers()['x-tle-retained'] || '-'}`);
+        if (tleCheck.ok) evidence.tles = tleCheck.records.map((r) => ({ noradId: r.noradId, name: r.name, epoch: r.epoch }));
+
+        const passState = await waitForAttr(page, '[data-testid="sidebar"]', 'data-pass-state', ['pass', 'no-pass', 'unavailable'], 'pass prediction');
+        checks.record(passState === 'pass' || passState === 'no-pass', 'pass prediction resolved to pass or explicit no-pass', passState);
+        if (passState === 'pass') {
+            const sat = await page.locator('[data-testid="sidebar"]').getAttribute('data-pass-satellite');
+            const passTime = Date.parse(await page.locator('[data-testid="sidebar"]').getAttribute('data-pass-time'));
+            const names = tleCheck.ok ? tleCheck.records.map((r) => r.name) : [];
+            checks.record(names.includes(sat), 'pass satellite is one of the served TLEs', sat);
+            checks.record(passTime >= Date.now() - 10 * 60 * 1000 && passTime <= Date.now() + 24 * 3600 * 1000, 'pass time within the 24 h window', new Date(passTime).toISOString());
+            evidence.pass = { satellite: sat, time: new Date(passTime).toISOString() };
+        } else {
+            evidence.pass = { state: passState };
+        }
+
+        // Weather
+        const weather = await weatherResponse;
+        const wu = new URL(weather.url());
+        checks.record(weather.status() === 200, 'Open-Meteo HTTP 200', String(weather.status()));
+        checks.record(Number(wu.searchParams.get('latitude')) === selected.lat && Number(wu.searchParams.get('longitude')) === selected.lng, 'weather requested for selected coordinates');
+        const weatherState = await waitForAttr(page, '[data-testid="sidebar"]', 'data-weather-state', ['known', 'unavailable'], 'weather');
+        const cloud = Number(await page.locator('[data-testid="sidebar"]').getAttribute('data-cloud-cover'));
+        checks.record(weatherState === 'known' && cloud >= 0 && cloud <= 100, 'weather state known with valid cloud cover', `${weatherState} ${cloud}`);
+
+        // FIRMS
+        const firms = await firmsResponse;
+        const fu = new URL(firms.url());
+        const firmsBody = await firms.json().catch(() => null);
+        checks.record(Number(fu.searchParams.get('lat')) === selected.lat && Number(fu.searchParams.get('lng')) === selected.lng, 'FIRMS requested for selected coordinates');
+        checks.record(firms.status() === 200 && firmsBody?.coverage?.status === 'complete', 'FIRMS returned complete coverage', `HTTP ${firms.status()} coverage=${firmsBody?.coverage?.status ?? firmsBody?.code ?? 'n/a'}`);
+        const firmsState = await waitForAttr(page, '[data-testid="satellite-imagery"]', 'data-firms-state', ['detections', 'empty', 'filtered', 'unavailable'], 'FIRMS state');
+        checks.record(['detections', 'empty', 'filtered'].includes(firmsState), 'FIRMS UI shows a successful result', firmsState);
+        const imagery = page.locator('[data-testid="satellite-imagery"]');
+        if (firmsBody?.coverage) {
+            checks.record((await imagery.getAttribute('data-firms-total')) === String(firmsBody.totalCount), 'FIRMS UI total matches response', String(firmsBody.totalCount));
+            checks.record((await imagery.getAttribute('data-firms-window')) === `${firmsBody.coverage.requestedStart}/${firmsBody.coverage.requestedEnd}`, 'FIRMS UI window matches response', `${firmsBody.coverage.requestedStart}/${firmsBody.coverage.requestedEnd}`);
+            checks.record((await imagery.getAttribute('data-firms-sensor')) === firmsBody.source, 'FIRMS UI sensor matches response', firmsBody.source);
+            evidence.firms = {
+                source: firmsBody.source,
+                window: `${firmsBody.coverage.requestedStart}..${firmsBody.coverage.requestedEnd}`,
+                windows: firmsBody.coverage.windows,
+                totalCount: firmsBody.totalCount,
+                rejectedRows: firmsBody.rejectedRows,
+                fetchedAt: firmsBody.fetchedAt,
+                sampleIdentities: firmsBody.hotspots.slice(0, 3).map((h) => `${h.latitude}|${h.longitude}|${h.acq_date}|${h.acq_time}|${h.satellite}|conf=${h.confidence}|frp=${h.frp}`),
+            };
+        }
+
+        // Imagery: fire view and false color must request exactly the labelled product/date.
+        for (const tab of ['fire', 'falsecolor']) {
+            const gibsBase = expectResponse((r) => r.url().startsWith('https://gibs.earthdata.nasa.gov/') && !r.url().includes('Thermal_Anomalies'), `GIBS ${tab}`);
+            await page.locator(`[data-testid="imagery-tab-${tab}"]`).click();
+            const gibs = await gibsBase;
+            const gu = new URL(gibs.url());
+            const product = await imagery.getAttribute('data-imagery-product');
+            const date = await imagery.getAttribute('data-imagery-date');
+            const status = await waitForAttr(page, '[data-testid="satellite-imagery"]', 'data-imagery-status', ['loaded', 'error'], `${tab} imagery`);
+            const contentType = gibs.headers()['content-type'] ?? '';
+            checks.record(gu.searchParams.get('LAYERS') === product && gu.searchParams.get('TIME') === date, `${tab} imagery request matches labelled product/date`, `${product} ${date}`);
+            checks.record(gibs.status() === 200 && contentType.startsWith('image/') && status === 'loaded', `${tab} imagery loaded`, `HTTP ${gibs.status()} ${contentType} ui=${status}`);
+            const [minLat, minLng, maxLat, maxLng] = (gu.searchParams.get('BBOX') || '').split(',').map(Number);
+            checks.record(Math.abs((minLat + maxLat) / 2 - selected.lat) < 1e-6 && Math.abs((minLng + maxLng) / 2 - selected.lng) < 1e-6, `${tab} imagery centered on selected event`);
+            evidence[`imagery_${tab}`] = { product, date, http: gibs.status(), contentType };
+            if (tab === 'fire') {
+                evidence.imagery_fire.overlay = {
+                    product: await imagery.getAttribute('data-imagery-overlay-product'),
+                    date: await imagery.getAttribute('data-imagery-overlay-date'),
+                };
+            }
+        }
+
+        await page.screenshot({ path: 'e2e-success.png' });
+    } catch (err) {
+        checks.record(false, 'scenario completed', err instanceof Error ? err.message : String(err));
+    } finally {
+        await context.close();
+    }
+    return { checks, evidence, state };
+}
+
+async function runFailure(browser) {
+    const checks = new Checks('failure');
+    const state = { pageErrors: [], foreignApi: [] };
+    console.log('\n=== Scenario: graceful failure (injected provider failures) ===');
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+        const page = await context.newPage();
+        await attachCommonListeners(page, checks, state);
+        await page.route(`${API_ORIGIN}/api/disasters`, async (route) => {
+            const upstream = await route.fetch();
+            const records = (await upstream.json()).filter((d) => d.type !== 'earthquake');
+            await route.fulfill({
+                status: 200,
+                headers: { ...upstream.headers(), 'x-disaster-sources': 'eonet=ok;usgs=failed', 'x-disaster-partial': 'true' },
+                contentType: 'application/json',
+                body: JSON.stringify(records),
+            });
+        });
+        await page.route(`${API_ORIGIN}/api/tles`, (route) =>
+            route.fulfill({ status: 502, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ error: 'No valid TLE data available' }) }),
+        );
+        await page.route(new RegExp(`^${API_ORIGIN.replace(/[.]/g, '\\.')}/api/fire-hotspots`), (route) =>
+            route.fulfill({
+                status: 502,
+                contentType: 'application/json',
+                headers: { 'access-control-allow-origin': '*' },
+                body: JSON.stringify({
+                    error: 'NASA FIRMS did not return usable data for the requested window',
+                    code: 'firms_unavailable',
+                    source: 'VIIRS_SNPP_NRT',
+                    coverage: { status: 'unavailable', timezone: 'UTC', requestedStart: '2000-01-01', requestedEnd: '2000-01-07', missingDates: [], windows: [] },
+                }),
+            }),
+        );
+        await page.route('https://gibs.earthdata.nasa.gov/**', (route) => route.abort('failed'));
+
+        const { body } = await loadApp(page, checks);
+        const legendState = await waitForAttr(page, '[data-testid="map-legend"]', 'data-disaster-state', ['complete', 'partial', 'failed', 'unknown'], 'legend');
+        checks.record(legendState === 'partial', 'legend shows partial source state', legendState);
+        const notice = await page.locator('[data-testid="disaster-source-notice"]').textContent({ timeout: STEP_TIMEOUT });
+        checks.record(/USGS/.test(notice ?? ''), 'legend names the unavailable source', notice ?? '');
+
+        const fires = (Array.isArray(body) ? body : []).filter((d) => d.type === 'fire').slice(0, 8);
+        const selected = await clickDisaster(page, fires);
+        if (!checks.record(!!selected, 'real map click selected a fire event', selected?.id ?? 'none')) return { checks, state };
+        checks.record((await page.locator('[data-testid="sidebar"]').getAttribute('data-disaster-id', { timeout: STEP_TIMEOUT })) === selected.id, 'sidebar context matches clicked event');
+
+        const passState = await waitForAttr(page, '[data-testid="sidebar"]', 'data-pass-state', ['pass', 'no-pass', 'unavailable'], 'pass prediction');
+        checks.record(passState === 'unavailable', 'TLE failure shows pass prediction unavailable (not no-pass)', passState);
+        const weatherState = await waitForAttr(page, '[data-testid="sidebar"]', 'data-weather-state', ['known', 'unavailable'], 'weather');
+        checks.record(weatherState === 'unavailable', 'weather marked unavailable without a pass', weatherState);
+
+        const firmsState = await waitForAttr(page, '[data-testid="satellite-imagery"]', 'data-firms-state', ['detections', 'empty', 'filtered', 'unavailable'], 'FIRMS state');
+        checks.record(firmsState === 'unavailable', 'FIRMS failure shown as unavailable (not empty)', firmsState);
+        const imageryText = await page.locator('[data-testid="satellite-imagery"]').innerText();
+        checks.record(imageryText.includes('2000-01-01') && imageryText.includes('VIIRS_SNPP_NRT'), 'unavailable state names the requested sensor and window');
+
+        await page.locator('[data-testid="imagery-tab-fire"]').click();
+        const imageryStatus = await waitForAttr(page, '[data-testid="satellite-imagery"]', 'data-imagery-status', ['loaded', 'error'], 'imagery');
+        checks.record(imageryStatus === 'error', 'GIBS failure shown as imagery unavailable', imageryStatus);
+        await page.screenshot({ path: 'e2e-failure.png' });
+    } catch (err) {
+        checks.record(false, 'scenario completed', err instanceof Error ? err.message : String(err));
+    } finally {
+        await context.close();
+    }
+    return { checks, state };
+}
+
+/** One direct request per provider; compare identities and fields with what the app served. */
+async function verifyHiddenSources(appBody, checks) {
+    console.log('\n=== EONET / USGS (behind /api/disasters) ===');
+    const results = {};
+    for (const [name, url, parse, types] of [
+        ['eonet', EONET_URL, parseEonetPayload, ['fire', 'volcano']],
+        ['usgs', USGS_URL, parseUsgsPayload, ['earthquake']],
+    ]) {
+        try {
+            const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
+            const { records, rejected } = parse(await res.json());
+            const upstream = new Map(records.map((r) => [r.id, r]));
+            const app = appBody.filter((d) => types.includes(d.type));
+            const overlap = app.filter((d) => upstream.has(d.id));
+            const fieldDiffs = overlap.filter((d) => {
+                const u = upstream.get(d.id);
+                return u.lat !== d.lat || u.lng !== d.lng || u.date !== d.date || u.type !== d.type || u.magnitude !== d.magnitude;
+            });
+            results[name] = { http: res.status, upstream: records.length, rejected, app: app.length, overlap: overlap.length, fieldDiffs: fieldDiffs.length };
+            checks.record(res.ok && overlap.length > 0 && fieldDiffs.length === 0, `${name} upstream identities/fields match application`, JSON.stringify(results[name]));
+        } catch (err) {
+            checks.record(false, `${name} direct check`, err instanceof Error ? err.message : String(err));
+        }
+    }
+    return results;
+}
+
+async function main() {
+    console.log(`Frontend: ${FRONTEND_URL}`);
+    console.log(`Expected backend: ${API_ORIGIN}`);
+    let browser;
+    const summaries = [];
+    try {
+        browser = await chromium.launch({ headless: true });
+        if (scenarioArg === 'all' || scenarioArg === 'success') {
+            const { checks, evidence, state } = await runSuccess(browser);
+            const appBody = evidence.appDisasters ?? [];
+            delete evidence.appDisasters;
+            if (checks.record(appBody.length > 0, 'application disaster body captured for source comparison')) {
+                evidence.hiddenSources = await verifyHiddenSources(appBody, checks);
+            }
+            checks.record(state.pageErrors.length === 0, 'no application page errors', state.pageErrors.join(' | '));
+            checks.record(state.foreignApi.length === 0, 'no API requests to an unexpected backend', state.foreignApi.slice(0, 3).join(' | '));
+            console.log('\nEvidence:', JSON.stringify(evidence, null, 2));
+            summaries.push(checks);
+        }
+        if (scenarioArg === 'all' || scenarioArg === 'failure') {
+            const { checks, state } = await runFailure(browser);
+            checks.record(state.pageErrors.length === 0, 'no application page errors', state.pageErrors.join(' | '));
+            checks.record(state.foreignApi.length === 0, 'no API requests to an unexpected backend', state.foreignApi.slice(0, 3).join(' | '));
+            summaries.push(checks);
+        }
+    } finally {
+        await browser?.close();
+    }
+
+    console.log('\n=== Summary ===');
+    for (const s of summaries) {
+        console.log(`${s.name}: ${s.items.length - s.failed.length}/${s.items.length} checks passed${s.failed.length ? ` - FAILED: ${s.failed.map((f) => f.label).join('; ')}` : ''}`);
+    }
+    process.exit(summaries.length > 0 && summaries.every((s) => s.failed.length === 0) ? 0 : 1);
+}
+
+main().catch((err) => {
+    console.error('Verification could not run:', err instanceof Error ? err.message : err);
+    process.exit(2);
 });

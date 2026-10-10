@@ -10,6 +10,8 @@
 import { useState } from 'react';
 import { Flame, Mountain, Waves, RefreshCw, ChevronUp, ChevronDown } from 'lucide-react';
 import { useDesignSystem } from '../hooks/useDesignSystem';
+import type { DisasterSourceStatus } from '../types';
+import { describeDisasterSources } from '../utils/disasterSources';
 
 interface DisasterCounts {
     fires: number;
@@ -25,6 +27,8 @@ interface MapLegendProps {
     isRefreshing?: boolean;
     activeFilters: Set<string>;
     onFilterToggle: (type: string) => void;
+    sourceStatus?: DisasterSourceStatus | null;
+    loadFailed?: boolean;
 }
 
 export default function MapLegend({
@@ -33,8 +37,16 @@ export default function MapLegend({
     onRefresh,
     isRefreshing = false,
     activeFilters,
-    onFilterToggle
+    onFilterToggle,
+    sourceStatus = null,
+    loadFailed = false
 }: MapLegendProps) {
+    const sourceNotice = loadFailed
+        ? counts.total > 0
+            ? 'Latest refresh failed. Showing previously loaded events.'
+            : 'Disaster data unavailable. Try refreshing.'
+        : describeDisasterSources(sourceStatus);
+    const dataState = loadFailed ? 'failed' : sourceStatus?.partial ? 'partial' : sourceStatus ? 'complete' : 'unknown';
     const ds = useDesignSystem();
     const [isExpanded, setIsExpanded] = useState(true);
     const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
@@ -115,7 +127,14 @@ export default function MapLegend({
     }
 
     return (
-        <div className="legend-responsive">
+        <div
+            className="legend-responsive"
+            data-testid="map-legend"
+            data-disaster-state={dataState}
+            data-source-eonet={sourceStatus?.eonet ?? 'unknown'}
+            data-source-usgs={sourceStatus?.usgs ?? 'unknown'}
+            data-total={counts.total}
+        >
             <div
                 className="w-full transition-all duration-300"
                 style={{
@@ -146,8 +165,8 @@ export default function MapLegend({
                                 width: '5px',
                                 height: '5px',
                                 borderRadius: '50%',
-                                background: ds.colors.status.success,
-                                boxShadow: `0 0 6px ${ds.colors.status.success}CC`,
+                                background: sourceNotice ? ds.colors.status.warning : ds.colors.status.success,
+                                boxShadow: `0 0 6px ${sourceNotice ? ds.colors.status.warning : ds.colors.status.success}CC`,
                                 animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
                             }}
                         />
@@ -220,6 +239,22 @@ export default function MapLegend({
                         >
                             Reported Events
                         </span>
+                        {sourceNotice && (
+                            <span
+                                data-testid="disaster-source-notice"
+                                role="status"
+                                style={{
+                                    display: 'block',
+                                    fontSize: '0.625rem',
+                                    fontWeight: '600',
+                                    marginTop: '6px',
+                                    maxWidth: '220px',
+                                    color: ds.colors.status.warning,
+                                }}
+                            >
+                                {sourceNotice}
+                            </span>
+                        )}
                     </div>
 
                     {/* Disaster Type Rows - VERY COMPACT */}
