@@ -9,7 +9,7 @@ import type { Disaster, WeatherData, AIAnalysisResponse } from '../types';
 import { getNextPass, predictPasses, type SatellitePass } from '../utils/orbitalEngine';
 import SatelliteImagery from './SatelliteImagery';
 import { useDesignSystem } from '../hooks/useDesignSystem';
-import { API_BASE } from '../config/api';
+import { apiUrl } from '../config/api';
 import { debugLog } from '../utils/debug';
 import {
     analysisRequestIdentity,
@@ -30,10 +30,30 @@ const SATELLITE_ELEVATION_THRESHOLDS = {
 } as const;
 
 type CloudState = number | null | undefined;
+type PassState = 'loading' | 'pass' | 'no-pass' | 'unavailable';
+
+/** Partial/retained TLE status reported by /api/tles response headers. */
+function describeTleHeaders(headers: Headers): string | null {
+    const status = headers.get('X-TLE-Status');
+    const missing = headers.get('X-TLE-Missing');
+    const retained = headers.get('X-TLE-Retained');
+    const notes: string[] = [];
+    if (status === 'partial' && missing) {
+        notes.push(`Orbital elements unavailable for ${missing.split(',').length} of 6 monitored satellites`);
+    }
+    if (retained) {
+        notes.push(`${retained.split(',').length} satellite(s) use cached elements pending refresh`);
+    }
+    return notes.length ? `${notes.join('; ')}.` : null;
+}
 
 export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarProps) {
     const ds = useDesignSystem();
     const [nextPass, setNextPass] = useState<SatellitePass | null>(null);
+    const [passState, setPassState] = useState<PassState>('loading');
+    const [tleNotice, setTleNotice] = useState<string | null>(null);
+    const [tleOldestEpoch, setTleOldestEpoch] = useState<string | null>(null);
+    const [passThreshold, setPassThreshold] = useState<number | null>(null);
     const [cloudCover, setCloudCover] = useState<CloudState>(undefined);
     const [aiAnalysis, setAiAnalysis] = useState<string>('');
     const [analysisUnavailable, setAnalysisUnavailable] = useState(false);
@@ -54,6 +74,10 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
         analyzeAbortRef.current = null;
 
         setNextPass(null);
+        setPassState('loading');
+        setTleNotice(null);
+        setTleOldestEpoch(null);
+        setPassThreshold(null);
         setCloudCover(undefined);
         setAiAnalysis('');
         setAnalysisUnavailable(false);
@@ -65,18 +89,48 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
 
         const fetchWeather = async (lat: number, lng: number, passTime: Date) => {
             try {
-                const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&hourly=cloud_cover&forecast_days=2`;
+                // Request explicit UTC hourly forecasts to avoid local solar time ambiguity
+                const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&hourly=cloud_cover&forecast_days=2&timezone=UTC`;
                 debugLog('weather', `Fetching weather for (${lat.toFixed(2)}, ${lng.toFixed(2)})`, 'info');
                 const response = await fetch(url, { signal: tleAbort.signal });
                 if (!response.ok) throw new Error(`Weather API error: ${response.status}`);
                 const data: WeatherData = await response.json();
                 if (!isCurrentGeneration(generation, selectionGenRef.current)) return;
-                if (!data.hourly || !data.hourly.cloud_cover) {
+                if (!data.hourly || !Array.isArray(data.hourly.cloud_cover) || !Array.isArray(data.hourly.time) || data.hourly.time.length === 0) {
                     setCloudCover(null);
                     return;
                 }
-                const closestIndex = data.hourly.time.findIndex((time) => new Date(time + 'Z') >= passTime);
-                setCloudCover(closestIndex >= 0 ? data.hourly.cloud_cover[closestIndex] : null);
+
+                // Match nearest hour to predicted pass time (within 2-hour window)
+                let nearestIdx = -1;
+                let minDiffMs = Infinity;
+                const passTimeMs = passTime.getTime();
+
+                for (let i = 0; i < data.hourly.time.length; i++) {
+                    const tStr = data.hourly.time[i];
+                    // Open-Meteo returns ISO strings (e.g. 2026-10-10T12:00); with timezone=UTC, treat strictly as UTC
+                    const tIso = tStr.endsWith('Z') ? tStr : `${tStr}:00Z`.replace(/:00:00Z$/, ':00Z');
+                    const tMs = new Date(tIso).getTime();
+                    if (!Number.isNaN(tMs)) {
+                        const diff = Math.abs(tMs - passTimeMs);
+                        if (diff < minDiffMs) {
+                            minDiffMs = diff;
+                            nearestIdx = i;
+                        }
+                    }
+                }
+
+                const MAX_WEATHER_DIFF_MS = 2 * 60 * 60 * 1000; // 2 hours
+                if (nearestIdx >= 0 && minDiffMs <= MAX_WEATHER_DIFF_MS) {
+                    const val = data.hourly.cloud_cover[nearestIdx];
+                    if (typeof val === 'number' && Number.isFinite(val) && val >= 0 && val <= 100) {
+                        setCloudCover(val);
+                    } else {
+                        setCloudCover(null);
+                    }
+                } else {
+                    setCloudCover(null);
+                }
             } catch (error) {
                 if (error instanceof DOMException && error.name === 'AbortError') return;
                 if (!isCurrentGeneration(generation, selectionGenRef.current)) return;
@@ -87,8 +141,8 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
 
         const fetchData = async () => {
             try {
-                debugLog('tles', `Fetching TLEs from ${API_BASE}/api/tles`, 'info');
-                const tleResponse = await fetch(`${API_BASE}/api/tles`, { signal: tleAbort.signal });
+                debugLog('tles', `Fetching TLEs from ${apiUrl('/api/tles')}`, 'info');
+                const tleResponse = await fetch(apiUrl('/api/tles'), { signal: tleAbort.signal });
                 const contentType = tleResponse.headers.get('content-type') || '';
                 const isJson = contentType.includes('application/json');
                 if (!tleResponse.ok) {
@@ -97,6 +151,9 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                 }
                 const responseText = await tleResponse.text();
                 if (!isCurrentGeneration(generation, selectionGenRef.current)) return;
+                setTleNotice(describeTleHeaders(tleResponse.headers));
+                const oldestEpoch = Date.parse(tleResponse.headers.get('X-TLE-Oldest-Epoch') ?? '');
+                setTleOldestEpoch(Number.isFinite(oldestEpoch) ? new Date(oldestEpoch).toISOString().slice(0, 16).replace('T', ' ') : null);
                 if (isJson || responseText.trim().startsWith('{') || responseText.trim().startsWith('[')) {
                     try {
                         const errorData = JSON.parse(responseText) as { error?: string };
@@ -111,31 +168,37 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
 
                 const latNum = disaster.lat;
                 const lngNum = disaster.lng;
-                if (Number.isNaN(latNum) || Number.isNaN(lngNum) || Math.abs(latNum) > 90 || Math.abs(lngNum) > 180) {
+                if (!Number.isFinite(latNum) || !Number.isFinite(lngNum) || Math.abs(latNum) > 90 || Math.abs(lngNum) > 180) {
                     setAiAnalysis('Invalid coordinates. Unable to calculate satellite passes.');
                     setAnalysisUnavailable(true);
+                    setPassState('unavailable');
+                    setCloudCover(null);
                     return;
                 }
 
                 let pass = getNextPass(responseText, latNum, lngNum);
+                let threshold: number = SATELLITE_ELEVATION_THRESHOLDS.OPTIMAL;
                 if (!pass) {
                     const lower = predictPasses(responseText, latNum, lngNum, SATELLITE_ELEVATION_THRESHOLDS.ACCEPTABLE);
-                    if (lower.length > 0) pass = lower[0];
+                    if (lower.length > 0) [pass, threshold] = [lower[0], SATELLITE_ELEVATION_THRESHOLDS.ACCEPTABLE];
                 }
                 if (!pass) {
                     const min = predictPasses(responseText, latNum, lngNum, SATELLITE_ELEVATION_THRESHOLDS.MINIMUM);
-                    if (min.length > 0) pass = min[0];
+                    if (min.length > 0) [pass, threshold] = [min[0], SATELLITE_ELEVATION_THRESHOLDS.MINIMUM];
                 }
                 if (!isCurrentGeneration(generation, selectionGenRef.current)) return;
 
                 if (!pass) {
                     setNextPass(null);
+                    setPassState('no-pass');
                     setAiAnalysis('No satellite passes detected in the next 24 hours. Coverage unavailable.');
                     setAnalysisUnavailable(true);
                     await fetchWeather(latNum, lngNum, new Date(Date.now() + 2 * 60 * 60 * 1000));
                     return;
                 }
                 setNextPass(pass);
+                setPassThreshold(threshold);
+                setPassState('pass');
                 await fetchWeather(latNum, lngNum, pass.time);
             } catch (error) {
                 if (error instanceof DOMException && error.name === 'AbortError') return;
@@ -144,6 +207,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                 setAiAnalysis('Unable to retrieve satellite data.');
                 setAnalysisUnavailable(true);
                 setNextPass(null);
+                setPassState('unavailable');
                 setCloudCover(null);
             }
         };
@@ -204,7 +268,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
 
         (async () => {
             try {
-                const response = await fetch(`${API_BASE}/api/analyze`, {
+                const response = await fetch(apiUrl('/api/analyze'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(requestBody),
@@ -262,6 +326,14 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
         <div
             className={`sidebar-container flex flex-col overflow-hidden transition-transform duration-300 ${isOpen ? 'translate-x-0' : 'translate-x-full'
                 }`}
+            data-testid="sidebar"
+            data-disaster-id={disaster.id}
+            data-pass-state={passState}
+            data-pass-satellite={nextPass?.satelliteName ?? ''}
+            data-pass-time={nextPass ? nextPass.time.toISOString() : ''}
+            data-pass-threshold={passThreshold ?? ''}
+            data-weather-state={cloudCover === undefined ? 'loading' : cloudCover === null ? 'unavailable' : 'known'}
+            data-cloud-cover={typeof cloudCover === 'number' ? String(cloudCover) : ''}
             style={{
                 ...ds.glass.panel,
                 borderLeft: `1px solid ${ds.headerBorderColor}`,
@@ -478,8 +550,37 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                     />
                 )}
 
+                {tleNotice && (
+                    <p
+                        data-testid="tle-notice"
+                        style={{ fontSize: '0.6875rem', color: ds.colors.status.warning, marginBottom: '8px' }}
+                    >
+                        {tleNotice}
+                    </p>
+                )}
+
                 {/* Two-Column Grid: Countdown + Cloud Forecast - COMPACT */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
+                    {!nextPass && (
+                        <div
+                            data-testid="pass-status"
+                            className="text-center"
+                            style={{
+                                padding: '14px',
+                                borderRadius: ds.borderRadius.lg,
+                                background: ds.surface.overlay,
+                                border: `1px solid ${ds.surface.border}`,
+                                fontSize: '0.75rem',
+                                color: passState === 'unavailable' ? ds.colors.status.warning : ds.text.secondary,
+                            }}
+                        >
+                            {passState === 'loading'
+                                ? 'Calculating satellite passes...'
+                                : passState === 'no-pass'
+                                    ? `No monitored satellite pass above ${SATELLITE_ELEVATION_THRESHOLDS.MINIMUM}° elevation in the next 24 hours.`
+                                    : 'Pass prediction unavailable (orbital data could not be loaded).'}
+                        </div>
+                    )}
                     {/* Countdown Timer */}
                     {nextPass && (
                         <div
@@ -525,6 +626,15 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                                     }}
                                 />
                             </div>
+                            <p
+                                data-testid="pass-note"
+                                style={{ fontSize: '0.625rem', color: ds.text.tertiary, marginTop: '10px', lineHeight: 1.5 }}
+                            >
+                                First 5-minute sample at or above {passThreshold ?? SATELLITE_ELEVATION_THRESHOLDS.OPTIMAL}° elevation
+                                ({nextPass.elevation.toFixed(0)}° at that sample; not the exact rise or peak), propagated from
+                                orbital elements{tleOldestEpoch ? ` with epochs from ${tleOldestEpoch} UTC or later` : ''}. A predicted
+                                pass does not guarantee the sensor images this location.
+                            </p>
                         </div>
                     )}
 
@@ -621,6 +731,11 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                             </>
                         )}
 
+                        {passState === 'no-pass' && typeof cloudCover === 'number' && (
+                            <p style={{ fontSize: '0.5625rem', color: ds.text.tertiary, marginTop: '8px' }}>
+                                Forecast for ~2 h from now (no pass predicted)
+                            </p>
+                        )}
                         {nextPass && (
                             <p
                                 className="font-medium"

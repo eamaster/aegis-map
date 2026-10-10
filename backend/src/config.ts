@@ -5,7 +5,17 @@
  */
 
 /** Public API / health-check version (independent of AI provider). */
-export const APP_VERSION = '1.2.0';
+export const APP_VERSION = '1.3.0';
+
+/**
+ * Capabilities reported by the health route. The Pages release gate
+ * (.github/workflows/deploy.yml) refuses to publish a frontend unless the
+ * production backend reports every capability that frontend relies on.
+ * - workers-ai-analyze-v1: /api/analyze success responses carry source "workers-ai".
+ * - provider-status-v1: FIRMS coverage windows/unavailable (502), disaster
+ *   source headers, and TLE status headers.
+ */
+export const API_CAPABILITIES = ['workers-ai-analyze-v1', 'provider-status-v1'] as const;
 
 /**
  * Analysis cache + prompt schema version.

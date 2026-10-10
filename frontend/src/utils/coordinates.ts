@@ -1,6 +1,7 @@
 /**
  * Coordinate Utilities
- * Normalizes coordinate properties from various formats
+ * Disaster coordinates are normalized by the backend (/api/disasters); the
+ * frontend only validates ranges and never substitutes a default position.
  */
 
 export interface Coordinates {
@@ -9,22 +10,12 @@ export interface Coordinates {
 }
 
 /**
- * Normalizes coordinate object that may have uppercase or lowercase property names
- * @param obj Object with coordinate properties
- * @returns Normalized coordinates with lowercase lat/lng
- */
-export const normalizeCoords = (obj: any): Coordinates => ({
-    lat: obj.lat ?? obj.Lat ?? obj.latitude ?? obj.Latitude ?? 0,
-    lng: obj.lng ?? obj.Lng ?? obj.longitude ?? obj.Longitude ?? 0
-});
-
-/**
- * Validates coordinate values are within valid ranges
+ * Validates coordinate values are within valid geographic ranges
  * @param lat Latitude value
  * @param lng Longitude value
- * @returns True if coordinates are valid
+ * @returns True if coordinates are finite and within valid ranges
  */
 export const isValidCoordinate = (lat: number, lng: number): boolean => {
-    return !isNaN(lat) && !isNaN(lng) &&
+    return Number.isFinite(lat) && Number.isFinite(lng) &&
         Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
 };

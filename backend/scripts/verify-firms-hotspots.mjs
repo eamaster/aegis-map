@@ -1,224 +1,158 @@
 #!/usr/bin/env node
 /**
- * FIRMS Hotspot Data Verification Script
- * 
- * Compares our backend API endpoint vs direct FIRMS API calls
- * to identify discrepancies in fire hotspot data.
- * 
- * Usage:
- *   # Compare sampled disasters
- *   FIRMS_MAP_KEY=xxx node backend/scripts/verify-firms-hotspots.mjs
- * 
- *   # Test single location
- *   FIRMS_MAP_KEY=xxx node backend/scripts/verify-firms-hotspots.mjs --lat 40 --lng -120
+ * FIRMS hotspot verification: application route vs. direct FIRMS query.
+ *
+ * Uses the Worker's own adapter (src/firms.ts) for the direct query so there
+ * is one parser, one window plan, and one bbox policy. Compares observation
+ * identities and fields, not only counts. The MAP_KEY is never printed.
+ *
+ * Run (Node 22.6+):
+ *   node --experimental-strip-types scripts/verify-firms-hotspots.mjs --lat 45.72 --lng 37.95
+ *   node --experimental-strip-types scripts/verify-firms-hotspots.mjs            # first SAMPLE_COUNT fires from /api/disasters
+ *
+ * Env: API_BASE_URL (default http://127.0.0.1:8787), FIRMS_MAP_KEY, SAMPLE_COUNT (default 1)
+ * Request budget per location: 1 app request + one direct FIRMS request per window and bbox (2, or 4 across the antimeridian).
+ *
+ * Exit codes: 0 match, 1 mismatch, 2 configuration/usage error, 3 provider or application unavailable.
  */
+import {
+	buildFirmsAreaUrl,
+	buildFirmsBboxes,
+	fetch7DayFirmsHotspots,
+	hotspotIdentity,
+	parseCoordinateQuery,
+	planFirmsWindows,
+	redactSecret,
+} from '../src/firms.ts';
 
-const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:8787';
-const FIRMS_MAP_KEY = process.env.FIRMS_MAP_KEY;
-const SAMPLE_COUNT = parseInt(process.env.SAMPLE_COUNT || '10', 10);
-const BBOX_DEG = parseFloat(process.env.BBOX_DEG || '0.5');
-const DAYS = parseInt(process.env.DAYS || '7', 10);
+const API_BASE_URL = (process.env.API_BASE_URL || 'http://127.0.0.1:8787').replace(/\/+$/, '');
+const FIRMS_MAP_KEY = process.env.FIRMS_MAP_KEY || '';
+const SAMPLE_COUNT = Number.parseInt(process.env.SAMPLE_COUNT || '1', 10);
+const COMPARED_FIELDS = ['bright_ti4', 'bright_ti5', 'frp', 'confidence', 'daynight', 'scan', 'track', 'version'];
 
-// Parse CLI args
-const args = process.argv.slice(2);
-const singleLat = args.includes('--lat') ? parseFloat(args[args.indexOf('--lat') + 1]) : null;
-const singleLng = args.includes('--lng') ? parseFloat(args[args.indexOf('--lng') + 1]) : null;
+function argValue(name) {
+	const i = process.argv.indexOf(name);
+	return i >= 0 ? process.argv[i + 1] : undefined;
+}
+
+function redact(text) {
+	return redactSecret(String(text), FIRMS_MAP_KEY);
+}
+
+function compareObservations(app, direct) {
+	const appById = new Map(app.map((h) => [hotspotIdentity(h), h]));
+	const directById = new Map(direct.map((h) => [hotspotIdentity(h), h]));
+	const onlyApp = [...appById.keys()].filter((k) => !directById.has(k));
+	const onlyDirect = [...directById.keys()].filter((k) => !appById.has(k));
+	const fieldDiffs = [];
+	for (const [id, a] of appById) {
+		const d = directById.get(id);
+		if (!d) continue;
+		for (const f of COMPARED_FIELDS) {
+			if (a[f] !== d[f]) fieldDiffs.push({ id, field: f, app: a[f], direct: d[f] });
+		}
+	}
+	return { onlyApp, onlyDirect, fieldDiffs };
+}
+
+async function verifyLocation(lat, lng) {
+	const now = new Date();
+	const windows = planFirmsWindows(now);
+	const bboxes = buildFirmsBboxes(lat, lng);
+	console.log(`\nLocation (${lat}, ${lng})`);
+	console.log(`  bboxes:  ${bboxes.join(' | ')}`);
+	for (const w of windows) {
+		for (const b of bboxes) {
+			console.log(`  request: ${redact(buildFirmsAreaUrl(FIRMS_MAP_KEY, b, w.dayRange, w.startDate))}  (${w.startDate}..${w.endDate})`);
+		}
+	}
+
+	const appRes = await fetch(`${API_BASE_URL}/api/fire-hotspots?lat=${lat}&lng=${lng}`, { signal: AbortSignal.timeout(30000) });
+	const appBody = await appRes.json().catch(() => null);
+	console.log(`  app:     HTTP ${appRes.status}, coverage=${appBody?.coverage?.status ?? 'n/a'}, totalCount=${appBody?.totalCount ?? 'n/a'}, fetchedAt=${appBody?.fetchedAt ?? 'n/a'}, cacheVersion=${appBody?.cacheVersion ?? 'n/a'}`);
+
+	const direct = await fetch7DayFirmsHotspots(lat, lng, FIRMS_MAP_KEY, { now });
+	for (const w of direct.coverage.windows) {
+		console.log(`  direct ${w.id}: ${w.status}${w.httpStatus ? ` (HTTP ${w.httpStatus})` : ''}, ${w.detections} detections, ${w.rejectedRows} rejected rows, ${w.startDate}..${w.endDate}`);
+	}
+	console.log(`  direct:  coverage=${direct.coverage.status}, totalCount=${direct.totalCount}`);
+
+	if (direct.coverage.status !== 'complete') {
+		return { outcome: 'unavailable', reason: `direct FIRMS coverage ${direct.coverage.status}` };
+	}
+	if (!appRes.ok || !appBody || appBody.coverage?.status !== 'complete') {
+		return { outcome: 'unavailable', reason: `application HTTP ${appRes.status}, coverage ${appBody?.coverage?.status ?? 'n/a'}` };
+	}
+	if (appBody.coverage.requestedStart !== direct.coverage.requestedStart || appBody.coverage.requestedEnd !== direct.coverage.requestedEnd) {
+		return { outcome: 'mismatch', reason: `window differs: app ${appBody.coverage.requestedStart}..${appBody.coverage.requestedEnd}` };
+	}
+	if (JSON.stringify(appBody.bboxes) !== JSON.stringify(direct.bboxes)) {
+		return { outcome: 'mismatch', reason: `bboxes differ: app ${JSON.stringify(appBody.bboxes)}` };
+	}
+
+	const diff = compareObservations(appBody.hotspots, direct.hotspots);
+	const identities = direct.hotspots.map(hotspotIdentity).sort();
+	console.log(`  identities (${identities.length}): ${identities.slice(0, 5).join(', ')}${identities.length > 5 ? ', ...' : ''}`);
+	if (diff.onlyApp.length || diff.onlyDirect.length || diff.fieldDiffs.length) {
+		console.log(`  only in app:    ${diff.onlyApp.slice(0, 5).join(', ') || '-'}`);
+		console.log(`  only in direct: ${diff.onlyDirect.slice(0, 5).join(', ') || '-'}`);
+		console.log(`  field diffs:    ${JSON.stringify(diff.fieldDiffs.slice(0, 5))}`);
+		const cacheAgeMin = appBody.fetchedAt ? (now.getTime() - Date.parse(appBody.fetchedAt)) / 60000 : NaN;
+		return {
+			outcome: 'mismatch',
+			reason: `${diff.onlyApp.length} app-only, ${diff.onlyDirect.length} direct-only, ${diff.fieldDiffs.length} field diffs (app data age ${cacheAgeMin.toFixed(1)} min; NRT updates within the cache TTL also appear here)`,
+		};
+	}
+	return { outcome: 'match', reason: `${identities.length} identical observations` };
+}
 
 async function main() {
-    console.log('🔥 FIRMS Hotspot Verification Script\\n');
-    console.log(`Configuration:`);
-    console.log(`  API Base URL: ${API_BASE_URL}`);
-    console.log(`  BBox Degrees: ±${BBOX_DEG}°`);
-    console.log(`  Days: ${DAYS}`);
-    console.log(`  Sample Count: ${SAMPLE_COUNT}\\n`);
+	if (!FIRMS_MAP_KEY || FIRMS_MAP_KEY === 'YOUR_FIRMS_MAP_KEY_HERE') {
+		console.error('FIRMS_MAP_KEY is not set.');
+		process.exit(2);
+	}
+	console.log(`API_BASE_URL: ${API_BASE_URL}`);
 
-    // Check FIRMS key
-    if (!FIRMS_MAP_KEY || FIRMS_MAP_KEY === 'YOUR_FIRMS_MAP_KEY_HERE') {
-        console.error('❌ FIRMS_MAP_KEY environment variable not set or invalid');
-        console.error('   Register at: https://firms.modaps.eosdis.nasa.gov/api/\\n');
-        process.exit(2);
-    }
+	let locations = [];
+	const latArg = argValue('--lat');
+	const lngArg = argValue('--lng');
+	if (latArg !== undefined || lngArg !== undefined) {
+		const parsed = parseCoordinateQuery(latArg, lngArg);
+		if (!parsed.ok) {
+			console.error(`Invalid --lat/--lng: ${parsed.reason}`);
+			process.exit(2);
+		}
+		locations = [{ lat: parsed.lat, lng: parsed.lng }];
+	} else {
+		const res = await fetch(`${API_BASE_URL}/api/disasters`, { signal: AbortSignal.timeout(30000) });
+		if (!res.ok) {
+			console.error(`/api/disasters HTTP ${res.status}`);
+			process.exit(3);
+		}
+		const fires = (await res.json()).filter((d) => d.type === 'fire');
+		locations = fires.slice(0, SAMPLE_COUNT).map((d) => ({ lat: d.lat, lng: d.lng }));
+		if (locations.length === 0) {
+			console.error('No fire events available to sample; pass --lat/--lng.');
+			process.exit(3);
+		}
+	}
 
-    console.log(`✅ FIRMS_MAP_KEY: ${FIRMS_MAP_KEY.substring(0, 8)}...\\n`);
+	const results = [];
+	for (const loc of locations) {
+		try {
+			results.push(await verifyLocation(loc.lat, loc.lng));
+		} catch (err) {
+			results.push({ outcome: 'unavailable', reason: redact(err instanceof Error ? err.message : err) });
+		}
+		console.log(`  RESULT: ${results.at(-1).outcome.toUpperCase()} - ${results.at(-1).reason}`);
+	}
 
-    let testsRun = 0;
-    let testsPassed = 0;
-    let testsFailed = 0;
-
-    try {
-        // Single location mode
-        if (singleLat !== null && singleLng !== null) {
-            console.log(`📍 Testing single location: (${singleLat}, ${singleLng})\\n`);
-            const result = await compareLocation(singleLat, singleLng);
-            testsRun = 1;
-            if (result.match) {
-                testsPassed = 1;
-                console.log('\\n✅ MATCH: Counts are identical\\n');
-            } else {
-                testsFailed = 1;
-                console.log('\\n❌ MISMATCH: See details above\\n');
-            }
-        }
-        // Sample disasters mode
-        else {
-            console.log('📡 Fetching disaster list from our API...\\n');
-
-            const disastersResp = await fetch(`${API_BASE_URL}/api/disasters`);
-            if (!disastersResp.ok) {
-                throw new Error(`Failed to fetch disasters: ${disastersResp.status} ${disastersResp.statusText}`);
-            }
-
-            const disasters = await disastersResp.json();
-            const fires = disasters.filter(d => d.type === 'fire');
-
-            if (fires.length === 0) {
-                console.log('⚠️ No fire disasters found from /api/disasters');
-                console.log('   This may indicate no active fires or a data source issue.\\n');
-                process.exit(0);
-            }
-
-            console.log(`Found ${fires.length} fire events. Testing ${Math.min(SAMPLE_COUNT, fires.length)} samples...\\n`);
-
-            const sampled = fires.slice(0, SAMPLE_COUNT);
-
-            for (let i = 0; i < sampled.length; i++) {
-                const fire = sampled[i];
-                console.log(`[${i + 1}/${sampled.length}] Testing: ${fire.title} (${fire.id})`);
-                console.log(`         Location: (${fire.lat}, ${fire.lng})\\n`);
-
-                const result = await compareLocation(fire.lat, fire.lng, fire);
-                testsRun++;
-
-                if (result.match) {
-                    testsPassed++;
-                } else {
-                    testsFailed++;
-                }
-
-                console.log('─'.repeat(60) + '\\n');
-            }
-        }
-
-        // Summary
-        console.log('\\n📊 VERIFICATION SUMMARY:\\n');
-        console.log(`  Total Tests:  ${testsRun}`);
-        console.log(`  ✅ Passed:     ${testsPassed}`);
-        console.log(`  ❌ Failed:     ${testsFailed}`);
-        console.log(`  Success Rate: ${((testsPassed / testsRun) * 100).toFixed(1)}%\\n`);
-
-        process.exit(testsFailed > 0 ? 1 : 0);
-
-    } catch (error) {
-        console.error('\\n❌ Fatal error:', error.message);
-        if (error.stack) console.error(error.stack);
-        process.exit(2);
-    }
+	if (results.some((r) => r.outcome === 'mismatch')) process.exit(1);
+	if (results.some((r) => r.outcome === 'unavailable')) process.exit(3);
+	process.exit(0);
 }
 
-/**
- * Compare hotspot counts for a single location
- */
-async function compareLocation(lat, lng, eventInfo = null) {
-    try {
-        // 1. Call our API
-        const ourUrl = `${API_BASE_URL}/api/fire-hotspots?lat=${lat}&lng=${lng}`;
-        const ourResp = await fetch(ourUrl);
-
-        if (!ourResp.ok) {
-            throw new Error(`Our API failed: ${ourResp.status} ${ourResp.statusText}`);
-        }
-
-        const ourData = await ourResp.json();
-
-        // Check for configuration message
-        if (ourData.message && ourData.message.includes('FIRMS API key not configured')) {
-            console.log('⚠️ Our API: FIRMS key not configured in backend');
-            return { match: false, reason: 'config_error' };
-        }
-
-        const ourCount = ourData.totalCount || 0;
-        const ourHighConf = ourData.highConfidence || 0;
-        const ourMaxBright = ourData.maxBrightness || 0;
-        const ourMaxPower = ourData.maxPower || 0;
-
-        console.log(`  Our API:     ${ourCount} hotspots (${ourHighConf} high confidence)`);
-        console.log(`               Max: ${ourMaxBright.toFixed(1)}K brightness, ${ourMaxPower.toFixed(1)}MW power`);
-
-        // 2. Call FIRMS directly
-        const lat1 = lat - BBOX_DEG;
-        const lat2 = lat + BBOX_DEG;
-        const lon1 = lng - BBOX_DEG;
-        const lon2 = lng + BBOX_DEG;
-
-        const firmsUrl = `https://firms.modaps.eosdis.nasa.gov/api/area/csv/${FIRMS_MAP_KEY}/VIIRS_SNPP_NRT/${lon1},${lat1},${lon2},${lat2}/${DAYS}`;
-
-        console.log(`  FIRMS URL:   ${firmsUrl.replace(FIRMS_MAP_KEY, 'REDACTED')}`);
-
-        const firmsResp = await fetch(firmsUrl);
-
-        if (!firmsResp.ok) {
-            throw new Error(`FIRMS API failed: ${firmsResp.status} ${firmsResp.statusText}`);
-        }
-
-        const csvText = await firmsResp.text();
-        const lines = csvText.trim().split('\\n');
-
-        // First line is header
-        const header = lines[0];
-        const dataLines = lines.slice(1).filter(l => l.trim() !== '');
-
-        const firmsCount = dataLines.length;
-
-        // Parse CSV for stats
-        let firmsHighConf = 0;
-        let firmsMaxBright = 0;
-        let firmsMaxPower = 0;
-
-        if (firmsCount > 0) {
-            dataLines.forEach(line => {
-                const parts = line.split(',');
-                // CSV format: latitude,longitude,bright_ti4,scan,track,acq_date,acq_time,satellite,confidence,version,bright_ti5,frp,daynight
-                const confidence = parts[8];
-                const bright_ti4 = parseFloat(parts[2]);
-                const frp = parseFloat(parts[11]);
-
-                if (confidence === 'h' || confidence === 'high') firmsHighConf++;
-                if (bright_ti4 > firmsMaxBright) firmsMaxBright = bright_ti4;
-                if (frp > firmsMaxPower) firmsMaxPower = frp;
-            });
-        }
-
-        console.log(`  FIRMS Direct: ${firmsCount} hotspots (${firmsHighConf} high confidence)`);
-        console.log(`               Max: ${firmsMaxBright.toFixed(1)}K brightness, ${firmsMaxPower.toFixed(1)}MW power`);
-
-        // 3. Compare
-        const match = ourCount === firmsCount;
-
-        if (!match) {
-            console.log(`\\n  ❌ MISMATCH DETECTED:`);
-            console.log(`     Our API:  ${ourCount} hotspots`);
-            console.log(`     FIRMS:    ${firmsCount} hotspots`);
-            console.log(`     Delta:    ${firmsCount - ourCount} (expected - actual)`);
-
-            if (firmsCount > 0 && dataLines.length > 0) {
-                console.log(`\\n  First 2 FIRMS CSV lines (for debugging):`);
-                console.log(`  Header: ${header}`);
-                console.log(`  Line 1: ${dataLines[0]}`);
-                if (dataLines.length > 1) {
-                    console.log(`  Line 2: ${dataLines[1]}`);
-                }
-            }
-
-            return { match: false, ourCount, firmsCount, delta: firmsCount - ourCount };
-        }
-
-        console.log(`  ✅ MATCH`);
-        return { match: true, count: ourCount };
-
-    } catch (error) {
-        console.log(`  ❌ ERROR: ${error.message}`);
-        return { match: false, error: error.message };
-    }
-}
-
-main();
+main().catch((err) => {
+	console.error(`Fatal: ${redact(err instanceof Error ? err.message : err)}`);
+	process.exit(3);
+});

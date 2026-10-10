@@ -39,14 +39,25 @@ function parseTLEs(tleData: string): Array<{ name: string; line1: string; line2:
  * @param observerLat - Observer latitude in degrees
  * @param observerLng - Observer longitude in degrees
  * @param minElevation - Minimum elevation angle in degrees (default 25)
+ * @param startTime - Start of the 24 h search window (default: now)
  * @returns Array of upcoming passes sorted by time
  */
 export function predictPasses(
     tleRawData: string,
     observerLat: number,
     observerLng: number,
-    minElevation: number = 25
+    minElevation: number = 25,
+    startTime: Date = new Date()
 ): SatellitePass[] {
+    if (
+        !Number.isFinite(observerLat) ||
+        !Number.isFinite(observerLng) ||
+        Math.abs(observerLat) > 90 ||
+        Math.abs(observerLng) > 180
+    ) {
+        return [];
+    }
+
     const satellites = parseTLEs(tleRawData);
     const passes: SatellitePass[] = [];
 
@@ -57,7 +68,7 @@ export function predictPasses(
         height: 0, // kilometers above sea level
     };
 
-    const now = new Date();
+    const now = new Date(startTime.getTime());
     const endTime = new Date(now.getTime() + 24 * 60 * 60 * 1000); // Next 24 hours
 
     satellites.forEach((sat) => {
@@ -97,6 +108,11 @@ export function predictPasses(
 
                     const elevationDeg = satellite.radiansToDegrees(lookAngles.elevation);
                     const azimuthDeg = satellite.radiansToDegrees(lookAngles.azimuth);
+
+                    if (!Number.isFinite(elevationDeg) || !Number.isFinite(azimuthDeg)) {
+                        currentTime = new Date(currentTime.getTime() + 5 * 60 * 1000);
+                        continue;
+                    }
 
                     // Track max elevation for debugging
                     if (elevationDeg > maxElevationFound) {
@@ -145,9 +161,10 @@ export function predictPasses(
 export function getNextPass(
     tleRawData: string,
     observerLat: number,
-    observerLng: number
+    observerLng: number,
+    startTime: Date = new Date()
 ): SatellitePass | null {
-    const passes = predictPasses(tleRawData, observerLat, observerLng);
+    const passes = predictPasses(tleRawData, observerLat, observerLng, 25, startTime);
 
     return passes.length > 0 ? passes[0] : null;
 }

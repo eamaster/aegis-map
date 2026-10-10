@@ -14,15 +14,26 @@ Workers AI.
 ## Enforceable gate (in workflow)
 
 Before building Pages, CI calls the configured production API health endpoint
-and requires `version` ≥ `1.2.0` (Workers AI backend). If the check fails,
-Pages is **not** published.
+and requires its `capabilities` array to contain every capability the
+frontend relies on (`API_CAPABILITIES` in `backend/src/config.ts`):
+
+- `workers-ai-analyze-v1`: analyze successes carry `source: "workers-ai"`.
+- `provider-status-v1` (from `1.3.0`): FIRMS coverage windows and
+  `firms_unavailable` 502, `X-Disaster-*` source headers, `X-TLE-*` headers.
+
+A `1.2.0` backend reports no capabilities, so it cannot satisfy the gate. If
+the check fails, Pages is **not** published; the source merge itself is
+unaffected. Add a new capability whenever the frontend starts depending on a
+backend behavior an older deployment lacks, in both the config and the
+workflow's required list.
 
 ## Approved release sequence
 
-1. Deploy backend Worker from this branch (`wrangler deploy`) with AI binding.
-2. Verify live: `GET /` → `version: "1.2.0"`; `POST /api/analyze` →
-   `source: "workers-ai"` (cache miss then hit).
-3. Merge to `main` (or push frontend) so Pages build passes the backend gate.
+1. Deploy backend Worker from `main` (`wrangler deploy`) with AI binding.
+2. Verify live: `GET /` → `version: "1.3.0"` with both capabilities;
+   `POST /api/analyze` → `source: "workers-ai"` (cache miss then hit).
+3. Re-run the Pages workflow (`workflow_dispatch` is not configured, so push a
+   frontend change or re-run the failed run) so the build passes the gate.
 4. Optionally remove obsolete Cloudflare secret `GEMINI_API_KEY` (manual).
 
 ## Abuse controls (release blocker if unmet)

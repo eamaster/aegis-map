@@ -51,7 +51,7 @@ async function main() {
   log(`Epsilon:      ${EPSILON}`, 'cyan');
 
   let browser;
-  let capturedApiResponse = null;
+  let capturedApiResponse = undefined;
   const validationErrors = [];
   const results = {
     totalApiRecords: 0,
@@ -72,6 +72,13 @@ async function main() {
     });
     const context = await browser.newContext();
     const page = await context.newPage();
+
+    page.on('console', (msg) => {
+      console.log(`[BROWSER ${msg.type().toUpperCase()}] ${msg.text()}`);
+    });
+    page.on('pageerror', (err) => {
+      console.log(`[BROWSER PAGEERROR] ${err.message}`);
+    });
 
     // Navigate to frontend
     logSection('🌐 Navigating to Frontend');
@@ -219,7 +226,7 @@ async function main() {
 
     // Extract map source data (only for sources that should exist)
     logSection('🔬 Extracting Map Source Data');
-    const mapSourceData = await page.evaluate((typeMappingObj, apiCountsByTypeObj) => {
+    const mapSourceData = await page.evaluate(({ typeMappingObj, apiCountsByTypeObj }) => {
       const map = window.mapDebug;
       const data = {
         fires: [],
@@ -247,7 +254,7 @@ async function main() {
       });
 
       return data;
-    }, typeMapping, apiCountsByType);
+    }, { typeMappingObj: typeMapping, apiCountsByTypeObj: apiCountsByType });
 
     log(`Fires:       ${mapSourceData.fires.length} features`, 'cyan');
     log(`Volcanoes:   ${mapSourceData.volcanoes.length} features`, 'cyan');
