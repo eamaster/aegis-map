@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { SELF } from 'cloudflare:test';
-import { EONET_URL, USGS_URL } from '../src/disasters';
+import { EONET_QUERIES, USGS_URL } from '../src/disasters';
 import { buildFirmsBboxes, buildFirmsCacheKey, planFirmsWindows } from '../src/firms';
 import { CachedTleRecord, MONITORED_NORAD_IDS, TLE_CACHE_KEY, writeTleCache } from '../src/satellites';
+import { refreshTlesScheduled } from '../src/index';
 import { callWorker, csvResponse, FIRMS_HEADER, makeTle, memoryKv, withFetch } from './helpers';
 
 const ORIGIN = { Origin: 'https://hesam.me' };
+const isEonet = (url: string) => EONET_QUERIES.some((q) => q.url === url);
 const MAP_KEY = 'route-test-map-key';
 // The route plans windows from the real clock, so the fixture row uses today's UTC date.
 const ROW = `45.80000,38.00000,340.10,0.39,0.36,${planFirmsWindows(new Date())[0].endDate},1026,N,VIIRS,n,2.0NRT,290.00,7.50,D`;
@@ -208,6 +210,48 @@ describe('GET /api/tles', () => {
 		expect(res.status).toBe(502);
 		expect(res.headers.get('X-TLE-Status')).toBe('unavailable');
 	});
+
+	it('explains an all-timeout failure and the following backoff with a stable code and Retry-After', async () => {
+		const kv = memoryKv();
+		const { result: res } = await withFetch(
+			() => {
+				throw new DOMException('timed out', 'TimeoutError');
+			},
+			() => callWorker('/api/tles', { AEGIS_CACHE: kv.kv }, ORIGIN),
+		);
+		expect(res.status).toBe(502);
+		const body = (await res.json()) as Record<string, unknown>;
+		expect(body).toMatchObject({ code: 'tle_unavailable', upstreamAttempted: true, failed: [...MONITORED_NORAD_IDS].sort((a, b) => a - b) });
+		expect(Number(res.headers.get('Retry-After'))).toBeGreaterThan(890);
+		expect(res.headers.get('Access-Control-Expose-Headers')).toContain('Retry-After');
+
+		const { result: held, calls } = await withFetch(
+			() => {
+				throw new Error('backoff must hold upstream');
+			},
+			() => callWorker('/api/tles', { AEGIS_CACHE: kv.kv }),
+		);
+		expect(calls).toEqual([]);
+		expect(held.status).toBe(502);
+		expect(await held.json()).toMatchObject({ code: 'tle_unavailable', upstreamAttempted: false, failed: [] });
+		expect(Number(held.headers.get('Retry-After'))).toBeLessThanOrEqual(900);
+	});
+});
+
+describe('scheduled TLE refresh', () => {
+	it('refreshes the shared cache through the same service', async () => {
+		const kv = memoryKv();
+		const { calls } = await withFetch(
+			(url) => {
+				const id = Number(new URL(url).searchParams.get('CATNR'));
+				const names: Record<number, string> = { 39084: 'LANDSAT 8', 49260: 'LANDSAT 9', 40697: 'SENTINEL-2A', 42063: 'SENTINEL-2B', 25994: 'TERRA', 27424: 'AQUA' };
+				return new Response(makeTle(id, names[id], new Date(Date.now() - 3 * 60 * 60 * 1000)).join('\n'));
+			},
+			() => refreshTlesScheduled({ AEGIS_CACHE: kv.kv }),
+		);
+		expect(calls).toHaveLength(MONITORED_NORAD_IDS.length);
+		expect(Object.keys(JSON.parse(kv.puts[0].value).records)).toHaveLength(MONITORED_NORAD_IDS.length);
+	});
 });
 
 describe('GET /api/disasters', () => {
@@ -232,7 +276,7 @@ describe('GET /api/disasters', () => {
 	it('keeps the array body and exposes complete source status headers', async () => {
 		const kv = memoryKv();
 		const { result: res } = await withFetch(
-			(url) => (url === EONET_URL ? json(eonet) : url === USGS_URL ? json(usgs) : json({}, 404)),
+			(url) => (isEonet(url) ? json(eonet) : url === USGS_URL ? json(usgs) : json({}, 404)),
 			() => callWorker('/api/disasters', { AEGIS_CACHE: kv.kv }, ORIGIN),
 		);
 		expect(res.status).toBe(200);
@@ -248,7 +292,7 @@ describe('GET /api/disasters', () => {
 	it('reports partial source failure through headers and caches it briefly', async () => {
 		const kv = memoryKv();
 		const { result: res } = await withFetch(
-			(url) => (url === EONET_URL ? json(eonet) : json({ type: 'FeatureCollection' })),
+			(url) => (isEonet(url) ? json(eonet) : json({ type: 'FeatureCollection' })),
 			() => callWorker('/api/disasters', { AEGIS_CACHE: kv.kv }),
 		);
 		expect(res.status).toBe(200);
@@ -281,7 +325,7 @@ describe('GET /api/disasters', () => {
 		const rejectedDocs = [
 			doc({ sources: { eonet: { status: 'great', count: 1, rejected: 0 }, usgs: ok } }),
 			doc({ sources: { eonet: { status: 'ok' }, usgs: ok } }),
-			doc({ sources: { eonet: failed, usgs: failed }, partial: true }),
+			doc({ sources: { eonet: failed, usgs: failed }, partial: true, disasters: [] }),
 			doc({ sources: { eonet: failed, usgs: ok }, partial: false }),
 			doc({ fetchedAt: 'yesterday' }),
 			doc({ version: 1 }),
@@ -289,10 +333,10 @@ describe('GET /api/disasters', () => {
 		for (const raw of rejectedDocs) {
 			const kv = memoryKv({ initial: { 'disasters:v2': raw } });
 			const { calls } = await withFetch(
-				(url) => (url === EONET_URL ? json(eonet) : json(usgs)),
+				(url) => (isEonet(url) ? json(eonet) : json(usgs)),
 				() => callWorker('/api/disasters', { AEGIS_CACHE: kv.kv }),
 			);
-			expect(calls.length, raw).toBe(2);
+			expect(calls.length, raw).toBe(EONET_QUERIES.length + 1);
 		}
 
 		const kv = memoryKv({ initial: { 'disasters:v2': doc({}) } });

@@ -135,13 +135,18 @@ export function formatCapabilityContext(
  *   record is retained and reported as retained, not as fresh.
  * - After a refresh attempt where any satellite failed, further upstream
  *   attempts wait TLE_REFRESH_BACKOFF_MS (no per-request refresh storms).
+ * - A Cron Trigger refreshes records older than TLE_SCHEDULED_REFRESH_AFTER_MS
+ *   so user requests normally read the cache; the request path only fetches
+ *   when that refresh has not kept up (cold cache, repeated cron failure).
  */
 export const TLE_LINE_LENGTH = 69;
 export const TLE_MAX_EPOCH_AGE_DAYS = 7;
 export const TLE_MAX_FUTURE_EPOCH_DAYS = 1;
 export const TLE_REFRESH_AFTER_MS = 12 * 60 * 60 * 1000;
+export const TLE_SCHEDULED_REFRESH_AFTER_MS = 5 * 60 * 60 * 1000;
 export const TLE_REFRESH_BACKOFF_MS = 15 * 60 * 1000;
-export const TLE_FETCH_TIMEOUT_MS = 6000;
+/** CelesTrak gp.php took ~14 s to first byte on 2026-10-10; 6 s aborted every request. */
+export const TLE_FETCH_TIMEOUT_MS = 25_000;
 export const TLE_CACHE_KEY = 'tles:v3';
 export const TLE_CACHE_TTL_SECONDS = TLE_MAX_EPOCH_AGE_DAYS * 24 * 60 * 60;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -349,6 +354,8 @@ export interface TleLoadResult {
 	/** IDs whose refresh attempt failed during this request. */
 	failed: number[];
 	backoffActive: boolean;
+	/** Earliest time another upstream attempt is allowed, when one is being held back. */
+	nextAttemptAt: string | null;
 }
 
 export interface TleStore {
@@ -366,10 +373,11 @@ export function celestrakTleUrl(noradId: number): string {
  */
 export async function loadMonitoredTles(
 	store: TleStore | undefined,
-	options: { now?: Date; fetchImpl?: FetchLike } = {},
+	options: { now?: Date; fetchImpl?: FetchLike; refreshAfterMs?: number } = {},
 ): Promise<TleLoadResult> {
 	const now = options.now ?? new Date();
 	const fetchImpl: FetchLike = options.fetchImpl ?? ((input, init) => fetch(input, init));
+	const refreshAfterMs = options.refreshAfterMs ?? TLE_REFRESH_AFTER_MS;
 
 	let raw: string | null = null;
 	if (store) {
@@ -385,7 +393,7 @@ export async function loadMonitoredTles(
 
 	const due = MONITORED_NORAD_IDS.filter((id) => {
 		const rec = records.get(id);
-		return !rec || now.getTime() - Date.parse(rec.fetchedAt) >= TLE_REFRESH_AFTER_MS;
+		return !rec || now.getTime() - Date.parse(rec.fetchedAt) >= refreshAfterMs;
 	});
 	const backoffActive =
 		cache.lastFailedRefreshAt !== null && now.getTime() - cache.lastFailedRefreshAt < TLE_REFRESH_BACKOFF_MS;
@@ -434,8 +442,11 @@ export async function loadMonitoredTles(
 
 	const missing = MONITORED_NORAD_IDS.filter((id) => !records.has(id));
 	const retained = due.filter((id) => records.has(id) && !refreshed.includes(id));
+	const lastFailureMs = failed.length > 0 ? now.getTime() : backoffActive ? cache.lastFailedRefreshAt : null;
+	const nextAttemptAt = lastFailureMs !== null ? new Date(lastFailureMs + TLE_REFRESH_BACKOFF_MS).toISOString() : null;
 
 	return {
+		nextAttemptAt,
 		status: missing.length === 0 ? 'complete' : 'partial',
 		records,
 		missing,

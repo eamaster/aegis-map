@@ -11,6 +11,8 @@ import SatelliteImagery from './SatelliteImagery';
 import { useDesignSystem } from '../hooks/useDesignSystem';
 import { apiUrl } from '../config/api';
 import { debugLog } from '../utils/debug';
+import { tleClient } from '../utils/tleClient';
+import { analysisViewState, blockedAnalysisMessage, describeAnalysisError } from '../utils/analysisState';
 import {
     analysisRequestIdentity,
     isCurrentGeneration,
@@ -60,6 +62,10 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
     const [loadingAnalysis, setLoadingAnalysis] = useState(false);
     const [timeUntilPass, setTimeUntilPass] = useState<string>('');
     const [retryToken, setRetryToken] = useState(0);
+    const [analysisErrorCode, setAnalysisErrorCode] = useState<string | null>(null);
+    const [orbitFailure, setOrbitFailure] = useState<{ code: string; retryAfterSeconds: number | null } | null>(null);
+    const [orbitReload, setOrbitReload] = useState(0);
+    const forceOrbitReloadRef = useRef(false);
     const selectionGenRef = useRef(0);
     const inFlightKeyRef = useRef<string | null>(null);
     const analyzeAbortRef = useRef<AbortController | null>(null);
@@ -81,6 +87,8 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
         setCloudCover(undefined);
         setAiAnalysis('');
         setAnalysisUnavailable(false);
+        setAnalysisErrorCode(null);
+        setOrbitFailure(null);
         setLoadingAnalysis(false);
         setTimeUntilPass('');
         setRetryToken(0);
@@ -141,36 +149,30 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
 
         const fetchData = async () => {
             try {
-                debugLog('tles', `Fetching TLEs from ${apiUrl('/api/tles')}`, 'info');
-                const tleResponse = await fetch(apiUrl('/api/tles'), { signal: tleAbort.signal });
-                const contentType = tleResponse.headers.get('content-type') || '';
-                const isJson = contentType.includes('application/json');
-                if (!tleResponse.ok) {
-                    const errorText = isJson ? JSON.stringify(await tleResponse.json()) : await tleResponse.text();
-                    throw new Error(`TLE API error: ${tleResponse.status} - ${errorText}`);
-                }
-                const responseText = await tleResponse.text();
+                const force = forceOrbitReloadRef.current;
+                forceOrbitReloadRef.current = false;
+                debugLog('tles', `Loading TLEs from ${apiUrl('/api/tles')}${force ? ' (retry)' : ''}`, 'info');
+                const tles = await tleClient.load({ force });
                 if (!isCurrentGeneration(generation, selectionGenRef.current)) return;
-                setTleNotice(describeTleHeaders(tleResponse.headers));
-                const oldestEpoch = Date.parse(tleResponse.headers.get('X-TLE-Oldest-Epoch') ?? '');
-                setTleOldestEpoch(Number.isFinite(oldestEpoch) ? new Date(oldestEpoch).toISOString().slice(0, 16).replace('T', ' ') : null);
-                if (isJson || responseText.trim().startsWith('{') || responseText.trim().startsWith('[')) {
-                    try {
-                        const errorData = JSON.parse(responseText) as { error?: string };
-                        throw new Error(`TLE API error: ${errorData.error || JSON.stringify(errorData)}`);
-                    } catch (err) {
-                        if (err instanceof Error && err.message.startsWith('TLE API error')) throw err;
-                    }
+                if (!tles.ok) {
+                    debugLog('tles', `TLEs unavailable: ${tles.code}`, 'error');
+                    setOrbitFailure({ code: tles.code, retryAfterSeconds: tles.retryAfterSeconds });
+                    setNextPass(null);
+                    setPassState('unavailable');
+                    setCloudCover(null);
+                    return;
                 }
-                if (!responseText.trim()) throw new Error('TLE data is empty');
+                const responseText = tles.text;
+                setTleNotice(describeTleHeaders(tles.headers));
+                const oldestEpoch = Date.parse(tles.headers.get('X-TLE-Oldest-Epoch') ?? '');
+                setTleOldestEpoch(Number.isFinite(oldestEpoch) ? new Date(oldestEpoch).toISOString().slice(0, 16).replace('T', ' ') : null);
                 const tleLines = responseText.trim().split('\n').filter((line) => line.trim().length > 0);
-                if (tleLines.length < 3) throw new Error(`Invalid TLE data: expected at least 3 lines, got ${tleLines.length}`);
+                if (tleLines.length < 3 || tleLines.length % 3 !== 0) throw new Error(`Invalid TLE data: ${tleLines.length} lines`);
 
                 const latNum = disaster.lat;
                 const lngNum = disaster.lng;
                 if (!Number.isFinite(latNum) || !Number.isFinite(lngNum) || Math.abs(latNum) > 90 || Math.abs(lngNum) > 180) {
-                    setAiAnalysis('Invalid coordinates. Unable to calculate satellite passes.');
-                    setAnalysisUnavailable(true);
+                    setOrbitFailure({ code: 'invalid_coordinates', retryAfterSeconds: null });
                     setPassState('unavailable');
                     setCloudCover(null);
                     return;
@@ -191,8 +193,6 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                 if (!pass) {
                     setNextPass(null);
                     setPassState('no-pass');
-                    setAiAnalysis('No satellite passes detected in the next 24 hours. Coverage unavailable.');
-                    setAnalysisUnavailable(true);
                     await fetchWeather(latNum, lngNum, new Date(Date.now() + 2 * 60 * 60 * 1000));
                     return;
                 }
@@ -203,9 +203,8 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
             } catch (error) {
                 if (error instanceof DOMException && error.name === 'AbortError') return;
                 if (!isCurrentGeneration(generation, selectionGenRef.current)) return;
-                debugLog('tles', 'FAILED to fetch TLEs', 'error');
-                setAiAnalysis('Unable to retrieve satellite data.');
-                setAnalysisUnavailable(true);
+                debugLog('tles', 'FAILED to use TLEs', 'error');
+                setOrbitFailure({ code: 'invalid_response', retryAfterSeconds: null });
                 setNextPass(null);
                 setPassState('unavailable');
                 setCloudCover(null);
@@ -218,7 +217,12 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
             selectionGenRef.current = nextGeneration(selectionGenRef.current);
             analyzeAbortRef.current?.abort();
         };
-    }, [disaster]);
+    }, [disaster, orbitReload]);
+
+    const handleRetryOrbitalData = () => {
+        forceOrbitReloadRef.current = true;
+        setOrbitReload((n) => n + 1);
+    };
 
     useEffect(() => {
         if (!nextPass) return;
@@ -283,21 +287,25 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
 
                 if (!response.ok) {
                     setAnalysisUnavailable(true);
-                    setAiAnalysis(data.message || data.error || `Analysis unavailable (${response.status})`);
+                    setAnalysisErrorCode(data.code ?? `http_${response.status}`);
+                    setAiAnalysis(describeAnalysisError(data.code, data.message || data.error || `HTTP ${response.status}`));
                     return;
                 }
                 if (!data.analysis || data.analysis.trim().length === 0 || data.source !== 'workers-ai') {
                     setAnalysisUnavailable(true);
+                    setAnalysisErrorCode('unexpected_response');
                     setAiAnalysis('Analysis unavailable: empty or unexpected response.');
                     return;
                 }
                 setAiAnalysis(data.analysis.trim());
                 setAnalysisUnavailable(false);
+                setAnalysisErrorCode(null);
             } catch (error) {
                 if (error instanceof DOMException && error.name === 'AbortError') return;
                 if (!isCurrentGeneration(generation, selectionGenRef.current)) return;
                 setAnalysisUnavailable(true);
-                setAiAnalysis('Analysis unavailable. Map and satellite tools remain usable.');
+                setAnalysisErrorCode('network');
+                setAiAnalysis('Analysis request did not reach the API. Map and satellite tools remain usable.');
             } finally {
                 if (isCurrentGeneration(generation, selectionGenRef.current)) {
                     setLoadingAnalysis(false);
@@ -312,8 +320,16 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
         inFlightKeyRef.current = null;
         setAiAnalysis('');
         setAnalysisUnavailable(false);
+        setAnalysisErrorCode(null);
         setRetryToken((t) => t + 1);
     };
+
+    const analysisState = analysisViewState({
+        passState,
+        loading: loadingAnalysis,
+        hasAnalysis: !analysisUnavailable && aiAnalysis.trim().length > 0,
+        errorCode: analysisUnavailable ? analysisErrorCode : null,
+    });
 
     if (!disaster) {
 
@@ -332,6 +348,8 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
             data-pass-satellite={nextPass?.satelliteName ?? ''}
             data-pass-time={nextPass ? nextPass.time.toISOString() : ''}
             data-pass-threshold={passThreshold ?? ''}
+            data-analysis-state={analysisState}
+            data-orbit-failure={orbitFailure?.code ?? ''}
             data-weather-state={cloudCover === undefined ? 'loading' : cloudCover === null ? 'unavailable' : 'known'}
             data-cloud-cover={typeof cloudCover === 'number' ? String(cloudCover) : ''}
             style={{
@@ -475,19 +493,28 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                                 background: ds.surface.overlaySubtle,
                             }}
                         >
-                            {analysisUnavailable ? 'Unavailable' : 'Workers AI'}
+                            {analysisState === 'ready' || analysisState === 'loading'
+                                ? 'Workers AI'
+                                : analysisState.startsWith('error')
+                                  ? 'Unavailable'
+                                  : analysisState === 'waiting-orbit' || analysisState === 'waiting'
+                                    ? 'Waiting'
+                                    : 'Not requested'}
                         </span>
                     </div>
 
                     {/* Content */}
                     <p
+                        data-testid="analysis-text"
                         className="leading-relaxed relative z-10"
                         style={{
                             fontSize: '0.75rem',
-                            color: analysisUnavailable ? ds.colors.status.warning : ds.text.secondary,
+                            color: analysisState.startsWith('error') ? ds.colors.status.warning : ds.text.secondary,
                         }}
                     >
-                        {loadingAnalysis ? (
+                        {blockedAnalysisMessage(analysisState) ? (
+                            <span style={{ color: ds.text.tertiary }}>{blockedAnalysisMessage(analysisState)}</span>
+                        ) : loadingAnalysis ? (
                             <span className="flex items-center gap-2">
                                 <span
                                     className="inline-block w-1.5 h-1.5 rounded-full animate-pulse"
@@ -578,7 +605,32 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                                 ? 'Calculating satellite passes...'
                                 : passState === 'no-pass'
                                     ? `No monitored satellite pass above ${SATELLITE_ELEVATION_THRESHOLDS.MINIMUM}° elevation in the next 24 hours.`
-                                    : 'Pass prediction unavailable (orbital data could not be loaded).'}
+                                    : orbitFailure?.code === 'invalid_coordinates'
+                                      ? 'Pass prediction unavailable: event coordinates are invalid.'
+                                      : 'Pass prediction unavailable: orbital data could not be loaded.'}
+                            {passState === 'unavailable' && orbitFailure && orbitFailure.code !== 'invalid_coordinates' && (
+                                <>
+                                    {orbitFailure.retryAfterSeconds !== null && (
+                                        <span className="block mt-1" style={{ fontSize: '0.625rem', color: ds.text.tertiary }}>
+                                            The server will try the orbital-data provider again in about{' '}
+                                            {Math.max(1, Math.ceil(orbitFailure.retryAfterSeconds / 60))} min.
+                                        </span>
+                                    )}
+                                    <button
+                                        type="button"
+                                        data-testid="retry-orbital-data"
+                                        onClick={handleRetryOrbitalData}
+                                        className="mt-2 text-xs font-semibold px-3 py-1.5 rounded-md"
+                                        style={{
+                                            color: ds.colors.accent.blueLight,
+                                            background: ds.surface.overlaySubtle,
+                                            border: `1px solid ${ds.surface.border}`,
+                                        }}
+                                    >
+                                        Retry orbital data
+                                    </button>
+                                </>
+                            )}
                         </div>
                     )}
                     {/* Countdown Timer */}

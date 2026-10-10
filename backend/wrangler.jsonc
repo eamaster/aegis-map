@@ -18,6 +18,14 @@
 		"enabled": true
 	},
 	/**
+	 * Orbital-element refresh outside user requests (src/index.ts scheduled
+	 * handler). Every 6 h, offset from the hour; CelesTrak asks clients not to
+	 * re-download unchanged data more often than every 2 h.
+	 */
+	"triggers": {
+		"crons": ["23 */6 * * *"]
+	},
+	/**
 	 * KV Namespace for caching
 	 */
 	"kv_namespaces": [

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { describeDisasterSources, isDisasterRecord, parseDisasterSourceHeaders } from './disasterSources';
+import { describeDisasterSources, displayCategoryCount, isDisasterRecord, parseDisasterSourceHeaders } from './disasterSources';
 
 const headers = (init: Record<string, string>) => new Headers(init);
 
@@ -41,5 +41,35 @@ describe('isDisasterRecord', () => {
         expect(isDisasterRecord({ ...base, lat: 91 })).toBe(false);
         expect(isDisasterRecord({ ...base, date: 'not-a-date' })).toBe(false);
         expect(isDisasterRecord({ ...base, type: 'flood' })).toBe(false);
+    });
+
+    it('accepts the Worker record for a real captured open volcano', () => {
+        expect(
+            isDisasterRecord({
+                id: 'EONET_20710',
+                type: 'volcano',
+                title: 'Nevados del Chillan Volcano, Chile',
+                lng: -71.378,
+                lat: -36.868,
+                date: '2026-06-15T00:00:00.000Z',
+                severity: 'medium',
+            }),
+        ).toBe(true);
+    });
+});
+
+describe('displayCategoryCount', () => {
+    const ok = { eonet: 'ok', usgs: 'ok', partial: false } as const;
+
+    it('shows zero as confirmed only when that category source loaded', () => {
+        expect(displayCategoryCount(0, 'volcano', ok, false)).toBe('0');
+        expect(displayCategoryCount(0, 'volcano', { ...ok, eonet: 'failed', partial: true }, false)).toBe('—');
+        expect(displayCategoryCount(0, 'earthquake', { ...ok, eonet: 'failed', partial: true }, false)).toBe('0');
+        expect(displayCategoryCount(0, 'fire', null, false)).toBe('—');
+        expect(displayCategoryCount(0, 'fire', ok, true)).toBe('—');
+    });
+
+    it('still shows records that did load from a partially failed source', () => {
+        expect(displayCategoryCount(32, 'volcano', { ...ok, eonet: 'failed', partial: true }, false)).toBe('32');
     });
 });

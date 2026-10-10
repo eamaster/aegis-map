@@ -249,8 +249,17 @@ export function normalizeUsgsFeatures(features: readonly unknown[]): NormalizeRe
 	return { records, rejected };
 }
 
-export const EONET_URL =
-	'https://eonet.gsfc.nasa.gov/api/v3/events?status=open&category=wildfires,volcanoes&days=60';
+/**
+ * EONET scope, per category. Wildfires: open events with a geometry in the
+ * last 60 days (an unbounded open-wildfire query was >4.6 MB / >30 s on
+ * 2026-10-10). Volcanoes: every still-open event; EONET dates a volcano by
+ * its single reported geometry, so a recent-days filter hid all of them.
+ */
+export const EONET_WILDFIRE_DAYS = 60;
+export const EONET_QUERIES = [
+	{ category: 'wildfires', url: `https://eonet.gsfc.nasa.gov/api/v3/events?status=open&category=wildfires&days=${EONET_WILDFIRE_DAYS}` },
+	{ category: 'volcanoes', url: 'https://eonet.gsfc.nasa.gov/api/v3/events?status=open&category=volcanoes' },
+] as const;
 export const USGS_URL = 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson';
 
 export function parseEonetPayload(payload: unknown): NormalizeResult {
@@ -306,18 +315,34 @@ async function loadSource(
 }
 
 /**
+ * EONET is one source made of the scoped category queries above. It is 'ok'
+ * only when every query succeeded; otherwise it reports the failing state
+ * while records from queries that did succeed are still served (partial).
+ */
+async function loadEonet(fetchImpl: FetchLike): Promise<{ status: DisasterSourceStatus; records: DisasterRecord[] }> {
+	const parts = await Promise.all(EONET_QUERIES.map((q) => loadSource('eonet', q.url, 15000, parseEonetPayload, fetchImpl)));
+	const failedPart = parts.find((p) => p.status.status !== 'ok');
+	const records = parts.flatMap((p) => p.records);
+	return {
+		status: {
+			status: failedPart ? failedPart.status.status : 'ok',
+			count: records.length,
+			rejected: parts.reduce((n, p) => n + p.status.rejected, 0),
+		},
+		records,
+	};
+}
+
+/**
  * Fetch EONET and USGS independently. One failed source yields a partial
  * result with that source's status; both failing throws DisasterUpstreamError.
  */
 export async function fetchDisasters(fetchImpl?: FetchLike): Promise<DisasterFetchResult> {
 	const doFetch: FetchLike = fetchImpl ?? ((input, init) => fetch(input, init));
-	const [eonet, usgs] = await Promise.all([
-		loadSource('eonet', EONET_URL, 15000, parseEonetPayload, doFetch),
-		loadSource('usgs', USGS_URL, 8000, parseUsgsPayload, doFetch),
-	]);
+	const [eonet, usgs] = await Promise.all([loadEonet(doFetch), loadSource('usgs', USGS_URL, 8000, parseUsgsPayload, doFetch)]);
 
 	const sources: DisasterSources = { eonet: eonet.status, usgs: usgs.status };
-	if (eonet.status.status !== 'ok' && usgs.status.status !== 'ok') {
+	if (eonet.records.length === 0 && eonet.status.status !== 'ok' && usgs.status.status !== 'ok') {
 		throw new DisasterUpstreamError(sources);
 	}
 

@@ -8,22 +8,24 @@
  *              with page.route; the UI must show honest unavailable/partial states.
  *
  * Run (Node 22.6+, frontend built against the local Worker):
- *   node --experimental-strip-types scripts/verify-e2e-sidebar.mjs [--scenario success|failure|all]
+ *   node --experimental-strip-types scripts/verify-e2e-sidebar.mjs [--scenario success|failure|all] [--live-analyze]
  *
  * Env:
  *   FRONTEND_URL  (default http://localhost:5173/aegis-map/)
  *   API_BASE_URL  backend the frontend must use (default http://127.0.0.1:8787)
  *   E2E_STEP_TIMEOUT_MS (default 45000)
  *
- * /api/analyze is stubbed in both scenarios so this script never runs Workers AI.
+ * /api/analyze is stubbed by default so ordinary runs never use Workers AI.
+ * --live-analyze leaves it unstubbed in the success scenario only and allows
+ * exactly one real inference request; any second request fails the run.
  * EONET and USGS sit behind /api/disasters; the success scenario checks them
- * with one direct request each and compares record identities and fields.
+ * with one direct request per upstream query and compares record identities and fields.
  *
  * Exit codes: 0 all checks passed, 1 a check failed, 2 the run could not start.
  */
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
-import { EONET_URL, USGS_URL, parseEonetPayload, parseUsgsPayload } from '../../backend/src/disasters.ts';
+import { EONET_QUERIES, USGS_URL, parseEonetPayload, parseUsgsPayload } from '../../backend/src/disasters.ts';
 import { MONITORED_NORAD_IDS, validateTleRecord } from '../../backend/src/satellites.ts';
 import { isDisasterRecord, parseDisasterSourceHeaders } from '../src/utils/disasterSources.ts';
 
@@ -34,6 +36,7 @@ const STEP_TIMEOUT = Number(process.env.E2E_STEP_TIMEOUT_MS || 45000);
 /** Screenshots go to the git-ignored repository .tmp directory. */
 const SCREENSHOT = (name) => fileURLToPath(new URL(`../../.tmp/${name}`, import.meta.url));
 const scenarioArg = process.argv.includes('--scenario') ? process.argv[process.argv.indexOf('--scenario') + 1] : 'all';
+const LIVE_ANALYZE = process.argv.includes('--live-analyze');
 
 const isApi = (url, path) => {
     const u = new URL(url);
@@ -113,16 +116,29 @@ async function waitForAttr(page, selector, attr, accept, label) {
     return page.locator(selector).getAttribute(attr);
 }
 
-function attachCommonListeners(page, checks, state) {
+function attachCommonListeners(page, checks, state, { liveAnalyze = false } = {}) {
+    state.tleRequests = 0;
+    state.analyzeRequests = 0;
     page.on('pageerror', (err) => state.pageErrors.push(err.message));
     page.on('request', (req) => {
         const u = new URL(req.url());
         if (u.pathname.startsWith('/api/') && u.origin !== API_ORIGIN) state.foreignApi.push(req.url());
+        if (isApi(req.url(), '/api/tles')) state.tleRequests++;
+        if (isApi(req.url(), '/api/analyze') && req.method() === 'POST') state.analyzeRequests++;
     });
+    if (liveAnalyze) {
+        let forwarded = 0;
+        return page.route(`${API_ORIGIN}/api/analyze`, (route) => {
+            if (route.request().method() !== 'POST') return route.continue();
+            if (forwarded++ === 0) return route.continue();
+            return route.fulfill({ status: 429, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ error: 'e2e live budget exceeded', code: 'e2e_budget' }) });
+        });
+    }
     return page.route(`${API_ORIGIN}/api/analyze`, (route) =>
         route.fulfill({
             status: 503,
             contentType: 'application/json',
+            headers: { 'access-control-allow-origin': '*' },
             body: JSON.stringify({ error: 'analysis_unavailable', code: 'e2e_stubbed', message: 'Analysis is not exercised by this verification.' }),
         }),
     );
@@ -149,7 +165,9 @@ async function runSuccess(browser) {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     try {
         const page = await context.newPage();
-        await attachCommonListeners(page, checks, state);
+        await attachCommonListeners(page, checks, state, { liveAnalyze: LIVE_ANALYZE });
+        const analyzeResponse = LIVE_ANALYZE ? page.waitForResponse((r) => isApi(r.url(), '/api/analyze') && r.request().method() === 'POST', { timeout: STEP_TIMEOUT * 3 }) : null;
+        analyzeResponse?.catch(() => {});
 
         const { res, body } = await loadApp(page, checks);
         const sources = parseDisasterSourceHeaders({ get: (n) => res.headers()[n.toLowerCase()] ?? null });
@@ -159,6 +177,11 @@ async function runSuccess(browser) {
         checks.record(sources?.eonet === 'ok' && sources?.usgs === 'ok' && !sources.partial, 'disaster sources complete', res.headers()['x-disaster-sources'] ?? 'missing header');
         const legendState = await waitForAttr(page, '[data-testid="map-legend"]', 'data-disaster-state', ['complete', 'partial', 'failed', 'unknown'], 'legend');
         checks.record(legendState === 'complete', 'legend shows complete source state', legendState);
+        const volcanoCount = Array.isArray(body) ? body.filter((d) => d.type === 'volcano').length : -1;
+        const legendVolcano = await page.locator('[data-testid="map-legend"]').getAttribute('data-count-volcano');
+        checks.record(volcanoCount > 0 && legendVolcano === String(volcanoCount), 'legend volcano count matches served open volcano events', `legend=${legendVolcano} served=${volcanoCount}`);
+        const scope = (await page.locator('[data-testid="legend-scope"]').textContent()) ?? '';
+        checks.record(/60 days/.test(scope) && /open NASA EONET volcanic/.test(scope), 'legend states per-category scope', scope.slice(0, 160));
         evidence.disasters = {
             fetchedAt: res.headers()['x-disaster-fetched-at'],
             sources: res.headers()['x-disaster-sources'],
@@ -208,6 +231,22 @@ async function runSuccess(browser) {
             evidence.pass = { satellite: sat, time: new Date(passTime).toISOString(), threshold };
         } else {
             evidence.pass = { state: passState };
+        }
+
+        // AI Insight: the request is made only with a predicted pass and known weather.
+        const settledAnalysis = ['blocked-orbit', 'no-pass', 'ready', 'error-config', 'error-capacity', 'error-provider', 'error-request', 'error-network'];
+        const analysisState = await waitForAttr(page, '[data-testid="sidebar"]', 'data-analysis-state', settledAnalysis, 'analysis state');
+        if (passState === 'no-pass') {
+            checks.record(analysisState === 'no-pass' && state.analyzeRequests === 0, 'no pass: analysis not requested', `${analysisState} requests=${state.analyzeRequests}`);
+        } else if (LIVE_ANALYZE) {
+            const live = await analyzeResponse;
+            const liveBody = await live.json().catch(() => null);
+            const text = (await page.locator('[data-testid="analysis-text"]').textContent()) ?? '';
+            checks.record(live.status() === 200 && liveBody?.source === 'workers-ai' && typeof liveBody?.analysis === 'string' && liveBody.analysis.length > 0, 'LIVE: /api/analyze returned a Workers AI analysis', `HTTP ${live.status()} source=${liveBody?.source ?? liveBody?.code} cached=${liveBody?.cached}`);
+            checks.record(analysisState === 'ready' && text.trim() === liveBody?.analysis?.trim(), 'LIVE: AI Insight shows the returned analysis', analysisState);
+            evidence.liveAnalysis = { http: live.status(), cached: liveBody?.cached, chars: liveBody?.analysis?.length ?? 0 };
+        } else {
+            checks.record(analysisState === 'error-provider' && state.analyzeRequests === 1, 'stubbed analysis failure shown as provider unavailability (stub, not live AI)', `${analysisState} requests=${state.analyzeRequests}`);
         }
 
         // Weather
@@ -284,6 +323,16 @@ async function runSuccess(browser) {
             }
         }
 
+        // A second selection (a volcano when available) must reuse the fleet TLEs.
+        const volcanoes = evidence.appDisasters.filter((d) => d.type === 'volcano').slice(0, 8);
+        const second = await clickDisaster(page, volcanoes.length > 0 ? volcanoes : fires.filter((f) => f.id !== selected.id));
+        if (checks.record(!!second, 'second real map click selected another event', second ? `${second.type} ${second.id}` : 'none')) {
+            await page.waitForFunction((id) => document.querySelector('[data-testid="sidebar"]')?.getAttribute('data-disaster-id') === id, second.id, { timeout: STEP_TIMEOUT });
+            const secondPass = await waitForAttr(page, '[data-testid="sidebar"]', 'data-pass-state', ['pass', 'no-pass', 'unavailable'], 'second pass prediction');
+            checks.record(secondPass === 'pass' || secondPass === 'no-pass', 'second selection resolved pass prediction', secondPass);
+            checks.record(state.tleRequests === 1, 'one /api/tles request shared across selections', `requests=${state.tleRequests}`);
+        }
+
         await page.screenshot({ path: SCREENSHOT('e2e-success.png') });
     } catch (err) {
         checks.record(false, 'scenario completed', err instanceof Error ? err.message : String(err));
@@ -312,7 +361,12 @@ async function runFailure(browser) {
             });
         });
         await page.route(`${API_ORIGIN}/api/tles`, (route) =>
-            route.fulfill({ status: 502, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ error: 'No valid TLE data available' }) }),
+            route.fulfill({
+                status: 502,
+                contentType: 'application/json',
+                headers: { 'access-control-allow-origin': '*', 'access-control-expose-headers': 'Retry-After', 'retry-after': '900' },
+                body: JSON.stringify({ error: 'No valid orbital elements are available', code: 'tle_unavailable', missing: MONITORED_NORAD_IDS, failed: MONITORED_NORAD_IDS, upstreamAttempted: true, retryAfterSeconds: 900 }),
+            }),
         );
         await page.route(new RegExp(`^${API_ORIGIN.replace(/[.]/g, '\\.')}/api/fire-hotspots`), (route) =>
             route.fulfill({
@@ -348,6 +402,19 @@ async function runFailure(browser) {
 
         const passState = await waitForAttr(page, '[data-testid="sidebar"]', 'data-pass-state', ['pass', 'no-pass', 'unavailable'], 'pass prediction');
         checks.record(passState === 'unavailable', 'TLE failure shows pass prediction unavailable (not no-pass)', passState);
+        const sidebar = page.locator('[data-testid="sidebar"]');
+        checks.record((await sidebar.getAttribute('data-orbit-failure')) === 'tle_unavailable', 'orbit failure carries the server error code');
+        const analysisState = await sidebar.getAttribute('data-analysis-state');
+        const analysisText = (await page.locator('[data-testid="analysis-text"]').textContent()) ?? '';
+        checks.record(analysisState === 'blocked-orbit' && /orbital data is unavailable/.test(analysisText) && !/Unable to retrieve satellite data/.test(analysisText), 'AI Insight reports blocked prerequisite, not an AI failure', `${analysisState}: ${analysisText.slice(0, 100)}`);
+        checks.record(state.analyzeRequests === 0, 'no analysis requested without orbital data', `requests=${state.analyzeRequests}`);
+        const passText = (await page.locator('[data-testid="pass-status"]').textContent()) ?? '';
+        checks.record(/15 min/.test(passText), 'pass status shows the server retry time', passText.slice(0, 160));
+        const tleBefore = state.tleRequests;
+        const retried = page.waitForResponse((r) => isApi(r.url(), '/api/tles'), { timeout: STEP_TIMEOUT }).catch(() => null);
+        await page.locator('[data-testid="retry-orbital-data"]').click();
+        checks.record(!!(await retried) && state.tleRequests === tleBefore + 1, 'retry orbital data makes exactly one new request', `before=${tleBefore} after=${state.tleRequests}`);
+        checks.record(tleBefore === 1, 'Retry-After failure was not re-requested automatically', `requests before retry=${tleBefore}`);
         const weatherState = await waitForAttr(page, '[data-testid="sidebar"]', 'data-weather-state', ['known', 'unavailable'], 'weather');
         checks.record(weatherState === 'unavailable', 'weather marked unavailable without a pass', weatherState);
 
@@ -409,7 +476,7 @@ function explainDifference(name, kind, record, raw, appFetchedMs, directMs) {
         if (!raw) return null;
         return Math.max(raw.time ?? 0, raw.updated ?? 0) > appFetchedMs ? 'event created/updated after app fetch' : null;
     }
-    if (kind === 'onlyApp') return Date.parse(record.date) < directMs - 60 * DAY_MS ? 'aged out of 60-day query' : null;
+    if (kind === 'onlyApp') return record.type === 'fire' && Date.parse(record.date) < directMs - 60 * DAY_MS ? 'aged out of 60-day query' : null;
     if (kind === 'field') return raw && raw.date !== record.date ? 'newer geometry published' : null;
     return null;
 }
@@ -425,14 +492,16 @@ async function verifyHiddenSources(appBody, appFetchedAt, checks) {
     console.log('\n=== EONET / USGS (behind /api/disasters) ===');
     const results = {};
     const appFetchedMs = Date.parse(appFetchedAt ?? '');
-    for (const [name, url, parse, rawFacts, types] of [
-        ['eonet', EONET_URL, parseEonetPayload, rawEonetFacts, ['fire', 'volcano']],
-        ['usgs', USGS_URL, parseUsgsPayload, rawUsgsFacts, ['earthquake']],
+    for (const [name, urls, parse, rawFacts, types, listKey] of [
+        ['eonet', EONET_QUERIES.map((q) => q.url), parseEonetPayload, rawEonetFacts, ['fire', 'volcano'], 'events'],
+        ['usgs', [USGS_URL], parseUsgsPayload, rawUsgsFacts, ['earthquake'], 'features'],
     ]) {
         try {
-            const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
+            const responses = await Promise.all(urls.map((url) => fetch(url, { signal: AbortSignal.timeout(20000) })));
             const directMs = Date.now();
-            const payload = await res.json();
+            const payloads = await Promise.all(responses.map((r) => r.json()));
+            const res = responses.find((r) => !r.ok) ?? responses[0];
+            const payload = { ...payloads[0], [listKey]: payloads.flatMap((p) => p?.[listKey] ?? []) };
             const { records, rejected } = parse(payload);
             const raw = rawFacts(payload);
             const upstream = new Map(records.map((r) => [r.id, r]));

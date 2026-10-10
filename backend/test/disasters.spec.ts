@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
 	DisasterUpstreamError,
-	EONET_URL,
+	EONET_QUERIES,
+	EONET_WILDFIRE_DAYS,
 	extractEonetCoordinates,
 	fetchDisasters,
 	formatDisasterSourcesHeader,
@@ -161,15 +162,74 @@ describe('USGS normalization', () => {
 	});
 });
 
+/** Captured 2026-10-10 from EONET status=open&category=volcanoes (still open; single geometry dated 2026-06-15). */
+const CAPTURED_VOLCANO = {
+	id: 'EONET_20710',
+	title: 'Nevados del Chillan Volcano, Chile',
+	description: null,
+	link: 'https://eonet.gsfc.nasa.gov/api/v3/events/EONET_20710',
+	closed: null,
+	categories: [{ id: 'volcanoes', title: 'Volcanoes' }],
+	sources: [{ id: 'SIVolcano', url: 'https://volcano.si.edu/volcano.cfm?vn=357070' }],
+	geometry: [{ magnitudeValue: null, magnitudeUnit: null, date: '2026-06-15T00:00:00Z', type: 'Point', coordinates: [-71.378, -36.868] }],
+};
+
+const FIRE_QUERY = EONET_QUERIES.find((q) => q.category === 'wildfires')!.url;
+const VOLCANO_QUERY = EONET_QUERIES.find((q) => q.category === 'volcanoes')!.url;
+
+describe('EONET query scope', () => {
+	it('bounds wildfires by recent days but requests every open volcano', () => {
+		expect(FIRE_QUERY).toContain('category=wildfires');
+		expect(FIRE_QUERY).toContain(`days=${EONET_WILDFIRE_DAYS}`);
+		expect(VOLCANO_QUERY).toContain('status=open');
+		expect(VOLCANO_QUERY).toContain('category=volcanoes');
+		expect(VOLCANO_QUERY).not.toContain('days=');
+	});
+
+	it('normalizes a real captured open volcano older than the wildfire window', () => {
+		const { records, rejected } = normalizeEonetEvents([CAPTURED_VOLCANO]);
+		expect(rejected).toBe(0);
+		expect(records).toEqual([
+			{
+				id: 'EONET_20710',
+				type: 'volcano',
+				title: 'Nevados del Chillan Volcano, Chile',
+				lng: -71.378,
+				lat: -36.868,
+				date: '2026-06-15T00:00:00.000Z',
+				severity: 'medium',
+			},
+		]);
+	});
+});
+
 describe('fetchDisasters source status', () => {
 	const eonetOk = { events: [fireEvent([{ date: '2026-10-05T12:00:00Z', type: 'Point', coordinates: [-110, 35] }])] };
+	const volcanoesOk = { events: [CAPTURED_VOLCANO] };
 	const usgsOk = { type: 'FeatureCollection', features: [quake()] };
 	const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
-	const fetcher = (eonet: () => Response, usgs: () => Response) => async (url: string) => {
-		if (url === EONET_URL) return eonet();
-		if (url === USGS_URL) return usgs();
-		throw new Error(`unexpected ${url}`);
-	};
+	const fetcher =
+		(eonet: () => Response, usgs: () => Response, volcanoes: () => Response = () => json({ events: [] })) =>
+		async (url: string) => {
+			if (url === FIRE_QUERY) return eonet();
+			if (url === VOLCANO_QUERY) return volcanoes();
+			if (url === USGS_URL) return usgs();
+			throw new Error(`unexpected ${url}`);
+		};
+
+	it('merges both EONET scopes into one source with volcanoes kept', async () => {
+		const result = await fetchDisasters(fetcher(() => json(eonetOk), () => json(usgsOk), () => json(volcanoesOk)));
+		expect(result.sources.eonet).toEqual({ status: 'ok', count: 2, rejected: 0 });
+		expect(result.disasters.filter((d) => d.type === 'volcano').map((d) => d.id)).toEqual(['EONET_20710']);
+		expect(result.partial).toBe(false);
+	});
+
+	it('marks EONET failed but keeps wildfire records when only the volcano query fails', async () => {
+		const result = await fetchDisasters(fetcher(() => json(eonetOk), () => json(usgsOk), () => json({}, 503)));
+		expect(result.sources.eonet.status).toBe('failed');
+		expect(result.partial).toBe(true);
+		expect(result.disasters.map((d) => d.id).sort()).toEqual(['EONET_1', 'nc75000001']);
+	});
 
 	it('reports both sources ok', async () => {
 		const result = await fetchDisasters(fetcher(() => json(eonetOk), () => json(usgsOk)));
