@@ -47,6 +47,15 @@ export function predictPasses(
     observerLng: number,
     minElevation: number = 25
 ): SatellitePass[] {
+    if (
+        !Number.isFinite(observerLat) ||
+        !Number.isFinite(observerLng) ||
+        Math.abs(observerLat) > 90 ||
+        Math.abs(observerLng) > 180
+    ) {
+        return [];
+    }
+
     const satellites = parseTLEs(tleRawData);
     const passes: SatellitePass[] = [];
 
@@ -97,6 +106,11 @@ export function predictPasses(
 
                     const elevationDeg = satellite.radiansToDegrees(lookAngles.elevation);
                     const azimuthDeg = satellite.radiansToDegrees(lookAngles.azimuth);
+
+                    if (!Number.isFinite(elevationDeg) || !Number.isFinite(azimuthDeg)) {
+                        currentTime = new Date(currentTime.getTime() + 5 * 60 * 1000);
+                        continue;
+                    }
 
                     // Track max elevation for debugging
                     if (elevationDeg > maxElevationFound) {

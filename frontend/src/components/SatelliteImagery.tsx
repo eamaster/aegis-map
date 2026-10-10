@@ -39,6 +39,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
   const [imageLoadError, setImageLoadError] = useState(false);
   const [imageKey, setImageKey] = useState(0); // Force re-render of img element
   const [fetchingFire, setFetchingFire] = useState(false);
+  const [fireError, setFireError] = useState<string | null>(null);
 
   // Calculate visible marker count (markers within image bounds)
   const visibleMarkerCount = useMemo(() => {
@@ -118,6 +119,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
     // Reset state before fetching
     setFireHotspots([]);
     setFireStats(null);
+    setFireError(null);
     setFetchingFire(true);
 
     try {
@@ -127,6 +129,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
       );
       if (!response.ok) {
         console.warn(`FIRMS API error: ${response.status}`);
+        setFireError(`NASA FIRMS proxy unavailable (HTTP ${response.status})`);
         return;
       }
 
@@ -134,6 +137,12 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
 
       if (data.error) {
         console.warn(`Backend API error: ${data.error}`);
+        setFireError(data.error);
+        return;
+      }
+
+      if (data.message && data.message.includes('not configured')) {
+        setFireError('FIRMS API key not configured on server');
         return;
       }
 
@@ -141,7 +150,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
         return;
       }
 
-      const hotspots: FireHotspot[] = data.hotspots.filter((h: any) => h.confidence !== 'l' && h.confidence !== 'low');
+      const hotspots: FireHotspot[] = data.hotspots.filter((h: FireHotspot) => h.confidence !== 'l' && h.confidence !== 'low');
 
       setFireHotspots(hotspots);
 
@@ -160,6 +169,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
       }
     } catch (error) {
       console.error('Error fetching FIRMS data:', error);
+      setFireError('Failed to connect to fire hotspot service');
     } finally {
       setFetchingFire(false);
     }
@@ -207,7 +217,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
       setImageUrl(baseUrl);
 
       // VIIRS fire overlay - use SAME bbox order and today's date for current fire data
-      const fireOverlay = `https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=VIIRS_NOAA20_Thermal_Anomalies_375m_All&TIME=${firmsDateStr}&CRS=EPSG:4326&WIDTH=800&HEIGHT=600&BBOX=${lat - bboxSize},${lng - bboxSize},${lat + bboxSize},${lng + bboxSize}&FORMAT=image/png&TRANSPARENT=true`;
+      const fireOverlay = `https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=VIIRS_SNPP_Thermal_Anomalies_375m_All&TIME=${firmsDateStr}&CRS=EPSG:4326&WIDTH=800&HEIGHT=600&BBOX=${lat - bboxSize},${lng - bboxSize},${lat + bboxSize},${lng + bboxSize}&FORMAT=image/png&TRANSPARENT=true`;
       setOverlayUrl(fireOverlay);
 
     } else if (selectedLayer === 'thermal') {
@@ -279,7 +289,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
             color: ds.text.tertiary,
           }}
         >
-          {selectedLayer === 'thermal' ? 'NASA GIBS' : selectedLayer === 'fire' ? 'NASA GIBS + Mapbox' : 'Mapbox Satellite'}
+          {selectedLayer === 'thermal' ? 'NASA GIBS (MODIS 7-2-1)' : selectedLayer === 'fire' ? 'NASA GIBS + FIRMS (S-NPP VIIRS)' : 'Mapbox Satellite'}
         </span>
       </div>
 
@@ -381,6 +391,23 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
                 </span>
               </div>
             </div>
+          ) : fireError ? (
+            <div
+              className="h-full flex flex-col items-center justify-center text-center"
+              style={{
+                padding: '16px',
+                background: 'rgba(239, 68, 68, 0.08)',
+                border: '1px solid rgba(239, 68, 68, 0.25)',
+                borderRadius: ds.borderRadius.lg,
+                marginBottom: '12px',
+              }}
+            >
+              <AlertCircle size={22} className="mb-2" style={{ color: '#ef4444' }} />
+              <p className="text-sm font-medium" style={{ color: '#ef4444' }}>Thermal Data Unavailable</p>
+              <p className="text-xs mt-1 max-w-[240px]" style={{ color: ds.text.secondary }}>
+                {fireError}
+              </p>
+            </div>
           ) : (
             <div
               className="h-full flex flex-col items-center justify-center text-center"
@@ -393,9 +420,9 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
               }}
             >
               <Flame size={22} className="mb-2" style={{ color: ds.text.tertiary }} />
-              <p className="text-sm font-medium" style={{ color: ds.text.secondary }}>No Active Hotspots</p>
-              <p className="text-xs mt-1 max-w-[200px]" style={{ color: ds.text.tertiary }}>
-                Satellite thermal sensors have not detected significant heat anomalies in this area recently.
+              <p className="text-sm font-medium" style={{ color: ds.text.secondary }}>No Active Hotspots (7 days)</p>
+              <p className="text-xs mt-1 max-w-[240px]" style={{ color: ds.text.tertiary }}>
+                NASA FIRMS VIIRS sensors have not detected thermal anomalies in this ±0.5° area during the last 7 days.
               </p>
             </div>
           )}
@@ -617,9 +644,6 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
               {disasterType === 'fire' && selectedLayer === 'fire' && fireHotspots.length > 0 && (
                 <>
                   {(() => {
-                    let visibleCount = 0;
-                    let filteredCount = 0;
-
                     const markers = fireHotspots.slice(0, 30).map((hotspot, idx) => {
                       // ✅ SYNCHRONIZED: Match WMS bbox (±0.5° range)
                       const bboxSize = 0.5;
@@ -633,11 +657,8 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
 
                       // Only show if within bounds (with small margin for edge cases)
                       if (relLng < -5 || relLng > 105 || relLat < -5 || relLat > 105) {
-                        filteredCount++;
                         return null;
                       }
-
-                      visibleCount++;
 
                       return (
                         <div

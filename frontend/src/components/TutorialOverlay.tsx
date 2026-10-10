@@ -3,7 +3,7 @@
  * Consistent styling with MapLegend and rest of dashboard
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { X, Flame, Satellite, MousePointer2, Activity, Sparkles, Info } from 'lucide-react';
 import { useDesignSystem } from '../hooks/useDesignSystem';
 
@@ -14,6 +14,11 @@ interface TutorialOverlayProps {
 export default function TutorialOverlay({ onClose }: TutorialOverlayProps) {
     const ds = useDesignSystem();
     const [isVisible, setIsVisible] = useState(false);
+
+    const handleClose = useCallback(() => {
+        setIsVisible(false);
+        setTimeout(onClose, 200);
+    }, [onClose]);
 
     useEffect(() => {
         setTimeout(() => setIsVisible(true), 50);
@@ -28,12 +33,7 @@ export default function TutorialOverlay({ onClose }: TutorialOverlayProps) {
             document.body.style.overflow = 'unset';
             window.removeEventListener('keydown', handleEscape);
         };
-    }, []);
-
-    const handleClose = () => {
-        setIsVisible(false);
-        setTimeout(onClose, 200);
-    };
+    }, [handleClose]);
 
     // Helper to add opacity to hex colors
     const addOpacity = (hex: string, opacity: number) => {

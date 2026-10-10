@@ -68,6 +68,7 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
     const [mapError, setMapError] = useState<string>('');
     const [lastUpdated, setLastUpdated] = useState<Date | undefined>(undefined);
     const [isRefreshing, setIsRefreshing] = useState(false);
+    const [isMapLoaded, setIsMapLoaded] = useState(false);
     const isInitialLoadRef = useRef(true);
 
     // Animation interval refs for proper cleanup
@@ -112,8 +113,9 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
                 'bottom-left'
             );
 
-            // DEBUG: Expose map for console debugging
+            // DEBUG: Expose map and selection handler for console debugging
             (window as any).mapDebug = map.current;
+            (window as any).selectDisasterDebug = onDisasterSelect;
 
             // Add navigation controls
             map.current.addControl(new mapboxgl.NavigationControl(), 'bottom-right');
@@ -142,8 +144,11 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
 
             // Add disaster layers when map finishes loading
             map.current.on('load', () => {
-                // Layers will be added by the useEffect if disasters are already loaded
                 console.log('✅ Map finished loading');
+                setIsMapLoaded(true);
+            });
+            map.current.on('style.load', () => {
+                setIsMapLoaded(true);
             });
         } catch (error) {
             console.error('Error creating map:', error);
@@ -254,44 +259,13 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
         await loadDisasters();
     };
 
-    // ✅ CRITICAL FIX: Re-render layers when filters change
+    // Re-render layers when map is loaded, filters change, or disasters update
     useEffect(() => {
-        if (!map.current || disasters.length === 0) return;
+        if (!map.current || !isMapLoaded || disasters.length === 0) return;
 
-        // Use helper function to clean up
         removeDisasterLayers(map.current, animationIdsRef.current);
-
-        // Re-add layers with current filters
         addDisasterLayers(disasters);
-    }, [activeFilters, disasters]); // No need for addDisasterLayers in deps // Re-run when filters OR disasters change
-
-    // ✅ PERFORMANCE FIX: Handle case where disasters load before map is ready
-    useEffect(() => {
-        if (!map.current || disasters.length === 0) return;
-
-        const mapInstance = map.current; // Capture in closure for cleanup
-
-        // Wait for map to be fully loaded before adding layers
-        if (mapInstance.loaded()) {
-            addDisasterLayers(disasters);
-        } else {
-            // If map not loaded yet, add listener
-            const onLoad = () => {
-                if (mapInstance && disasters.length > 0) {
-                    addDisasterLayers(disasters);
-                }
-            };
-
-            mapInstance.once('load', onLoad);
-
-            // Cleanup function always runs, even if map loads before unmount
-            return () => {
-                // Remove listener in case it hasn't fired yet
-                mapInstance.off('load', onLoad);
-            };
-        }
-    }, [disasters]); // Run when disasters are loaded
-
+    }, [isMapLoaded, activeFilters, disasters]);
 
     // Add disaster data layers to map
     const addDisasterLayers = (disasters: Disaster[]) => {

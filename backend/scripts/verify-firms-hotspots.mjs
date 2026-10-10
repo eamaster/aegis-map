@@ -144,49 +144,92 @@ async function compareLocation(lat, lng, eventInfo = null) {
         console.log(`  Our API:     ${ourCount} hotspots (${ourHighConf} high confidence)`);
         console.log(`               Max: ${ourMaxBright.toFixed(1)}K brightness, ${ourMaxPower.toFixed(1)}MW power`);
 
-        // 2. Call FIRMS directly
-        const lat1 = lat - BBOX_DEG;
-        const lat2 = lat + BBOX_DEG;
-        const lon1 = lng - BBOX_DEG;
-        const lon2 = lng + BBOX_DEG;
+        // 2. Call FIRMS directly using supported Area API request windows (DAY_RANGE 1..5)
+        const lat1 = Math.max(-90, lat - BBOX_DEG);
+        const lat2 = Math.min(90, lat + BBOX_DEG);
+        const lon1 = Math.max(-180, Math.min(180, lng - BBOX_DEG));
+        const lon2 = Math.max(-180, Math.min(180, lng + BBOX_DEG));
+        const bbox = `${lon1.toFixed(4)},${lat1.toFixed(4)},${lon2.toFixed(4)},${lat2.toFixed(4)}`;
 
-        const firmsUrl = `https://firms.modaps.eosdis.nasa.gov/api/area/csv/${FIRMS_MAP_KEY}/VIIRS_SNPP_NRT/${lon1},${lat1},${lon2},${lat2}/${DAYS}`;
+        const parseCsvRecords = (csvText) => {
+            const trimmed = csvText.trim();
+            if (!trimmed) return [];
+            const lines = trimmed.split(/\r?\n/).filter(l => l.trim().length > 0);
+            if (lines.length <= 1) return [];
 
-        console.log(`  FIRMS URL:   ${firmsUrl.replace(FIRMS_MAP_KEY, 'REDACTED')}`);
+            const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+            const col = name => headers.indexOf(name);
+            const latIdx = col('latitude');
+            const lngIdx = col('longitude');
+            const bright4Idx = col('bright_ti4');
+            const dateIdx = col('acq_date');
+            const timeIdx = col('acq_time');
+            const satIdx = col('satellite');
+            const confIdx = col('confidence');
+            const frpIdx = col('frp');
 
-        const firmsResp = await fetch(firmsUrl);
+            if (latIdx === -1 || lngIdx === -1) return [];
 
-        if (!firmsResp.ok) {
-            throw new Error(`FIRMS API failed: ${firmsResp.status} ${firmsResp.statusText}`);
+            const records = [];
+            for (let i = 1; i < lines.length; i++) {
+                const parts = lines[i].split(',').map(p => p.trim());
+                if (parts.length < Math.max(latIdx, lngIdx) + 1) continue;
+                const latitude = parseFloat(parts[latIdx]);
+                const longitude = parseFloat(parts[lngIdx]);
+                if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) continue;
+
+                records.push({
+                    latitude,
+                    longitude,
+                    bright_ti4: bright4Idx >= 0 ? parseFloat(parts[bright4Idx]) || 0 : 0,
+                    acq_date: dateIdx >= 0 ? parts[dateIdx] : '',
+                    acq_time: timeIdx >= 0 ? parts[timeIdx] : '',
+                    satellite: satIdx >= 0 ? parts[satIdx] : '',
+                    confidence: confIdx >= 0 ? parts[confIdx] : 'n',
+                    frp: frpIdx >= 0 ? parseFloat(parts[frpIdx]) || 0 : 0,
+                });
+            }
+            return records;
+        };
+
+        let directRecords = [];
+        if (DAYS <= 5) {
+            const firmsUrl = `https://firms.modaps.eosdis.nasa.gov/api/area/csv/${FIRMS_MAP_KEY}/VIIRS_SNPP_NRT/${bbox}/${DAYS}`;
+            console.log(`  FIRMS URL:   ${firmsUrl.replace(FIRMS_MAP_KEY, 'REDACTED')}`);
+            const firmsResp = await fetch(firmsUrl);
+            if (!firmsResp.ok) {
+                throw new Error(`FIRMS API failed: ${firmsResp.status} ${firmsResp.statusText}`);
+            }
+            directRecords = parseCsvRecords(await firmsResp.text());
+        } else {
+            // Split 7 days into supported requests: 5 days recent + 2 days prior
+            const url5 = `https://firms.modaps.eosdis.nasa.gov/api/area/csv/${FIRMS_MAP_KEY}/VIIRS_SNPP_NRT/${bbox}/5`;
+            const d = new Date();
+            d.setUTCDate(d.getUTCDate() - 6);
+            const startIso = d.toISOString().split('T')[0];
+            const url2 = `https://firms.modaps.eosdis.nasa.gov/api/area/csv/${FIRMS_MAP_KEY}/VIIRS_SNPP_NRT/${bbox}/2/${startIso}`;
+
+            console.log(`  FIRMS URLs:  ${url5.replace(FIRMS_MAP_KEY, 'REDACTED')} and ${url2.replace(FIRMS_MAP_KEY, 'REDACTED')}`);
+            const [resp5, resp2] = await Promise.all([fetch(url5), fetch(url2)]);
+            if (!resp5.ok) throw new Error(`FIRMS API failed (5-day window): ${resp5.status}`);
+            if (!resp2.ok) throw new Error(`FIRMS API failed (2-day window): ${resp2.status}`);
+
+            const recs5 = parseCsvRecords(await resp5.text());
+            const recs2 = parseCsvRecords(await resp2.text());
+
+            // Deduplicate across the two windows
+            const map = new Map();
+            for (const r of [...recs5, ...recs2]) {
+                const key = `${r.latitude.toFixed(5)}|${r.longitude.toFixed(5)}|${r.acq_date}|${r.acq_time}|${r.satellite}`;
+                if (!map.has(key)) map.set(key, r);
+            }
+            directRecords = Array.from(map.values());
         }
 
-        const csvText = await firmsResp.text();
-        const lines = csvText.trim().split('\\n');
-
-        // First line is header
-        const header = lines[0];
-        const dataLines = lines.slice(1).filter(l => l.trim() !== '');
-
-        const firmsCount = dataLines.length;
-
-        // Parse CSV for stats
-        let firmsHighConf = 0;
-        let firmsMaxBright = 0;
-        let firmsMaxPower = 0;
-
-        if (firmsCount > 0) {
-            dataLines.forEach(line => {
-                const parts = line.split(',');
-                // CSV format: latitude,longitude,bright_ti4,scan,track,acq_date,acq_time,satellite,confidence,version,bright_ti5,frp,daynight
-                const confidence = parts[8];
-                const bright_ti4 = parseFloat(parts[2]);
-                const frp = parseFloat(parts[11]);
-
-                if (confidence === 'h' || confidence === 'high') firmsHighConf++;
-                if (bright_ti4 > firmsMaxBright) firmsMaxBright = bright_ti4;
-                if (frp > firmsMaxPower) firmsMaxPower = frp;
-            });
-        }
+        const firmsCount = directRecords.length;
+        const firmsHighConf = directRecords.filter(r => r.confidence === 'h' || r.confidence === 'high').length;
+        const firmsMaxBright = firmsCount > 0 ? Math.max(...directRecords.map(r => r.bright_ti4)) : 0;
+        const firmsMaxPower = firmsCount > 0 ? Math.max(...directRecords.map(r => r.frp)) : 0;
 
         console.log(`  FIRMS Direct: ${firmsCount} hotspots (${firmsHighConf} high confidence)`);
         console.log(`               Max: ${firmsMaxBright.toFixed(1)}K brightness, ${firmsMaxPower.toFixed(1)}MW power`);

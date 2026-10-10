@@ -124,3 +124,146 @@ export function formatCapabilityContext(
 	}
 	return `Named satellite sensors: ${capabilities.summary} optical=${capabilities.optical}; thermal=${capabilities.thermal}; sar=${capabilities.sar}.`;
 }
+
+/**
+ * Compute the standard NORAD TLE checksum (mod 10).
+ * Digits 0-9 count as their face value, '-' counts as 1, all other characters count as 0.
+ * Computed over columns 0 through 67.
+ */
+export function computeTleChecksum(line: string): number {
+	let checksum = 0;
+	const content = line.substring(0, 68);
+	for (let i = 0; i < content.length; i++) {
+		const char = content[i];
+		if (char >= '0' && char <= '9') {
+			checksum += Number.parseInt(char, 10);
+		} else if (char === '-') {
+			checksum += 1;
+		}
+	}
+	return checksum % 10;
+}
+
+export type ParsedTleRecord = {
+	noradId: number;
+	name: string;
+	line1: string;
+	line2: string;
+};
+
+/**
+ * Validate a 3-line TLE record (name, line1, line2).
+ * Verifies catalog IDs, line prefixes, lengths, and checksums.
+ */
+export function validateTleRecord(lines: readonly string[]): {
+	valid: boolean;
+	record?: ParsedTleRecord;
+	reason?: string;
+} {
+	if (lines.length < 3) {
+		return { valid: false, reason: 'Record requires at least 3 lines' };
+	}
+
+	const name = lines[0].trim();
+	const line1 = lines[1].trim();
+	const line2 = lines[2].trim();
+
+	if (!name) {
+		return { valid: false, reason: 'Satellite name is empty' };
+	}
+
+	if (!line1.startsWith('1 ') || line1.length < 68) {
+		return { valid: false, reason: 'Line 1 is invalid format or length' };
+	}
+	if (!line2.startsWith('2 ') || line2.length < 68) {
+		return { valid: false, reason: 'Line 2 is invalid format or length' };
+	}
+
+	const catNr1 = Number.parseInt(line1.substring(2, 7).trim(), 10);
+	const catNr2 = Number.parseInt(line2.substring(2, 7).trim(), 10);
+
+	if (Number.isNaN(catNr1) || Number.isNaN(catNr2) || catNr1 !== catNr2) {
+		return { valid: false, reason: 'Catalog number mismatch or invalid' };
+	}
+
+	const check1Expected = Number.parseInt(line1[line1.length - 1], 10);
+	const check2Expected = Number.parseInt(line2[line2.length - 1], 10);
+
+	if (computeTleChecksum(line1) !== check1Expected) {
+		return { valid: false, reason: 'Line 1 checksum mismatch' };
+	}
+	if (computeTleChecksum(line2) !== check2Expected) {
+		return { valid: false, reason: 'Line 2 checksum mismatch' };
+	}
+
+	return {
+		valid: true,
+		record: {
+			noradId: catNr1,
+			name,
+			line1,
+			line2,
+		},
+	};
+}
+
+/**
+ * Parse a multi-satellite raw TLE text block into a map keyed by NORAD ID.
+ */
+export function parseTleText(tleText: string): Map<number, ParsedTleRecord> {
+	const map = new Map<number, ParsedTleRecord>();
+	if (!tleText || !tleText.trim()) return map;
+
+	const rawLines = tleText.trim().split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+
+	for (let i = 0; i + 2 < rawLines.length; i += 3) {
+		const result = validateTleRecord([rawLines[i], rawLines[i + 1], rawLines[i + 2]]);
+		if (result.valid && result.record) {
+			map.set(result.record.noradId, result.record);
+		}
+	}
+
+	return map;
+}
+
+/**
+ * Serialize a map of TLE records to standard text block in monitored fleet order.
+ */
+export function serializeTles(tleMap: Map<number, ParsedTleRecord>): string {
+	const lines: string[] = [];
+
+	// First output monitored satellites in canonical order
+	for (const id of MONITORED_NORAD_IDS) {
+		const rec = tleMap.get(id);
+		if (rec) {
+			lines.push(rec.name, rec.line1, rec.line2);
+		}
+	}
+
+	// Then any extra satellites not in monitored array
+	for (const [id, rec] of tleMap.entries()) {
+		if (!(MONITORED_NORAD_IDS as readonly number[]).includes(id)) {
+			lines.push(rec.name, rec.line1, rec.line2);
+		}
+	}
+
+	return lines.join('\n');
+}
+
+/**
+ * Merge newly fetched TLE records with existing/cached records.
+ * Ensures a single satellite fetch failure does not discard other valid cached records.
+ */
+export function mergeTles(
+	existingTleText: string | null | undefined,
+	freshRecords: ParsedTleRecord[],
+): string {
+	const map = parseTleText(existingTleText || '');
+
+	for (const rec of freshRecords) {
+		map.set(rec.noradId, rec);
+	}
+
+	return serializeTles(map);
+}
+

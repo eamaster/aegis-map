@@ -9,7 +9,7 @@ import type { Disaster, WeatherData, AIAnalysisResponse } from '../types';
 import { getNextPass, predictPasses, type SatellitePass } from '../utils/orbitalEngine';
 import SatelliteImagery from './SatelliteImagery';
 import { useDesignSystem } from '../hooks/useDesignSystem';
-import { API_BASE } from '../config/api';
+import { apiUrl } from '../config/api';
 import { debugLog } from '../utils/debug';
 import {
     analysisRequestIdentity,
@@ -65,18 +65,48 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
 
         const fetchWeather = async (lat: number, lng: number, passTime: Date) => {
             try {
-                const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&hourly=cloud_cover&forecast_days=2`;
+                // Request explicit UTC hourly forecasts to avoid local solar time ambiguity
+                const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&hourly=cloud_cover&forecast_days=2&timezone=UTC`;
                 debugLog('weather', `Fetching weather for (${lat.toFixed(2)}, ${lng.toFixed(2)})`, 'info');
                 const response = await fetch(url, { signal: tleAbort.signal });
                 if (!response.ok) throw new Error(`Weather API error: ${response.status}`);
                 const data: WeatherData = await response.json();
                 if (!isCurrentGeneration(generation, selectionGenRef.current)) return;
-                if (!data.hourly || !data.hourly.cloud_cover) {
+                if (!data.hourly || !Array.isArray(data.hourly.cloud_cover) || !Array.isArray(data.hourly.time) || data.hourly.time.length === 0) {
                     setCloudCover(null);
                     return;
                 }
-                const closestIndex = data.hourly.time.findIndex((time) => new Date(time + 'Z') >= passTime);
-                setCloudCover(closestIndex >= 0 ? data.hourly.cloud_cover[closestIndex] : null);
+
+                // Match nearest hour to predicted pass time (within 2-hour window)
+                let nearestIdx = -1;
+                let minDiffMs = Infinity;
+                const passTimeMs = passTime.getTime();
+
+                for (let i = 0; i < data.hourly.time.length; i++) {
+                    const tStr = data.hourly.time[i];
+                    // Open-Meteo returns ISO strings (e.g. 2026-10-10T12:00); with timezone=UTC, treat strictly as UTC
+                    const tIso = tStr.endsWith('Z') ? tStr : `${tStr}:00Z`.replace(/:00:00Z$/, ':00Z');
+                    const tMs = new Date(tIso).getTime();
+                    if (!Number.isNaN(tMs)) {
+                        const diff = Math.abs(tMs - passTimeMs);
+                        if (diff < minDiffMs) {
+                            minDiffMs = diff;
+                            nearestIdx = i;
+                        }
+                    }
+                }
+
+                const MAX_WEATHER_DIFF_MS = 2 * 60 * 60 * 1000; // 2 hours
+                if (nearestIdx >= 0 && minDiffMs <= MAX_WEATHER_DIFF_MS) {
+                    const val = data.hourly.cloud_cover[nearestIdx];
+                    if (typeof val === 'number' && Number.isFinite(val) && val >= 0 && val <= 100) {
+                        setCloudCover(val);
+                    } else {
+                        setCloudCover(null);
+                    }
+                } else {
+                    setCloudCover(null);
+                }
             } catch (error) {
                 if (error instanceof DOMException && error.name === 'AbortError') return;
                 if (!isCurrentGeneration(generation, selectionGenRef.current)) return;
@@ -87,8 +117,8 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
 
         const fetchData = async () => {
             try {
-                debugLog('tles', `Fetching TLEs from ${API_BASE}/api/tles`, 'info');
-                const tleResponse = await fetch(`${API_BASE}/api/tles`, { signal: tleAbort.signal });
+                debugLog('tles', `Fetching TLEs from ${apiUrl('/api/tles')}`, 'info');
+                const tleResponse = await fetch(apiUrl('/api/tles'), { signal: tleAbort.signal });
                 const contentType = tleResponse.headers.get('content-type') || '';
                 const isJson = contentType.includes('application/json');
                 if (!tleResponse.ok) {
@@ -204,7 +234,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
 
         (async () => {
             try {
-                const response = await fetch(`${API_BASE}/api/analyze`, {
+                const response = await fetch(apiUrl('/api/analyze'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(requestBody),
