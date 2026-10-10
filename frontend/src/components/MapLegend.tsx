@@ -11,7 +11,7 @@ import { useState } from 'react';
 import { Flame, Mountain, Waves, RefreshCw, ChevronUp, ChevronDown } from 'lucide-react';
 import { useDesignSystem } from '../hooks/useDesignSystem';
 import type { DisasterSourceStatus } from '../types';
-import { describeDisasterSources } from '../utils/disasterSources';
+import { describeDisasterSources, DISASTER_SCOPE, displayCategoryCount } from '../utils/disasterSources';
 
 interface DisasterCounts {
     fires: number;
@@ -134,6 +134,9 @@ export default function MapLegend({
             data-source-eonet={sourceStatus?.eonet ?? 'unknown'}
             data-source-usgs={sourceStatus?.usgs ?? 'unknown'}
             data-total={counts.total}
+            data-count-fire={counts.fires}
+            data-count-volcano={counts.volcanoes}
+            data-count-earthquake={counts.earthquakes}
         >
             <div
                 className="w-full transition-all duration-300"
@@ -339,7 +342,7 @@ export default function MapLegend({
                                         marginLeft: 'auto',
                                     }}
                                 >
-                                    {counts.fires.toLocaleString()}
+                                    {displayCategoryCount(counts.fires, 'fire', sourceStatus, loadFailed)}
                                 </span>
                             </div>
                         </button>
@@ -424,7 +427,7 @@ export default function MapLegend({
                                         marginLeft: 'auto',
                                     }}
                                 >
-                                    {counts.volcanoes.toLocaleString()}
+                                    {displayCategoryCount(counts.volcanoes, 'volcano', sourceStatus, loadFailed)}
                                 </span>
                             </div>
                         </button>
@@ -509,11 +512,18 @@ export default function MapLegend({
                                         marginLeft: 'auto',
                                     }}
                                 >
-                                    {counts.earthquakes.toLocaleString()}
+                                    {displayCategoryCount(counts.earthquakes, 'earthquake', sourceStatus, loadFailed)}
                                 </span>
                             </div>
                         </button>
                     </div>
+                    <p
+                        data-testid="legend-scope"
+                        style={{ fontSize: '0.6rem', lineHeight: 1.4, color: ds.text.tertiary, marginTop: '8px' }}
+                    >
+                        Wildfires: {DISASTER_SCOPE.fire}. Volcanoes: {DISASTER_SCOPE.volcano}. Earthquakes:{' '}
+                        {DISASTER_SCOPE.earthquake}.
+                    </p>
                 </div>
 
                 {/* Footer - VERY COMPACT */}

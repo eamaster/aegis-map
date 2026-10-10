@@ -8,6 +8,9 @@ import {
 	readTleCache,
 	serializeTles,
 	TLE_CACHE_KEY,
+	TLE_FETCH_TIMEOUT_MS,
+	TLE_REFRESH_BACKOFF_MS,
+	TLE_SCHEDULED_REFRESH_AFTER_MS,
 	validateTleRecord,
 	writeTleCache,
 	CachedTleRecord,
@@ -49,6 +52,24 @@ function celestrak(handler: (id: number) => Response | Promise<Response>) {
 	};
 	return { fetchImpl, calls };
 }
+
+/** Exact bytes returned by CelesTrak gp.php?CATNR=25994&FORMAT=tle on 2026-10-10 (HTTP 200, text/plain). */
+const CAPTURED_TERRA =
+	'TERRA                   \r\n1 25994U 99068A   26282.93987331  .00000272  00000+0  64302-4 0  9993\r\n2 25994  97.9326 327.8638 0001614 190.9180 292.5402 14.61172684426369\r\n';
+
+describe('captured CelesTrak response', () => {
+	it('is accepted by the production validator', () => {
+		const result = parseProviderTle(CAPTURED_TERRA, 25994, new Date('2026-10-10T09:40:00Z'));
+		expect(result.valid).toBe(true);
+		expect(result.record).toMatchObject({ noradId: 25994, name: 'TERRA', epoch: '2026-10-09T22:33:25.053Z' });
+	});
+
+	it('rejects a provider error page and the wrong object', () => {
+		expect(parseProviderTle('No GP data found', 25994, NOW).valid).toBe(false);
+		expect(parseProviderTle('<html><body>Service Unavailable</body></html>', 25994, NOW).valid).toBe(false);
+		expect(parseProviderTle(CAPTURED_TERRA, 27424, NOW).reason).toBe('Expected NORAD 27424, got 25994');
+	});
+});
 
 describe('TLE checksum and epoch', () => {
 	it('matches published NORAD checksums', () => {
@@ -184,6 +205,48 @@ describe('loadMonitoredTles cache policy', () => {
 		const result = await loadMonitoredTles(kv.kv, { now: NOW, fetchImpl });
 		expect(calls).toContain(39084);
 		expect(result.records.get(39084)?.line1).toHaveLength(69);
+	});
+
+	it('reproduces the production failure: every fetch times out, an empty cache with backoff is stored', async () => {
+		const kv = memoryKv();
+		const timeouts = celestrak(() => {
+			throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+		});
+		const first = await loadMonitoredTles(kv.kv, { now: NOW, fetchImpl: timeouts.fetchImpl });
+		expect(first.records.size).toBe(0);
+		expect(first.failed).toEqual([...MONITORED_NORAD_IDS].sort((a, b) => a - b));
+		expect(first.nextAttemptAt).toBe(new Date(NOW.getTime() + TLE_REFRESH_BACKOFF_MS).toISOString());
+		expect(JSON.parse(kv.puts[0].value)).toEqual({ version: 3, records: {}, lastFailedRefreshAt: NOW.toISOString() });
+
+		const held = await loadMonitoredTles(kv.kv, { now: new Date(NOW.getTime() + 5 * 60 * 1000), fetchImpl: timeouts.fetchImpl });
+		expect(held).toMatchObject({ backoffActive: true, failed: [], nextAttemptAt: first.nextAttemptAt });
+		expect(timeouts.calls).toHaveLength(MONITORED_NORAD_IDS.length);
+
+		const recovered = celestrak((id) => new Response(tleText(id)));
+		const later = await loadMonitoredTles(kv.kv, { now: new Date(NOW.getTime() + TLE_REFRESH_BACKOFF_MS + 1000), fetchImpl: recovered.fetchImpl });
+		expect(later).toMatchObject({ status: 'complete', backoffActive: false, nextAttemptAt: null });
+		expect(recovered.calls).toHaveLength(MONITORED_NORAD_IDS.length);
+	});
+
+	it('uses a fetch timeout longer than the observed CelesTrak latency', () => {
+		expect(TLE_FETCH_TIMEOUT_MS).toBeGreaterThan(14_300);
+	});
+
+	it('scheduled refresh renews records the request path still treats as fresh', async () => {
+		const doc = cachedDoc(new Date(NOW.getTime() - 6 * HOUR));
+		const requestPath = celestrak(() => {
+			throw new Error('should not fetch');
+		});
+		const viaRequest = await loadMonitoredTles(memoryKv({ initial: { [TLE_CACHE_KEY]: doc } }).kv, { now: NOW, fetchImpl: requestPath.fetchImpl });
+		expect(viaRequest.refreshed).toEqual([]);
+
+		const scheduled = celestrak((id) => new Response(tleText(id)));
+		const viaCron = await loadMonitoredTles(memoryKv({ initial: { [TLE_CACHE_KEY]: doc } }).kv, {
+			now: NOW,
+			fetchImpl: scheduled.fetchImpl,
+			refreshAfterMs: TLE_SCHEDULED_REFRESH_AFTER_MS,
+		});
+		expect(viaCron.refreshed).toHaveLength(MONITORED_NORAD_IDS.length);
 	});
 
 	it('still serves upstream data when KV get and put reject', async () => {

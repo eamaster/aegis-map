@@ -346,7 +346,8 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
           <AlertCircle className="flex-shrink-0" size={15} style={{ color: ds.isDark ? '#fbbf24' : '#ca8a04', marginTop: '2px' }} />
           <div>
             <p className="font-medium" style={{ fontSize: '0.75rem', color: ds.text.primary }}>
-              <strong>Historical Event:</strong> Latest reported observation {(() => {
+              <strong>{disasterType === 'volcano' ? 'Open volcanic event:' : 'Historical Event:'}</strong>{' '}
+              {disasterType === 'volcano' ? 'NASA EONET reported it' : 'Latest reported observation'} {(() => {
                 if (daysSinceDetection >= 365) {
                   const years = Math.floor(daysSinceDetection / 365);
                   const months = Math.floor((daysSinceDetection % 365) / 30);
@@ -357,7 +358,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
                   return days > 0 ? `${months} month${months > 1 ? 's' : ''} and ${days} day${days > 1 ? 's' : ''} ago` : `${months} month${months > 1 ? 's' : ''} ago`;
                 }
                 return `${daysSinceDetection} day${daysSinceDetection > 1 ? 's' : ''} ago`;
-              })()}.
+              })()}{disasterType === 'volcano' ? ' and has not closed it; that date is not the latest activity.' : '.'}
             </p>
             <p style={{ fontSize: '0.75rem', color: ds.text.secondary, marginTop: '4px' }}>
               Imagery and detections below are recent, not from the event date. Conditions may differ.

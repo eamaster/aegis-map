@@ -25,7 +25,7 @@ import {
 	parseCoordinateQuery,
 	planFirmsWindows,
 } from './firms';
-import { loadMonitoredTles, serializeTles } from './satellites';
+import { loadMonitoredTles, serializeTles, TLE_SCHEDULED_REFRESH_AFTER_MS } from './satellites';
 
 type Bindings = {
 	AEGIS_CACHE: KVNamespace;
@@ -47,6 +47,7 @@ const EXPOSED_HEADERS = [
 	'X-TLE-Refreshed',
 	'X-TLE-Retained',
 	'X-TLE-Oldest-Epoch',
+	'Retry-After',
 ];
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -98,8 +99,8 @@ function readDisastersCache(raw: string | null): DisastersCacheDocument | null {
 			Array.isArray(doc.disasters) &&
 			isCachedSourceStatus(doc.sources?.eonet) &&
 			isCachedSourceStatus(doc.sources?.usgs) &&
-			// A cache never holds a document in which both sources failed.
-			(doc.sources!.eonet.status === 'ok' || doc.sources!.usgs.status === 'ok') &&
+			// A document with no successful source must still carry records (partial EONET).
+			(doc.sources!.eonet.status === 'ok' || doc.sources!.usgs.status === 'ok' || doc.disasters.length > 0) &&
 			doc.partial === (doc.sources!.eonet.status !== 'ok' || doc.sources!.usgs.status !== 'ok') &&
 			typeof doc.fetchedAt === 'string' &&
 			Number.isFinite(Date.parse(doc.fetchedAt))
@@ -180,10 +181,24 @@ app.get('/api/tles', async (c) => {
 	const result = await loadMonitoredTles(c.env.AEGIS_CACHE);
 
 	if (result.records.size === 0) {
+		const retryAfterSeconds = result.nextAttemptAt
+			? Math.max(1, Math.ceil((Date.parse(result.nextAttemptAt) - Date.now()) / 1000))
+			: null;
 		return c.json(
-			{ error: 'No valid TLE data available', missing: result.missing, failed: result.failed },
+			{
+				error: 'No valid orbital elements are available',
+				code: 'tle_unavailable',
+				missing: result.missing,
+				failed: result.failed,
+				upstreamAttempted: result.failed.length > 0 || result.refreshed.length > 0,
+				retryAfterSeconds,
+			},
 			502,
-			{ 'X-TLE-Status': 'unavailable' },
+			{
+				'X-TLE-Status': 'unavailable',
+				'X-TLE-Missing': result.missing.join(','),
+				...(retryAfterSeconds !== null ? { 'Retry-After': String(retryAfterSeconds) } : {}),
+			},
 		);
 	}
 
@@ -285,4 +300,17 @@ app.post('/api/analyze', async (c) => {
 	}
 });
 
-export default app;
+/** Cron Trigger: refresh orbital elements outside user requests (same cache policy). */
+export async function refreshTlesScheduled(env: Pick<Bindings, 'AEGIS_CACHE'>): Promise<void> {
+	const result = await loadMonitoredTles(env.AEGIS_CACHE, { refreshAfterMs: TLE_SCHEDULED_REFRESH_AFTER_MS });
+	console.log(
+		`Scheduled TLE refresh: status=${result.status} refreshed=${result.refreshed.join(',') || '-'} failed=${result.failed.join(',') || '-'} missing=${result.missing.join(',') || '-'} backoff=${result.backoffActive}`,
+	);
+}
+
+export default {
+	fetch: app.fetch,
+	async scheduled(_controller: ScheduledController, env: Bindings, ctx: ExecutionContext) {
+		ctx.waitUntil(refreshTlesScheduled(env));
+	},
+} satisfies ExportedHandler<Bindings>;

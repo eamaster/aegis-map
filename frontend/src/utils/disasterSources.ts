@@ -31,6 +31,28 @@ export function describeDisasterSources(status: DisasterSourceStatus | null): st
     return `Unavailable: ${down.join(', ')}. Counts are incomplete.`;
 }
 
+/** Query scope per category, as served by the Worker (backend EONET_QUERIES and USGS_URL). */
+export const DISASTER_SCOPE = {
+    fire: 'open NASA EONET wildfires with activity in the last 60 days',
+    volcano: 'every open NASA EONET volcanic event, dated by its report (often months old)',
+    earthquake: 'USGS M2.5+ earthquakes from the past day',
+} as const;
+
+/**
+ * Legend count text. Zero is only shown as confirmed absence when the
+ * category's source loaded successfully; otherwise it is unknown.
+ */
+export function displayCategoryCount(
+    count: number,
+    type: Disaster['type'],
+    status: DisasterSourceStatus | null,
+    loadFailed: boolean,
+): string {
+    const state = status ? (type === 'earthquake' ? status.usgs : status.eonet) : 'unknown';
+    if (count === 0 && (loadFailed || state !== 'ok')) return '—';
+    return count.toLocaleString();
+}
+
 /** Shape check for one /api/disasters record; the backend owns normalization. */
 export function isDisasterRecord(value: unknown): value is Disaster {
     if (!value || typeof value !== 'object') return false;
