@@ -165,10 +165,18 @@ describe('createHotspotLoader selection safety', () => {
 describe('summarizeVisibleHotspots', () => {
     it('excludes unreported measurements instead of treating them as zero', () => {
         const s = summarizeVisibleHotspots([
-            hotspot({ bright_ti4: 300, frp: null, confidence: null }),
-            hotspot({ bright_ti4: null, frp: 4, confidence: 'n' }),
+            hotspot({ bright_ti4: 300, frp: null, confidence: null, acq_date: '2026-10-07', acq_time: '0915' }),
+            hotspot({ bright_ti4: null, frp: 4, confidence: 'n', acq_date: '2026-10-06', acq_time: '2210' }),
         ]);
-        expect(s).toEqual({ total: 2, high: 0, nominal: 1, unknown: 1, avgBrightness: 300, maxPower: 4 });
-        expect(summarizeVisibleHotspots([]).avgBrightness).toBeNull();
+        expect(s).toEqual({
+            total: 2,
+            high: 0,
+            nominal: 1,
+            unknown: 1,
+            maxBrightness: 300,
+            maxPower: 4,
+            latestDetection: '2026-10-07 09:15 UTC',
+        });
+        expect(summarizeVisibleHotspots([])).toMatchObject({ maxBrightness: null, maxPower: null, latestDetection: null });
     });
 });

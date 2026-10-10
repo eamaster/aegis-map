@@ -21,6 +21,7 @@
  *
  * Exit codes: 0 all checks passed, 1 a check failed, 2 the run could not start.
  */
+import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { EONET_URL, USGS_URL, parseEonetPayload, parseUsgsPayload } from '../../backend/src/disasters.ts';
 import { MONITORED_NORAD_IDS, validateTleRecord } from '../../backend/src/satellites.ts';
@@ -30,6 +31,8 @@ const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173/aegis-ma
 const API_BASE_URL = (process.env.API_BASE_URL || 'http://127.0.0.1:8787').replace(/\/+$/, '');
 const API_ORIGIN = new URL(API_BASE_URL).origin;
 const STEP_TIMEOUT = Number(process.env.E2E_STEP_TIMEOUT_MS || 45000);
+/** Screenshots go to the git-ignored repository .tmp directory. */
+const SCREENSHOT = (name) => fileURLToPath(new URL(`../../.tmp/${name}`, import.meta.url));
 const scenarioArg = process.argv.includes('--scenario') ? process.argv[process.argv.indexOf('--scenario') + 1] : 'all';
 
 const isApi = (url, path) => {
@@ -199,7 +202,10 @@ async function runSuccess(browser) {
             const names = tleCheck.ok ? tleCheck.records.map((r) => r.name) : [];
             checks.record(names.includes(sat), 'pass satellite is one of the served TLEs', sat);
             checks.record(passTime >= Date.now() - 10 * 60 * 1000 && passTime <= Date.now() + 24 * 3600 * 1000, 'pass time within the 24 h window', new Date(passTime).toISOString());
-            evidence.pass = { satellite: sat, time: new Date(passTime).toISOString() };
+            const threshold = await page.locator('[data-testid="sidebar"]').getAttribute('data-pass-threshold');
+            const note = (await page.locator('[data-testid="pass-note"]').textContent()) ?? '';
+            checks.record(['25', '15', '5'].includes(threshold) && note.includes(`${threshold}° elevation`) && note.includes('does not guarantee'), 'pass note states sampling threshold and no acquisition guarantee', `threshold=${threshold}`);
+            evidence.pass = { satellite: sat, time: new Date(passTime).toISOString(), threshold };
         } else {
             evidence.pass = { state: passState };
         }
@@ -240,6 +246,8 @@ async function runSuccess(browser) {
         // Imagery: fire view and false color must request exactly the labelled product/date.
         for (const tab of ['fire', 'falsecolor']) {
             const gibsBase = expectResponse((r) => r.url().startsWith('https://gibs.earthdata.nasa.gov/') && !r.url().includes('Thermal_Anomalies'), `GIBS ${tab}`);
+            const gibsOverlay = tab === 'fire' ? expectResponse((r) => r.url().startsWith('https://gibs.earthdata.nasa.gov/') && r.url().includes('Thermal_Anomalies'), 'GIBS thermal overlay') : null;
+            gibsOverlay?.catch(() => {});
             await page.locator(`[data-testid="imagery-tab-${tab}"]`).click();
             const gibs = await gibsBase;
             const gu = new URL(gibs.url());
@@ -252,15 +260,31 @@ async function runSuccess(browser) {
             const [minLat, minLng, maxLat, maxLng] = (gu.searchParams.get('BBOX') || '').split(',').map(Number);
             checks.record(Math.abs((minLat + maxLat) / 2 - selected.lat) < 1e-6 && Math.abs((minLng + maxLng) / 2 - selected.lng) < 1e-6, `${tab} imagery centered on selected event`);
             evidence[`imagery_${tab}`] = { product, date, http: gibs.status(), contentType };
+            const caption = (await page.locator('[data-testid="imagery-caption"]').textContent()) ?? '';
+            checks.record(caption.includes(`requested UTC day ${date}`) && caption.includes('not confirmed'), `${tab} caption labels the date as requested, coverage unconfirmed`, caption.slice(0, 120));
+            const limitation = await imagery.getAttribute('data-imagery-limitation');
+            const limitationShown = (await page.locator('[data-testid="imagery-limitation"]').count()) > 0;
+            checks.record(!!limitation === limitationShown, `${tab} bbox limitation notice matches spec`, limitation || 'none');
             if (tab === 'fire') {
-                evidence.imagery_fire.overlay = {
-                    product: await imagery.getAttribute('data-imagery-overlay-product'),
-                    date: await imagery.getAttribute('data-imagery-overlay-date'),
-                };
+                const overlay = await gibsOverlay;
+                const ou = new URL(overlay.url());
+                const overlayProduct = await imagery.getAttribute('data-imagery-overlay-product');
+                const overlayDate = await imagery.getAttribute('data-imagery-overlay-date');
+                const overlayStatus = await waitForAttr(page, '[data-testid="satellite-imagery"]', 'data-imagery-overlay-status', ['loaded', 'error'], 'thermal overlay');
+                const overlayBody = await overlay.body().catch(() => Buffer.alloc(0));
+                const isPng = overlayBody.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+                const overlayType = overlay.headers()['content-type'] ?? '';
+                checks.record(ou.searchParams.get('LAYERS') === overlayProduct && ou.searchParams.get('TIME') === overlayDate && ou.searchParams.get('FORMAT') === 'image/png' && ou.searchParams.get('TRANSPARENT') === 'true', 'overlay request matches labelled product/date as transparent PNG', `${overlayProduct} ${overlayDate}`);
+                checks.record(overlay.status() === 200 && overlayType === 'image/png' && isPng, 'overlay response is a PNG image', `HTTP ${overlay.status()} ${overlayType} ${overlayBody.length} bytes signature=${isPng}`);
+                checks.record(overlayStatus === 'loaded', 'overlay decoded and shown in UI', overlayStatus);
+                evidence.imagery_fire.overlay = { product: overlayProduct, date: overlayDate, http: overlay.status(), contentType: overlayType, bytes: overlayBody.length, ui: overlayStatus };
+                const markers = Number(await imagery.getAttribute('data-imagery-markers'));
+                const total = Number(await imagery.getAttribute('data-firms-total'));
+                checks.record(Number.isInteger(markers) && markers >= 0 && markers <= total, 'drawn markers do not exceed FIRMS detections', `${markers}/${total}`);
             }
         }
 
-        await page.screenshot({ path: 'e2e-success.png' });
+        await page.screenshot({ path: SCREENSHOT('e2e-success.png') });
     } catch (err) {
         checks.record(false, 'scenario completed', err instanceof Error ? err.message : String(err));
     } finally {
@@ -303,7 +327,13 @@ async function runFailure(browser) {
                 }),
             }),
         );
-        await page.route('https://gibs.earthdata.nasa.gov/**', (route) => route.abort('failed'));
+        // Fire base passes through; its overlay is an undecodable "PNG"; every other GIBS image fails.
+        await page.route('https://gibs.earthdata.nasa.gov/**', (route) => {
+            const url = route.request().url();
+            if (url.includes('Thermal_Anomalies')) return route.fulfill({ status: 200, contentType: 'image/png', body: 'not a png' });
+            if (url.includes('MODIS_Aqua_CorrectedReflectance_TrueColor')) return route.continue();
+            return route.abort('failed');
+        });
 
         const { body } = await loadApp(page, checks);
         const legendState = await waitForAttr(page, '[data-testid="map-legend"]', 'data-disaster-state', ['complete', 'partial', 'failed', 'unknown'], 'legend');
@@ -327,9 +357,16 @@ async function runFailure(browser) {
         checks.record(imageryText.includes('2000-01-01') && imageryText.includes('VIIRS_SNPP_NRT'), 'unavailable state names the requested sensor and window');
 
         await page.locator('[data-testid="imagery-tab-fire"]').click();
+        const fireBase = await waitForAttr(page, '[data-testid="satellite-imagery"]', 'data-imagery-status', ['loaded', 'error'], 'fire base imagery');
+        const overlayStatus = await waitForAttr(page, '[data-testid="satellite-imagery"]', 'data-imagery-overlay-status', ['loaded', 'error', 'not-rendered'], 'thermal overlay');
+        checks.record(fireBase === 'loaded' && overlayStatus === 'error', 'undecodable overlay reported as failed while base image loads', `base=${fireBase} overlay=${overlayStatus}`);
+        const caption = (await page.locator('[data-testid="imagery-caption"]').textContent()) ?? '';
+        checks.record(/Overlay for \d{4}-\d{2}-\d{2} failed to load/.test(caption), 'caption states the overlay failed', caption.slice(0, 160));
+
+        await page.locator('[data-testid="imagery-tab-falsecolor"]').click();
         const imageryStatus = await waitForAttr(page, '[data-testid="satellite-imagery"]', 'data-imagery-status', ['loaded', 'error'], 'imagery');
         checks.record(imageryStatus === 'error', 'GIBS failure shown as imagery unavailable', imageryStatus);
-        await page.screenshot({ path: 'e2e-failure.png' });
+        await page.screenshot({ path: SCREENSHOT('e2e-failure.png') });
     } catch (err) {
         checks.record(false, 'scenario completed', err instanceof Error ? err.message : String(err));
     } finally {
@@ -338,26 +375,135 @@ async function runFailure(browser) {
     return { checks, state };
 }
 
-/** One direct request per provider; compare identities and fields with what the app served. */
-async function verifyHiddenSources(appBody, checks) {
+const COMPARED_FIELDS = ['type', 'title', 'lat', 'lng', 'date', 'severity', 'magnitude'];
+const DAY_MS = 86_400_000;
+
+/** Raw-payload facts read without the shared parser, keyed by id. */
+function rawUsgsFacts(payload) {
+    const facts = new Map();
+    for (const f of payload?.features ?? []) {
+        const [lng, lat] = f?.geometry?.coordinates ?? [];
+        facts.set(f?.id, { lng, lat, time: f?.properties?.time, updated: f?.properties?.updated, mag: f?.properties?.mag });
+    }
+    return facts;
+}
+
+function rawEonetFacts(payload) {
+    const facts = new Map();
+    for (const e of payload?.events ?? []) {
+        const geoms = (e?.geometry ?? []).filter((g) => typeof g?.date === 'string' && Number.isFinite(Date.parse(g.date)));
+        const latest = geoms.reduce((a, g) => (!a || Date.parse(g.date) > Date.parse(a.date) ? g : a), null);
+        facts.set(e?.id, latest ? { type: latest.type, date: new Date(Date.parse(latest.date)).toISOString(), coordinates: latest.coordinates } : null);
+    }
+    return facts;
+}
+
+/**
+ * Explain an application/upstream difference as provider change after the
+ * application's fetch, using only evidence visible in the raw upstream data.
+ * Returns null when the difference is not explained.
+ */
+function explainDifference(name, kind, record, raw, appFetchedMs, directMs) {
+    if (name === 'usgs') {
+        if (kind === 'onlyApp') return Date.parse(record.date) < directMs - DAY_MS ? 'aged out of past-day feed' : null;
+        if (!raw) return null;
+        return Math.max(raw.time ?? 0, raw.updated ?? 0) > appFetchedMs ? 'event created/updated after app fetch' : null;
+    }
+    if (kind === 'onlyApp') return Date.parse(record.date) < directMs - 60 * DAY_MS ? 'aged out of 60-day query' : null;
+    if (kind === 'field') return raw && raw.date !== record.date ? 'newer geometry published' : null;
+    return null;
+}
+
+/**
+ * One direct request per provider. Compares every served field, lists ids
+ * present on only one side, and classifies the result as exact, drift
+ * (every difference explained by upstream change after the app's cached
+ * fetch), or defect. Raw upstream values are also checked against the app
+ * independently of the shared parser.
+ */
+async function verifyHiddenSources(appBody, appFetchedAt, checks) {
     console.log('\n=== EONET / USGS (behind /api/disasters) ===');
     const results = {};
-    for (const [name, url, parse, types] of [
-        ['eonet', EONET_URL, parseEonetPayload, ['fire', 'volcano']],
-        ['usgs', USGS_URL, parseUsgsPayload, ['earthquake']],
+    const appFetchedMs = Date.parse(appFetchedAt ?? '');
+    for (const [name, url, parse, rawFacts, types] of [
+        ['eonet', EONET_URL, parseEonetPayload, rawEonetFacts, ['fire', 'volcano']],
+        ['usgs', USGS_URL, parseUsgsPayload, rawUsgsFacts, ['earthquake']],
     ]) {
         try {
             const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
-            const { records, rejected } = parse(await res.json());
+            const directMs = Date.now();
+            const payload = await res.json();
+            const { records, rejected } = parse(payload);
+            const raw = rawFacts(payload);
             const upstream = new Map(records.map((r) => [r.id, r]));
             const app = appBody.filter((d) => types.includes(d.type));
-            const overlap = app.filter((d) => upstream.has(d.id));
-            const fieldDiffs = overlap.filter((d) => {
-                const u = upstream.get(d.id);
-                return u.lat !== d.lat || u.lng !== d.lng || u.date !== d.date || u.type !== d.type || u.magnitude !== d.magnitude;
-            });
-            results[name] = { http: res.status, upstream: records.length, rejected, app: app.length, overlap: overlap.length, fieldDiffs: fieldDiffs.length };
-            checks.record(res.ok && overlap.length > 0 && fieldDiffs.length === 0, `${name} upstream identities/fields match application`, JSON.stringify(results[name]));
+            const appIds = new Set(app.map((d) => d.id));
+            const onlyApp = app.filter((d) => !upstream.has(d.id));
+            const onlyUpstream = records.filter((r) => !appIds.has(r.id));
+            const fieldDiffs = app
+                .filter((d) => upstream.has(d.id))
+                .map((d) => {
+                    const u = upstream.get(d.id);
+                    const fields = COMPARED_FIELDS.filter((f) => u[f] !== d[f]);
+                    return { id: d.id, fields, app: d };
+                })
+                .filter((d) => d.fields.length > 0);
+
+            const unexplained = [];
+            const explained = [];
+            const classify = (kind, record) => {
+                const why = Number.isFinite(appFetchedMs) ? explainDifference(name, kind, record, raw.get(record.id), appFetchedMs, directMs) : null;
+                (why ? explained : unexplained).push(`${kind}:${record.id}${why ? ` (${why})` : ''}`);
+            };
+            onlyApp.forEach((d) => classify('onlyApp', d));
+            onlyUpstream.forEach((r) => classify('onlyUpstream', r));
+            fieldDiffs.forEach((d) => classify('field', d.app));
+
+            // Independent of the parser: raw coordinates/time/magnitude for USGS, raw Point coordinates for EONET.
+            let rawChecked = 0;
+            let parserDerived = 0;
+            const rawMismatches = [];
+            for (const d of app) {
+                const r = raw.get(d.id);
+                if (!r || fieldDiffs.some((f) => f.id === d.id)) continue;
+                if (name === 'usgs') {
+                    rawChecked++;
+                    const ok = r.lng === d.lng && r.lat === d.lat && new Date(r.time).toISOString() === d.date && (r.mag ?? undefined) === d.magnitude;
+                    if (!ok) rawMismatches.push(d.id);
+                } else if (r.type === 'Point') {
+                    rawChecked++;
+                    if (r.coordinates?.[0] !== d.lng || r.coordinates?.[1] !== d.lat || r.date !== d.date) rawMismatches.push(d.id);
+                } else {
+                    parserDerived++;
+                }
+            }
+
+            const classification = unexplained.length === 0 ? (explained.length === 0 ? 'exact' : 'drift') : 'defect';
+            results[name] = {
+                http: res.status,
+                appFetchedAt,
+                appDataAgeSec: Number.isFinite(appFetchedMs) ? Math.round((directMs - appFetchedMs) / 1000) : null,
+                upstream: records.length,
+                upstreamRejected: rejected,
+                app: app.length,
+                matched: app.length - onlyApp.length - fieldDiffs.length,
+                onlyApp: onlyApp.map((d) => d.id),
+                onlyUpstream: onlyUpstream.map((r) => r.id),
+                fieldDiffs: fieldDiffs.map((d) => `${d.id}:${d.fields.join('/')}`),
+                classification,
+                explained,
+                unexplained,
+                rawChecked,
+                rawMismatches,
+                polygonParserDerived: parserDerived,
+            };
+            checks.record(res.ok && app.length > 0, `${name} direct request succeeded and app served ${name} records`, `HTTP ${res.status}, app=${app.length}, upstream=${records.length}`);
+            checks.record(
+                classification !== 'defect',
+                `${name} app/upstream parity (${classification})`,
+                `matched=${results[name].matched}/${app.length} onlyApp=${onlyApp.length} onlyUpstream=${onlyUpstream.length} fieldDiffs=${fieldDiffs.length} age=${results[name].appDataAgeSec}s${unexplained.length ? ` unexplained=${unexplained.slice(0, 5).join(',')}` : ''}`,
+            );
+            checks.record(rawChecked > 0 && rawMismatches.length === 0, `${name} raw upstream values match app (parser-independent)`, `checked=${rawChecked} mismatches=${rawMismatches.slice(0, 5).join(',') || 0} polygonParserDerived=${parserDerived}`);
         } catch (err) {
             checks.record(false, `${name} direct check`, err instanceof Error ? err.message : String(err));
         }
@@ -377,7 +523,7 @@ async function main() {
             const appBody = evidence.appDisasters ?? [];
             delete evidence.appDisasters;
             if (checks.record(appBody.length > 0, 'application disaster body captured for source comparison')) {
-                evidence.hiddenSources = await verifyHiddenSources(appBody, checks);
+                evidence.hiddenSources = await verifyHiddenSources(appBody, evidence.disasters?.fetchedAt, checks);
             }
             checks.record(state.pageErrors.length === 0, 'no application page errors', state.pageErrors.join(' | '));
             checks.record(state.foreignApi.length === 0, 'no API requests to an unexpected backend', state.foreignApi.slice(0, 3).join(' | '));

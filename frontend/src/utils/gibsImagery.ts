@@ -1,6 +1,12 @@
 /**
  * Imagery request specs for the sidebar panel. The product and date shown
  * to the user come from the same spec that builds the request URL.
+ *
+ * Layer identifiers are listed in the GIBS WMS GetCapabilities document
+ * (epsg4326/best). Dates are requested UTC days chosen by a fixed lag, not
+ * an availability lookup: the MODIS layers advertise daily extents with
+ * nearestValue="0" (no snapping), but swath gaps and cloud are not checked,
+ * and the VIIRS thermal anomaly layer advertises no WMS time dimension.
  */
 
 export type ImageryLayer = 'fire' | 'falsecolor' | 'visual';
@@ -8,7 +14,7 @@ export type ImageryLayer = 'fire' | 'falsecolor' | 'visual';
 export interface ImageryProduct {
     product: string;
     label: string;
-    /** UTC date (YYYY-MM-DD) requested from GIBS; null when the provider exposes none. */
+    /** Requested UTC date (YYYY-MM-DD); null when the provider exposes none. Not a confirmed observation date. */
     date: string | null;
     url: string;
 }
@@ -19,6 +25,8 @@ export interface ImagerySpec extends ImageryProduct {
     /** Half-width in degrees of the requested bbox (null for Mapbox zoom tiles). */
     halfSizeDeg: number | null;
     overlay?: ImageryProduct;
+    /** Set when the requested box extends past a pole or the antimeridian. */
+    limitation: string | null;
 }
 
 const GIBS_WMS = 'https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi';
@@ -44,6 +52,15 @@ function gibsUrl(layer: string, date: string, lat: number, lng: number, half: nu
     return `${GIBS_WMS}?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=${layer}&TIME=${date}&CRS=EPSG:4326&WIDTH=800&HEIGHT=600&BBOX=${bbox}&FORMAT=${format}${transparent}`;
 }
 
+/** GIBS does not wrap EPSG:4326 requests, so parts of a box past ±180° / ±90° render empty. */
+export function bboxLimitation(lat: number, lng: number, half: number): string | null {
+    const crossesAntimeridian = lng - half < -180 || lng + half > 180;
+    const crossesPole = lat - half < -90 || lat + half > 90;
+    if (!crossesAntimeridian && !crossesPole) return null;
+    const edge = crossesAntimeridian ? 'the antimeridian' : 'a pole';
+    return `This view extends past ${edge}; that part of the image is empty and detections there are not drawn.`;
+}
+
 export function buildImagerySpec(layer: ImageryLayer, lat: number, lng: number, now: Date, mapboxToken: string): ImagerySpec {
     if (layer === 'fire') {
         const date = utcDateOffset(now, MODIS_AQUA_LAG_DAYS);
@@ -58,10 +75,11 @@ export function buildImagerySpec(layer: ImageryLayer, lat: number, lng: number, 
             halfSizeDeg: FIRE_BBOX_HALF_DEG,
             overlay: {
                 product: 'VIIRS_SNPP_Thermal_Anomalies_375m_All',
-                label: 'VIIRS S-NPP thermal anomalies (single UTC day)',
+                label: 'VIIRS S-NPP thermal anomalies (single requested UTC day)',
                 date: overlayDate,
                 url: gibsUrl('VIIRS_SNPP_Thermal_Anomalies_375m_All', overlayDate, lat, lng, FIRE_BBOX_HALF_DEG, 'image/png'),
             },
+            limitation: bboxLimitation(lat, lng, FIRE_BBOX_HALF_DEG),
         };
     }
     if (layer === 'falsecolor') {
@@ -74,6 +92,7 @@ export function buildImagerySpec(layer: ImageryLayer, lat: number, lng: number, 
             date,
             url: gibsUrl('MODIS_Terra_CorrectedReflectance_Bands721', date, lat, lng, FALSE_COLOR_BBOX_HALF_DEG, 'image/jpeg'),
             halfSizeDeg: FALSE_COLOR_BBOX_HALF_DEG,
+            limitation: bboxLimitation(lat, lng, FALSE_COLOR_BBOX_HALF_DEG),
         };
     }
     return {
@@ -84,12 +103,14 @@ export function buildImagerySpec(layer: ImageryLayer, lat: number, lng: number, 
         date: null,
         url: `https://api.mapbox.com/styles/v1/mapbox/satellite-v9/static/${lng},${lat},15,0/800x600@2x?access_token=${mapboxToken}`,
         halfSizeDeg: null,
+        limitation: null,
     };
 }
 
 /**
- * Position of a detection inside an image covering center ± half degrees,
- * as CSS percentages (top grows southward). Null when outside the image.
+ * Position of a detection inside the image requested for center ± half degrees,
+ * as CSS percentages (top grows southward). Longitudes are not wrapped because
+ * the requested image is not; points outside the image return null.
  */
 export function hotspotImagePosition(
     hotspot: { latitude: number; longitude: number },
@@ -97,10 +118,8 @@ export function hotspotImagePosition(
     centerLng: number,
     half: number,
 ): { leftPct: number; topPct: number } | null {
-    const dLng = ((((hotspot.longitude - centerLng + 180) % 360) + 360) % 360) - 180;
-    const dLat = hotspot.latitude - centerLat;
-    const leftPct = 50 + (dLng / (2 * half)) * 100;
-    const topPct = 50 - (dLat / (2 * half)) * 100;
+    const leftPct = 50 + ((hotspot.longitude - centerLng) / (2 * half)) * 100;
+    const topPct = 50 - ((hotspot.latitude - centerLat) / (2 * half)) * 100;
     if (leftPct < 0 || leftPct > 100 || topPct < 0 || topPct > 100) return null;
     return { leftPct, topPct };
 }

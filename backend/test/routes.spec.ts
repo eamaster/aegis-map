@@ -266,6 +266,47 @@ describe('GET /api/disasters', () => {
 		expect(cached.headers.get('X-Disaster-Partial')).toBe('true');
 	});
 
+	it('serves only cache documents consistent with the source-status schema', async () => {
+		const ok = { status: 'ok', count: 1, rejected: 0 };
+		const failed = { status: 'failed', count: 0, rejected: 0 };
+		const doc = (overrides: Record<string, unknown>) =>
+			JSON.stringify({
+				version: 2,
+				disasters: [{ id: 'cached', type: 'fire', title: 'C', lat: 1, lng: 2, date: '2026-10-01T00:00:00.000Z', severity: 'medium' }],
+				sources: { eonet: ok, usgs: ok },
+				partial: false,
+				fetchedAt: '2026-10-10T00:00:00.000Z',
+				...overrides,
+			});
+		const rejectedDocs = [
+			doc({ sources: { eonet: { status: 'great', count: 1, rejected: 0 }, usgs: ok } }),
+			doc({ sources: { eonet: { status: 'ok' }, usgs: ok } }),
+			doc({ sources: { eonet: failed, usgs: failed }, partial: true }),
+			doc({ sources: { eonet: failed, usgs: ok }, partial: false }),
+			doc({ fetchedAt: 'yesterday' }),
+			doc({ version: 1 }),
+		];
+		for (const raw of rejectedDocs) {
+			const kv = memoryKv({ initial: { 'disasters:v2': raw } });
+			const { calls } = await withFetch(
+				(url) => (url === EONET_URL ? json(eonet) : json(usgs)),
+				() => callWorker('/api/disasters', { AEGIS_CACHE: kv.kv }),
+			);
+			expect(calls.length, raw).toBe(2);
+		}
+
+		const kv = memoryKv({ initial: { 'disasters:v2': doc({}) } });
+		const { result: res, calls } = await withFetch(
+			() => {
+				throw new Error('should be cached');
+			},
+			() => callWorker('/api/disasters', { AEGIS_CACHE: kv.kv }),
+		);
+		expect(calls).toEqual([]);
+		expect(res.headers.get('X-Disaster-Fetched-At')).toBe('2026-10-10T00:00:00.000Z');
+		expect(((await res.json()) as Array<{ id: string }>)[0].id).toBe('cached');
+	});
+
 	it('returns 502 with source status when both sources fail, and survives rejected KV', async () => {
 		const kv = memoryKv({ failGet: true, failPut: true });
 		const { result: res } = await withFetch(

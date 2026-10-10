@@ -140,6 +140,17 @@ describe('USGS normalization', () => {
 		expect(rejected).toBe(5);
 	});
 
+	it('rejects finite times outside the representable date range instead of throwing', () => {
+		const { records, rejected } = normalizeUsgsFeatures([
+			quake({ id: 'huge' }, { time: 1e20 }),
+			quake({ id: 'huge-neg' }, { time: -8.65e15 }),
+			quake({ id: 'string-time' }, { time: '1728500000000' }),
+			quake({ id: 'ok' }),
+		]);
+		expect(records.map((r) => r.id)).toEqual(['ok']);
+		expect(rejected).toBe(3);
+	});
+
 	it('maps severity thresholds', () => {
 		const { records } = normalizeUsgsFeatures([
 			quake({ id: 'q1' }, { mag: 6.2 }),

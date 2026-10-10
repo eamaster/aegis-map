@@ -52,6 +52,8 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
     const [nextPass, setNextPass] = useState<SatellitePass | null>(null);
     const [passState, setPassState] = useState<PassState>('loading');
     const [tleNotice, setTleNotice] = useState<string | null>(null);
+    const [tleOldestEpoch, setTleOldestEpoch] = useState<string | null>(null);
+    const [passThreshold, setPassThreshold] = useState<number | null>(null);
     const [cloudCover, setCloudCover] = useState<CloudState>(undefined);
     const [aiAnalysis, setAiAnalysis] = useState<string>('');
     const [analysisUnavailable, setAnalysisUnavailable] = useState(false);
@@ -74,6 +76,8 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
         setNextPass(null);
         setPassState('loading');
         setTleNotice(null);
+        setTleOldestEpoch(null);
+        setPassThreshold(null);
         setCloudCover(undefined);
         setAiAnalysis('');
         setAnalysisUnavailable(false);
@@ -148,6 +152,8 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                 const responseText = await tleResponse.text();
                 if (!isCurrentGeneration(generation, selectionGenRef.current)) return;
                 setTleNotice(describeTleHeaders(tleResponse.headers));
+                const oldestEpoch = Date.parse(tleResponse.headers.get('X-TLE-Oldest-Epoch') ?? '');
+                setTleOldestEpoch(Number.isFinite(oldestEpoch) ? new Date(oldestEpoch).toISOString().slice(0, 16).replace('T', ' ') : null);
                 if (isJson || responseText.trim().startsWith('{') || responseText.trim().startsWith('[')) {
                     try {
                         const errorData = JSON.parse(responseText) as { error?: string };
@@ -171,13 +177,14 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                 }
 
                 let pass = getNextPass(responseText, latNum, lngNum);
+                let threshold: number = SATELLITE_ELEVATION_THRESHOLDS.OPTIMAL;
                 if (!pass) {
                     const lower = predictPasses(responseText, latNum, lngNum, SATELLITE_ELEVATION_THRESHOLDS.ACCEPTABLE);
-                    if (lower.length > 0) pass = lower[0];
+                    if (lower.length > 0) [pass, threshold] = [lower[0], SATELLITE_ELEVATION_THRESHOLDS.ACCEPTABLE];
                 }
                 if (!pass) {
                     const min = predictPasses(responseText, latNum, lngNum, SATELLITE_ELEVATION_THRESHOLDS.MINIMUM);
-                    if (min.length > 0) pass = min[0];
+                    if (min.length > 0) [pass, threshold] = [min[0], SATELLITE_ELEVATION_THRESHOLDS.MINIMUM];
                 }
                 if (!isCurrentGeneration(generation, selectionGenRef.current)) return;
 
@@ -190,6 +197,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                     return;
                 }
                 setNextPass(pass);
+                setPassThreshold(threshold);
                 setPassState('pass');
                 await fetchWeather(latNum, lngNum, pass.time);
             } catch (error) {
@@ -323,6 +331,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
             data-pass-state={passState}
             data-pass-satellite={nextPass?.satelliteName ?? ''}
             data-pass-time={nextPass ? nextPass.time.toISOString() : ''}
+            data-pass-threshold={passThreshold ?? ''}
             data-weather-state={cloudCover === undefined ? 'loading' : cloudCover === null ? 'unavailable' : 'known'}
             data-cloud-cover={typeof cloudCover === 'number' ? String(cloudCover) : ''}
             style={{
@@ -617,6 +626,15 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                                     }}
                                 />
                             </div>
+                            <p
+                                data-testid="pass-note"
+                                style={{ fontSize: '0.625rem', color: ds.text.tertiary, marginTop: '10px', lineHeight: 1.5 }}
+                            >
+                                First 5-minute sample at or above {passThreshold ?? SATELLITE_ELEVATION_THRESHOLDS.OPTIMAL}° elevation
+                                ({nextPass.elevation.toFixed(0)}° at that sample; not the exact rise or peak), propagated from
+                                orbital elements{tleOldestEpoch ? ` with epochs from ${tleOldestEpoch} UTC or later` : ''}. A predicted
+                                pass does not guarantee the sensor images this location.
+                            </p>
                         </div>
                     )}
 

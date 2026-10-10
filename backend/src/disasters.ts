@@ -208,6 +208,8 @@ export function normalizeUsgsFeatures(features: readonly unknown[]): NormalizeRe
 		} | null;
 		const point = feature?.geometry?.type === 'Point' ? readLngLat(feature.geometry.coordinates) : null;
 		const time = feature?.properties?.time;
+		// Finite numbers beyond the ECMAScript date range make toISOString throw.
+		const date = typeof time === 'number' ? new Date(time) : null;
 		const mag = feature?.properties?.mag;
 		const magValid = mag === null || mag === undefined || (typeof mag === 'number' && Number.isFinite(mag));
 
@@ -216,8 +218,8 @@ export function normalizeUsgsFeatures(features: readonly unknown[]): NormalizeRe
 			typeof feature.id !== 'string' ||
 			!feature.id ||
 			!point ||
-			typeof time !== 'number' ||
-			!Number.isFinite(time) ||
+			!date ||
+			Number.isNaN(date.getTime()) ||
 			!magValid
 		) {
 			rejected++;
@@ -238,7 +240,7 @@ export function normalizeUsgsFeatures(features: readonly unknown[]): NormalizeRe
 			title: typeof place === 'string' && place.trim() ? place.trim() : 'Unspecified location',
 			lng: point.lng,
 			lat: point.lat,
-			date: new Date(time).toISOString(),
+			date: date.toISOString(),
 			severity,
 			...(magnitude !== undefined ? { magnitude } : {}),
 		});

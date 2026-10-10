@@ -129,16 +129,24 @@ export function createHotspotLoader(
     };
 }
 
-/** Summary over displayed detections; unreported measurements are excluded, never zero. */
+/**
+ * Summary over displayed detections, as reported values only: no derived
+ * severity class. Unreported measurements are excluded, never zero.
+ */
 export function summarizeVisibleHotspots(hotspots: readonly FireHotspot[]) {
     const brightness = hotspots.map((h) => h.bright_ti4).filter((v): v is number => v !== null);
     const power = hotspots.map((h) => h.frp).filter((v): v is number => v !== null);
+    const latest = hotspots.reduce<FireHotspot | null>(
+        (acc, h) => (!acc || `${h.acq_date}${h.acq_time}` > `${acc.acq_date}${acc.acq_time}` ? h : acc),
+        null,
+    );
     return {
         total: hotspots.length,
         high: hotspots.filter((h) => h.confidence === 'h').length,
         nominal: hotspots.filter((h) => h.confidence === 'n').length,
         unknown: hotspots.filter((h) => h.confidence === null).length,
-        avgBrightness: brightness.length ? brightness.reduce((a, b) => a + b, 0) / brightness.length : null,
+        maxBrightness: brightness.length ? Math.max(...brightness) : null,
         maxPower: power.length ? Math.max(...power) : null,
+        latestDetection: latest ? `${latest.acq_date} ${latest.acq_time.slice(0, 2)}:${latest.acq_time.slice(2)} UTC` : null,
     };
 }

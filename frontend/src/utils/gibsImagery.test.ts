@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildImagerySpec, hotspotImagePosition, utcDateOffset } from './gibsImagery';
+import { bboxLimitation, buildImagerySpec, hotspotImagePosition, utcDateOffset } from './gibsImagery';
 
 const NOW = new Date('2026-10-10T12:00:00Z');
 
@@ -16,7 +16,7 @@ describe('buildImagerySpec', () => {
         expect(spec.overlay).toMatchObject({ product: 'VIIRS_SNPP_Thermal_Anomalies_375m_All', date: '2026-10-09' });
         expect(param(spec.overlay!.url, 'LAYERS')).toBe(spec.overlay!.product);
         expect(param(spec.overlay!.url, 'TIME')).toBe(spec.overlay!.date);
-        expect(spec.overlay!.label).toContain('single UTC day');
+        expect(spec.overlay!.label).toContain('single requested UTC day');
     });
 
     it('labels MODIS 7-2-1 as false-color reflectance, not temperature', () => {
@@ -44,9 +44,18 @@ describe('hotspotImagePosition', () => {
         expect(ne).toEqual({ leftPct: 75, topPct: 25 });
     });
 
-    it('wraps across the antimeridian and drops points outside the image', () => {
-        const p = hotspotImagePosition({ latitude: 10, longitude: -179.9 }, 10, 179.9, 0.5);
-        expect(p?.leftPct).toBeCloseTo(70, 6);
+    it('does not wrap markers onto the empty side of an antimeridian image, and drops points outside', () => {
+        expect(hotspotImagePosition({ latitude: 10, longitude: -179.9 }, 10, 179.9, 0.5)).toBeNull();
+        expect(hotspotImagePosition({ latitude: 10, longitude: 179.95 }, 10, 179.9, 0.5)?.leftPct).toBeCloseTo(55, 6);
         expect(hotspotImagePosition({ latitude: 46, longitude: 38 }, 45, 38, 0.5)).toBeNull();
+    });
+});
+
+describe('bbox limitations', () => {
+    it('flags views past the antimeridian or a pole and leaves normal views unflagged', () => {
+        expect(buildImagerySpec('fire', 10, 179.9, NOW, 't').limitation).toContain('antimeridian');
+        expect(buildImagerySpec('falsecolor', 89.9, 0, NOW, 't').limitation).toContain('pole');
+        expect(buildImagerySpec('fire', 45, 38, NOW, 't').limitation).toBeNull();
+        expect(bboxLimitation(0, 179.5, 0.5)).toBeNull();
     });
 });

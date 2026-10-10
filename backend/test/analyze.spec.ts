@@ -514,10 +514,11 @@ describe('HTTP /api/analyze', () => {
 });
 
 describe('health', () => {
-	it('reports app version from central config', async () => {
+	it('reports app version and release-gate capabilities from central config', async () => {
 		const response = await SELF.fetch('http://example.com/');
 		expect(response.status).toBe(200);
-		const body = (await response.json()) as { version: string };
-		expect(body.version).toBe('1.2.0');
+		const body = (await response.json()) as { version: string; capabilities: string[] };
+		expect(body.version).toBe('1.3.0');
+		expect(body.capabilities).toEqual(['workers-ai-analyze-v1', 'provider-status-v1']);
 	});
 });

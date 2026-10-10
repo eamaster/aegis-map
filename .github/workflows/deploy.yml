@@ -35,9 +35,10 @@ jobs:
       - name: Install dependencies
         run: cd frontend && npm ci
 
-      # Coordinated release gate: do not publish a frontend that requires
-      # Workers AI analyze responses against an unverified legacy backend.
-      - name: Verify production backend AI contract
+      # Coordinated release gate: do not publish a frontend against a backend
+      # that lacks the API contract it relies on (see backend/src/config.ts
+      # API_CAPABILITIES and docs/COORDINATED_RELEASE.md).
+      - name: Verify production backend API contract
         env:
           VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
         run: |
@@ -51,14 +52,16 @@ jobs:
           BODY=$(curl -fsS --max-time 30 "${BASE}/")
           echo "$BODY"
           node -e '
+            const required = ["workers-ai-analyze-v1", "provider-status-v1"];
             const body = JSON.parse(process.argv[1]);
             const v = String(body.version || "");
-            const ok = /^(1\.(?:[2-9]|\d{2,})|[2-9]\d*)(\.|$)/.test(v);
-            if (!ok) {
-              console.error("Backend version too old for this frontend:", v, "(need >= 1.2.0)");
+            const caps = Array.isArray(body.capabilities) ? body.capabilities : [];
+            const missing = required.filter((c) => !caps.includes(c));
+            if (missing.length > 0) {
+              console.error("Backend", v || "(no version)", "lacks capabilities required by this frontend:", missing.join(", "));
               process.exit(1);
             }
-            console.log("Backend version gate passed:", v);
+            console.log("Backend contract gate passed:", v, caps.join(", "));
           ' "$BODY"
 
       - name: Build

@@ -7,9 +7,10 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { analyzeErrorResponse, parseAnalyzeRequest, runAnalyze } from './analyze';
-import { APP_VERSION, reflectCorsOrigin, resolveAllowedOrigins } from './config';
+import { API_CAPABILITIES, APP_VERSION, reflectCorsOrigin, resolveAllowedOrigins } from './config';
 import {
 	DisasterRecord,
+	DisasterSourceStatus,
 	DisasterSources,
 	DisasterUpstreamError,
 	fetchDisasters,
@@ -62,7 +63,7 @@ app.use('/*', async (c, next) => {
 });
 
 app.get('/', (c) => {
-	return c.json({ status: 'AegisMap API Online', version: APP_VERSION });
+	return c.json({ status: 'AegisMap API Online', version: APP_VERSION, capabilities: API_CAPABILITIES });
 });
 
 const DISASTERS_CACHE_KEY = 'disasters:v2';
@@ -78,6 +79,16 @@ interface DisastersCacheDocument {
 	fetchedAt: string;
 }
 
+function isCachedSourceStatus(value: unknown): boolean {
+	const s = value as Partial<DisasterSourceStatus> | null;
+	return (
+		!!s &&
+		(s.status === 'ok' || s.status === 'failed' || s.status === 'malformed') &&
+		Number.isInteger(s.count) &&
+		Number.isInteger(s.rejected)
+	);
+}
+
 function readDisastersCache(raw: string | null): DisastersCacheDocument | null {
 	if (!raw) return null;
 	try {
@@ -85,10 +96,13 @@ function readDisastersCache(raw: string | null): DisastersCacheDocument | null {
 		if (
 			doc.version === 2 &&
 			Array.isArray(doc.disasters) &&
-			doc.sources?.eonet &&
-			doc.sources?.usgs &&
-			typeof doc.partial === 'boolean' &&
-			typeof doc.fetchedAt === 'string'
+			isCachedSourceStatus(doc.sources?.eonet) &&
+			isCachedSourceStatus(doc.sources?.usgs) &&
+			// A cache never holds a document in which both sources failed.
+			(doc.sources!.eonet.status === 'ok' || doc.sources!.usgs.status === 'ok') &&
+			doc.partial === (doc.sources!.eonet.status !== 'ok' || doc.sources!.usgs.status !== 'ok') &&
+			typeof doc.fetchedAt === 'string' &&
+			Number.isFinite(Date.parse(doc.fetchedAt))
 		) {
 			return doc as DisastersCacheDocument;
 		}
@@ -105,6 +119,11 @@ function disasterHeaders(doc: Pick<DisastersCacheDocument, 'sources' | 'partial'
 		'X-Disaster-Fetched-At': doc.fetchedAt,
 	};
 }
+
+// Provider routes do not coalesce concurrent cache misses: simultaneous
+// misses each fetch upstream (KV is eventually consistent, and sharing one
+// isolate-level promise across requests would tie them to the first
+// request's lifetime). Upstream volume is bounded by the cache TTLs instead.
 
 // Route 1: GET /api/disasters
 // Body stays a plain array for existing consumers; source status is in headers.

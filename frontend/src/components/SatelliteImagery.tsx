@@ -36,13 +36,6 @@ const getWorldviewLayers = (type: string): string => {
   }
 };
 
-const getSeverityLevel = (temp: number): { label: string; color: string } => {
-  if (temp > 360) return { label: 'EXTREME', color: '#ef4444' };
-  if (temp > 340) return { label: 'HIGH', color: '#f97316' };
-  if (temp > 320) return { label: 'MODERATE', color: '#fbbf24' };
-  return { label: 'LOW', color: '#9ca3af' };
-};
-
 const getConfidenceColor = (conf: string | null): string => {
   if (conf === 'h') return 'bg-red-500';
   if (conf === 'n') return 'bg-orange-500';
@@ -57,6 +50,7 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
   const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const [overlayFailedUrl, setOverlayFailedUrl] = useState<string | null>(null);
+  const [overlayLoadedUrl, setOverlayLoadedUrl] = useState<string | null>(null);
   const [mountedAt] = useState(() => Date.now());
 
   useEffect(() => {
@@ -80,6 +74,16 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
 
   const imageStatus: 'loading' | 'loaded' | 'error' =
     failedUrl === spec.url ? 'error' : loadedUrl === spec.url ? 'loaded' : 'loading';
+  const overlayUrl = spec.overlay?.url ?? null;
+  const overlayStatus: 'none' | 'not-rendered' | 'loading' | 'loaded' | 'error' = !overlayUrl
+    ? 'none'
+    : overlayFailedUrl === overlayUrl
+      ? 'error'
+      : overlayLoadedUrl === overlayUrl
+        ? 'loaded'
+        : imageStatus === 'error'
+          ? 'not-rendered'
+          : 'loading';
 
   const effectiveFire: FireHotspotState = disasterType === 'fire' ? fireState : { state: 'idle' };
   const fireDisplay = fireDisplayState(effectiveFire);
@@ -88,13 +92,13 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
   const visibleHotspots = useMemo(() => loadedFire?.visible ?? [], [loadedFire]);
   const fireSummary = useMemo(() => summarizeVisibleHotspots(visibleHotspots), [visibleHotspots]);
 
-  const markers = useMemo(() => {
-    if (selectedLayer !== 'fire' || spec.halfSizeDeg === null) return [];
+  const { markers, offImage } = useMemo(() => {
+    if (selectedLayer !== 'fire' || spec.halfSizeDeg === null) return { markers: [], offImage: 0 };
     const half = spec.halfSizeDeg;
-    return visibleHotspots
+    const placed = visibleHotspots
       .map((h) => ({ h, pos: hotspotImagePosition(h, lat, lng, half) }))
-      .filter((m): m is { h: (typeof visibleHotspots)[number]; pos: { leftPct: number; topPct: number } } => m.pos !== null)
-      .slice(0, MAX_MARKERS);
+      .filter((m): m is { h: (typeof visibleHotspots)[number]; pos: { leftPct: number; topPct: number } } => m.pos !== null);
+    return { markers: placed.slice(0, MAX_MARKERS), offImage: visibleHotspots.length - placed.length };
   }, [visibleHotspots, selectedLayer, spec.halfSizeDeg, lat, lng]);
 
   const windowLabel = coverage ? `${coverage.requestedStart} – ${coverage.requestedEnd} UTC` : '';
@@ -103,8 +107,8 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
     ? Math.floor((mountedAt - eventDateMs) / (1000 * 60 * 60 * 24))
     : null;
 
-  const markImageLoaded = (url: string) => (el: HTMLImageElement | null) => {
-    if (el && el.complete && el.naturalHeight !== 0) setLoadedUrl(url);
+  const markImageLoaded = (url: string, setter: (url: string) => void = setLoadedUrl) => (el: HTMLImageElement | null) => {
+    if (el && el.complete && el.naturalHeight !== 0) setter(url);
   };
 
   return (
@@ -122,7 +126,10 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
       data-imagery-date={spec.date ?? ''}
       data-imagery-overlay-product={spec.overlay?.product ?? ''}
       data-imagery-overlay-date={spec.overlay?.date ?? ''}
+      data-imagery-overlay-status={overlayStatus}
       data-imagery-status={imageStatus}
+      data-imagery-limitation={spec.limitation ?? ''}
+      data-imagery-markers={String(markers.length)}
       style={{
         padding: '14px',
         borderRadius: ds.borderRadius.lg,
@@ -254,22 +261,26 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
                 </div>
 
                 <div style={{ padding: '10px', borderRadius: '8px', background: 'rgba(0, 0, 0, 0.3)' }}>
-                  {fireSummary.avgBrightness !== null ? (
+                  {fireSummary.maxBrightness !== null ? (
                     <>
-                      <div className="text-3xl font-bold" style={{ color: getSeverityLevel(fireSummary.avgBrightness).color }}>
-                        {getSeverityLevel(fireSummary.avgBrightness).label}
+                      <div className="text-2xl font-bold tabular-nums" style={{ color: ds.text.primary }}>
+                        {fireSummary.maxBrightness.toFixed(1)} K
                       </div>
-                      <div className="text-xs" style={{ color: ds.text.secondary }}>Mean I-4 Brightness Temp.</div>
-                      <div className="mt-1 text-xs" style={{ color: ds.text.secondary }}>
-                        {(fireSummary.avgBrightness - 273.15).toFixed(0)}°C
-                        <span style={{ color: ds.text.tertiary, marginLeft: '4px' }}>({fireSummary.avgBrightness.toFixed(0)}K)</span>
-                      </div>
+                      <div className="text-xs" style={{ color: ds.text.secondary }}>Max I-4 brightness temperature</div>
                     </>
                   ) : (
                     <div className="text-xs" style={{ color: ds.text.secondary }}>Brightness temperature not reported</div>
                   )}
+                  {fireSummary.latestDetection && (
+                    <div className="mt-1" style={{ fontSize: '0.625rem', color: ds.text.tertiary }}>
+                      Latest detection {fireSummary.latestDetection}
+                    </div>
+                  )}
                 </div>
               </div>
+              <p style={{ fontSize: '0.625rem', color: ds.text.tertiary }}>
+                Brightness temperature is the sensor's pixel radiometric value, not air or flame temperature, and not a severity rating.
+              </p>
 
               <div className="flex items-center gap-2.5 text-xs">
                 <AlertCircle size={13} style={{ color: '#fb923c' }} />
@@ -487,12 +498,14 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
               {spec.overlay && overlayFailedUrl !== spec.overlay.url && (
                 <img
                   key={spec.overlay.url}
+                  ref={markImageLoaded(spec.overlay.url, setOverlayLoadedUrl)}
                   src={spec.overlay.url}
                   alt=""
                   data-testid="imagery-overlay"
                   className="absolute inset-0 w-full h-full object-cover pointer-events-none"
                   style={{ mixBlendMode: 'screen' }}
                   onError={() => setOverlayFailedUrl(spec.overlay?.url ?? null)}
+                  onLoad={() => setOverlayLoadedUrl(spec.overlay?.url ?? null)}
                 />
               )}
 
@@ -531,8 +544,8 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
                 className="absolute bg-black/90 px-2 py-1 rounded text-xs text-white backdrop-blur-sm pointer-events-none"
                 style={{ bottom: '8px', right: '8px', zIndex: 15 }}
               >
-                {spec.date ?? 'date n/a'}
-                {spec.overlay ? ` | overlay ${spec.overlay.date}` : ''}
+                {spec.date ? `requested ${spec.date}` : 'date n/a'}
+                {spec.overlay ? ` | overlay ${spec.overlay.date}${overlayStatus === 'error' ? ' (failed)' : ''}` : ''}
               </div>
             </div>
           </div>
@@ -541,12 +554,24 @@ export default function SatelliteImagery({ lat, lng, disasterType, date, title }
 
       <p data-testid="imagery-caption" style={{ fontSize: '0.625rem', color: ds.text.tertiary, marginBottom: '12px', lineHeight: 1.5 }}>
         Image: {spec.label}
-        {spec.date ? `, ${spec.date} (UTC)` : ''}.
-        {spec.overlay && overlayFailedUrl !== spec.overlay.url && ` Overlay: ${spec.overlay.label}, ${spec.overlay.date}.`}
-        {spec.overlay && overlayFailedUrl === spec.overlay.url && ` Overlay for ${spec.overlay.date} could not be loaded.`}
+        {spec.date ? `, requested UTC day ${spec.date}; swath and cloud coverage not confirmed` : ''}.
+        {spec.overlay && (overlayStatus === 'loading' || overlayStatus === 'loaded') &&
+          ` Overlay: ${spec.overlay.label}, requested ${spec.overlay.date}; an empty overlay may mean no detections or no coverage.`}
+        {spec.overlay && overlayStatus === 'error' && ` Overlay for ${spec.overlay.date} failed to load; thermal anomalies are not shown on the image.`}
         {spec.layer === 'fire' && loadedFire && ` Markers: FIRMS detections ${windowLabel} (multi-day; not the same period as the overlay).`}
+        {spec.layer === 'fire' && offImage > 0 && ` ${offImage} detection(s) fall outside the drawable image and are not marked.`}
         {spec.layer === 'fire' && effectiveFire.state === 'unavailable' && ' No FIRMS markers: detection data unavailable.'}
       </p>
+      {spec.limitation && (
+        <p
+          data-testid="imagery-limitation"
+          className="flex items-start gap-1.5"
+          style={{ fontSize: '0.625rem', color: '#fbbf24', marginTop: '-8px', marginBottom: '12px', lineHeight: 1.5 }}
+        >
+          <AlertCircle size={11} className="shrink-0 mt-0.5" />
+          {spec.limitation}
+        </p>
+      )}
 
       {/* Action buttons */}
       <div className="flex gap-2" style={{ marginBottom: '12px' }}>
