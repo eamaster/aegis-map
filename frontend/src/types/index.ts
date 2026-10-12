@@ -11,6 +11,7 @@ export interface Disaster {
     date: string;
     severity: 'low' | 'medium' | 'high';
     magnitude?: number; // For earthquakes
+    areaAcres?: number; // For wildfires (EONET size)
 }
 
 export type DisasterSourceState = 'ok' | 'failed' | 'malformed';
@@ -90,6 +91,9 @@ export interface AIAnalysisRequest {
     /** Known cover [0,100], or null when weather data is unavailable. */
     cloudCover: number | null;
     disasterType: Disaster['type'];
+    lat?: number;
+    lng?: number;
+    maxElevationDeg?: number;
 }
 
 export interface AIAnalysisResponse {

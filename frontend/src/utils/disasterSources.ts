@@ -65,6 +65,7 @@ export function isDisasterRecord(value: unknown): value is Disaster {
         typeof d.lng === 'number' && Number.isFinite(d.lng) && Math.abs(d.lng) <= 180 &&
         typeof d.date === 'string' && !Number.isNaN(Date.parse(d.date)) &&
         (d.severity === 'low' || d.severity === 'medium' || d.severity === 'high') &&
-        (d.magnitude === undefined || (typeof d.magnitude === 'number' && Number.isFinite(d.magnitude)))
+        (d.magnitude === undefined || (typeof d.magnitude === 'number' && Number.isFinite(d.magnitude))) &&
+        (d.areaAcres === undefined || (typeof d.areaAcres === 'number' && Number.isFinite(d.areaAcres)))
     );
 }

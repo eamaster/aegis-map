@@ -51,6 +51,7 @@ describe('Orbital Engine Pass Predictions', () => {
         // First 5-minute sample is 1 min (~440 km along-track) before overhead.
         expect(first.elevation).toBeGreaterThan(45);
         expect(Number.isFinite(first.azimuth)).toBe(true);
+        expect(first.maxElevationDeg).toBeGreaterThan(80);
 
         const next = getNextPass(sampleTle, observer.lat, observer.lng, start);
         expect(next?.time.toISOString()).toBe(first.time.toISOString());

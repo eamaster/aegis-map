@@ -21,8 +21,48 @@ export const API_CAPABILITIES = ['workers-ai-analyze-v1', 'provider-status-v1'] 
  * Analysis cache + prompt schema version.
  * Bump when prompt text, capability context, or response semantics change.
  * Independent of APP_VERSION and provider API versions.
+ * wai-v3: location/illumination/elevation context in the prompt and bucketed
+ * cache identity (see ANALYSIS_*_BUCKET* below).
  */
-export const ANALYSIS_CACHE_VERSION = 'wai-v2';
+export const ANALYSIS_CACHE_VERSION = 'wai-v3';
+
+/**
+ * Accepted ranges for numeric /api/analyze fields. Documented once here; the
+ * frontend mirrors lat/lng/elevation bounds in its own coordinate checks and
+ * the README API Reference lists them for clients.
+ */
+export const ANALYZE_LIMITS = {
+	cloudCover: { min: 0, max: 100 },
+	lat: { min: -90, max: 90 },
+	lng: { min: -180, max: 180 },
+	maxElevationDeg: { min: 0, max: 90 },
+} as const;
+
+/**
+ * Illumination classes from geometric solar elevation at the event location:
+ * day: sun > DAY_MIN; twilight: TWILIGHT_MIN <= sun <= DAY_MIN; night: below.
+ * -6° is the end of civil twilight.
+ */
+export const SUN_ELEVATION_DAY_MIN_DEG = 0;
+export const SUN_ELEVATION_TWILIGHT_MIN_DEG = -6;
+
+/**
+ * Analysis cache identity (and, deliberately, the prompt) only sees these
+ * coarse values, so every input that reaches the model is also in the key
+ * and nothing finer than the model needs fragments the cache:
+ * - cloud cover: bands [0,10) [10,25) [25,50) [50,75) [75,90) [90,100]
+ * - max elevation: bands [0,10) [10,25) [25,40) [40,60) [60,90]; 25/15/5 are
+ *   the frontend's pass-search thresholds, so very low/low passes are distinct
+ * - pass time: floored to a 30 min window (the frontend's pass time is the
+ *   first 5 min sample after "now", so exact values never repeat across users)
+ * - location: rounded to 1 decimal (~11 km); fire centroids drift slightly
+ */
+export const ANALYSIS_CLOUD_BUCKET_EDGES_PCT = [10, 25, 50, 75, 90] as const;
+export const ANALYSIS_ELEVATION_BUCKET_EDGES_DEG = [10, 25, 40, 60] as const;
+export const ANALYSIS_PASS_TIME_BUCKET_MINUTES = 30;
+export const ANALYSIS_LOCATION_DECIMALS = 1;
+/** Max elevation below this is described to the model as oblique geometry. Must be a bucket edge. */
+export const ANALYSIS_LOW_ELEVATION_BELOW_DEG = 25;
 
 /** Supported Workers AI text-generation model IDs for this project. */
 export const SUPPORTED_AI_MODELS = [
@@ -110,3 +150,39 @@ export type DisasterType = (typeof DISASTER_TYPES)[number];
 export function isDisasterType(value: unknown): value is DisasterType {
 	return typeof value === 'string' && (DISASTER_TYPES as readonly string[]).includes(value);
 }
+
+/**
+ * Severity thresholds (disasters.ts). A value at a threshold takes the higher
+ * class (>=), matching the earthquake rule.
+ *
+ * Earthquakes (USGS magnitude): >= 6.0 high, >= 4.5 medium, else low.
+ * Wildfires (EONET latest geometry magnitudeValue, normalized to acres):
+ *   >= 10,000 acres high; >= 1,000 acres medium; else low. 1,000 acres is the
+ *   NWCG size class F lower bound; 10,000 is a round bar for very large fires.
+ *   Measured on 2026-10-12 against the 144 open EONET wildfires (min 500,
+ *   median 1,100, p90 8,761, max 80,000 acres): 66 low / 65 medium / 13 high.
+ *   Missing/invalid size keeps the previous default (medium).
+ * Volcanoes: EONET volcano geometries carry no magnitude (all 32 open events
+ *   had magnitudeValue null on 2026-10-12) and no other structured intensity
+ *   field, so severity stays the default medium rather than inventing one.
+ */
+export const EARTHQUAKE_SEVERITY_MIN_MAGNITUDE = { high: 6.0, medium: 4.5 } as const;
+export const WILDFIRE_SEVERITY_MIN_ACRES = { high: 10_000, medium: 1_000 } as const;
+/** Severity used when a type has no usable intensity data. */
+export const DEFAULT_DISASTER_SEVERITY = 'medium' as const;
+
+/** EONET magnitudeUnit (lower-cased) -> acres multiplier. Unknown units are not guessed. */
+export const AREA_UNIT_TO_ACRES: Readonly<Record<string, number>> = {
+	acres: 1,
+	acre: 1,
+	ha: 2.471053814671653,
+	hectare: 2.471053814671653,
+	hectares: 2.471053814671653,
+	km2: 247.1053814671653,
+	'km^2': 247.1053814671653,
+	'sq km': 247.1053814671653,
+	sqkm: 247.1053814671653,
+	mi2: 640,
+	'sq mi': 640,
+	sqmi: 640,
+};

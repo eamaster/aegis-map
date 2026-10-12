@@ -321,7 +321,9 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
             tooltipRef.current?.remove();
             const content = document.createElement('div');
             content.className = 'text-sm font-medium';
-            content.textContent = `${icon} ${selected.title}${selected.magnitude !== undefined ? ` M${selected.magnitude}` : ''}`;
+            const magText = selected.magnitude !== undefined ? ` M${selected.magnitude}` : '';
+            const areaText = selected.areaAcres !== undefined ? ` (${Math.round(selected.areaAcres).toLocaleString()} ac)` : '';
+            content.textContent = `${icon} ${selected.title}${magText}${areaText}`;
             tooltipRef.current = new mapboxgl.Popup({
                 closeButton: false,
                 closeOnClick: false,

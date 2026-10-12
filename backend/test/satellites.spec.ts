@@ -8,6 +8,7 @@ import {
 	readTleCache,
 	serializeTles,
 	TLE_CACHE_KEY,
+	TLE_LKG_CACHE_KEY,
 	TLE_FETCH_TIMEOUT_MS,
 	TLE_REFRESH_BACKOFF_MS,
 	TLE_SCHEDULED_REFRESH_AFTER_MS,
@@ -155,8 +156,7 @@ describe('loadMonitoredTles cache policy', () => {
 		expect(result.status).toBe('complete');
 		expect(calls.sort()).toEqual([...MONITORED_NORAD_IDS].sort());
 		expect(result.refreshed).toEqual([...MONITORED_NORAD_IDS].sort((a, b) => a - b));
-		expect(kv.puts).toHaveLength(1);
-		expect(kv.puts[0].key).toBe(TLE_CACHE_KEY);
+		expect(kv.puts.map((p) => p.key)).toEqual([TLE_CACHE_KEY, TLE_LKG_CACHE_KEY]);
 		const text = serializeTles(result.records);
 		expect(text.split('\n')).toHaveLength(18);
 		expect(text.split('\n').filter((l) => /^[12] /.test(l)).every((l) => l.length === 69)).toBe(true);
@@ -254,6 +254,42 @@ describe('loadMonitoredTles cache policy', () => {
 		const { fetchImpl } = celestrak((id) => new Response(tleText(id)));
 		const result = await loadMonitoredTles(kv.kv, { now: NOW, fetchImpl });
 		expect(result.status).toBe('complete');
-		expect(kv.puts).toHaveLength(1);
+		expect(kv.puts.length).toBeGreaterThanOrEqual(1);
+	});
+
+	it('serves stale cache immediately and refreshes in background when waitUntil is provided', async () => {
+		const staleDoc = cachedDoc(new Date(NOW.getTime() - 14 * HOUR));
+		const kv = memoryKv({ initial: { [TLE_CACHE_KEY]: staleDoc } });
+		let backgroundPromise: Promise<unknown> | null = null;
+		const waitUntil = (promise: Promise<unknown>) => {
+			backgroundPromise = promise;
+		};
+
+		const { fetchImpl, calls } = celestrak((id) => new Response(tleText(id)));
+		const result = await loadMonitoredTles(kv.kv, { now: NOW, fetchImpl, waitUntil });
+
+		expect(result.revalidating).toBe(true);
+		expect(result.status).toBe('complete');
+		expect(result.records.size).toBe(MONITORED_NORAD_IDS.length);
+		// waitUntil was invoked with a promise
+		expect(backgroundPromise).not.toBeNull();
+
+		// Wait for background refresh to finish
+		await backgroundPromise;
+		expect(calls.length).toBe(MONITORED_NORAD_IDS.length);
+		expect(kv.puts.map((p) => p.key)).toContain(TLE_CACHE_KEY);
+		expect(kv.puts.map((p) => p.key)).toContain(TLE_LKG_CACHE_KEY);
+	});
+
+	it('falls back to last-known-good cache when primary cache is empty and upstream fails', async () => {
+		const lkgDoc = cachedDoc(new Date(NOW.getTime() - 14 * HOUR));
+		const kv = memoryKv({ initial: { [TLE_LKG_CACHE_KEY]: lkgDoc } });
+		const failing = celestrak(() => new Response('503 Service Unavailable', { status: 503 }));
+
+		const result = await loadMonitoredTles(kv.kv, { now: NOW, fetchImpl: failing.fetchImpl });
+		expect(result.status).toBe('complete');
+		expect(result.records.size).toBe(MONITORED_NORAD_IDS.length);
+		expect(result.retained).toHaveLength(MONITORED_NORAD_IDS.length);
+		expect(result.failed).toHaveLength(MONITORED_NORAD_IDS.length);
 	});
 });

@@ -413,6 +413,18 @@ GET /api/disasters
 
 **Cache**: 10 minutes (Cloudflare KV)
 
+**Severity Rules**:
+- **Wildfires**: Derived from EONET reported area normalized to acres (`areaAcres`):
+  - `high`: ≥ 10,000 acres
+  - `medium`: ≥ 1,000 acres
+  - `low`: < 1,000 acres
+  - Missing magnitude defaults to `medium` (EONET area units including `acres`, `ha`/`hectares`, `km2`/`sq km` are converted to acres).
+- **Earthquakes**: Derived from USGS magnitude:
+  - `high`: ≥ 6.0
+  - `medium`: ≥ 4.5
+  - `low`: < 4.5
+- **Volcanoes**: Default `medium` (EONET volcano records carry no magnitude/intensity metrics).
+
 **Response:**
 ```json
 [
@@ -423,7 +435,8 @@ GET /api/disasters
     "lat": 34.0522,
     "lng": -118.2437,
     "date": "2025-12-27T10:00:00Z",
-    "severity": "high"
+    "severity": "high",
+    "areaAcres": 15420.5
   },
   {
     "id": "us6000abcd",
@@ -444,7 +457,10 @@ GET /api/tles
 ```
 **Description**: Fetches Two-Line Element (TLE) orbital data for 6 disaster monitoring satellites.
 
-**Cache**: 12 hours (Cloudflare KV)
+**Cache & Resilience**:
+- **12-Hour Cache with Stale-While-Revalidate (SWR)**: Due records trigger parallel background refresh via `ctx.waitUntil` while serving existing cache immediately (`X-TLE-Revalidating: true` header).
+- **Last-Known-Good Fallback**: Validated records are mirrored to long-lived `tles:lkg:v1` storage, ensuring full availability if upstream CelesTrak is unreachable.
+- **Strict Validation**: Every element line is verified for 69-character column structure, checksum modulo 10, NORAD catalogue ID, and 7-day epoch freshness before acceptance.
 
 **Satellites**:
 - Landsat-8 (NORAD 39084)
@@ -515,16 +531,39 @@ POST /api/analyze
   "satelliteName": "LANDSAT 9",
   "passTime": "2026-10-08T15:00:00.000Z",
   "cloudCover": 15,
-  "disasterType": "fire"
+  "disasterType": "fire",
+  "lat": 34.0522,
+  "lng": -118.2437,
+  "maxElevationDeg": 45.2
 }
 ```
 
-Notes:
-- `disasterType` is optional for legacy clients; when omitted it is treated as unknown (neutral guidance).
-- `cloudCover` may be `null` when weather data is unavailable (never coerced to clear skies).
-- `passTime` must be an ISO-8601 datetime **with timezone** (`Z` or `±HH:MM`). Date-only and timezone-less values are rejected; valid offsets are normalized to UTC.
-- Client abort cancels the HTTP fetch only; it does not cancel remote Workers AI inference once accepted.
-- CORS allowlisting is not authentication. See [docs/COORDINATED_RELEASE.md](docs/COORDINATED_RELEASE.md) for release gates and abuse-control blockers.
+**Field Specifications & Validation**:
+- `disasterTitle` (string, required): Disaster name (max 200 chars). Sanitized as untrusted input in model prompt.
+- `satelliteName` (string, required): Satellite name (max 80 chars). Grounded against verified fleet capabilities.
+- `passTime` (string, required): ISO-8601 datetime with timezone (`Z` or `±HH:MM`). Floored to 30-minute window for prompt and caching.
+- `cloudCover` (number | null, optional): Forecast cloud cover percentage `[0, 100]` or `null` if unknown. Never coerced to clear skies.
+- `disasterType` (string, optional): `"fire"` | `"volcano"` | `"earthquake"`. Omitted or `null` treated as unknown (neutral guidance).
+- `lat` (number | null, optional): Latitude in degrees `[-90, 90]`. Must be provided together with `lng`.
+- `lng` (number | null, optional): Longitude in degrees `[-180, 180]`. Must be provided together with `lat`.
+- `maxElevationDeg` (number | null, optional): Maximum viewing elevation angle during the pass in degrees `[0, 90]`.
+
+**Physical Context Grounding**:
+- **Solar Illumination**: Derived via pure NOAA Meeus geometric solar elevation:
+  - `day` (sun > 0°): Full sunlight; optical sensors viable, limited only by clouds.
+  - `twilight` (-6° to 0°): Civil twilight; optical imagery degraded.
+  - `night` (sun < -6°): Darkness; optical sensors (Sentinel-2) are completely unusable. Thermal infrared (Landsat TIRS, MODIS) remains operational day and night.
+- **Viewing Geometry**: Passes with peak elevation < 25° are identified as low-elevation passes with severe oblique perspective distortion.
+- **Unknown Inputs**: Missing or null coordinates/elevation produce explicit statements that illumination or viewing angles are unknown without assuming favorable conditions.
+
+**Smart Cache Strategy (`wai-v3`)**:
+- Coarse input bucketing eliminates cache misses caused by clock jitter or minor coordinate shifts while preserving semantic accuracy:
+  - Cloud cover bands: `[0, 10, 25, 50, 75, 90, 100]`%
+  - Elevation bands: `[0, 10, 25, 40, 60, 90]`°
+  - Pass time floored to 30-minute UTC windows
+  - Location rounded to 1 decimal place (~11km)
+- Event title is kept in the cache key and prompt to prevent cross-event collisions.
+- Cache TTL: 2 hours in Cloudflare KV. Provider failures are not cached.
 
 **Success Response:**
 ```json
@@ -543,10 +582,6 @@ Notes:
   "message": "AI daily free allocation exhausted"
 }
 ```
-
-**Caching Strategy**:
-- Hashed keys from model, prompt/cache version, disaster type/title, satellite + capabilities, pass ISO time, and cloud (including explicit unknown)
-- 2-hour TTL; provider failures are not cached as successful AI
 
 ---
 
