@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { SELF } from 'cloudflare:test';
 import { EONET_QUERIES, USGS_URL } from '../src/disasters';
 import { buildFirmsBboxes, buildFirmsCacheKey, planFirmsWindows } from '../src/firms';
-import { CachedTleRecord, MONITORED_NORAD_IDS, TLE_CACHE_KEY, writeTleCache } from '../src/satellites';
+import { CachedTleRecord, MONITORED_NORAD_IDS, TLE_CACHE_KEY, TLE_LKG_CACHE_KEY, writeTleCache } from '../src/satellites';
 import { refreshTlesScheduled } from '../src/index';
 import { callWorker, csvResponse, FIRMS_HEADER, makeTle, memoryKv, withFetch } from './helpers';
 
@@ -155,7 +155,7 @@ describe('GET /api/tles', () => {
 		expect(res.headers.get('Access-Control-Expose-Headers')).toContain('X-TLE-Status');
 		const lines = (await res.text()).split('\n');
 		expect(lines).toHaveLength(18);
-		expect(kv.puts.map((p) => p.key)).toEqual([TLE_CACHE_KEY]);
+		expect(kv.puts.map((p) => p.key)).toEqual([TLE_CACHE_KEY, TLE_LKG_CACHE_KEY]);
 	});
 
 	it('reports partial upstream success through headers', async () => {
@@ -178,7 +178,7 @@ describe('GET /api/tles', () => {
 		);
 		expect(res.status).toBe(200);
 		expect(res.headers.get('X-TLE-Status')).toBe('complete');
-		expect(kv.puts).toHaveLength(1);
+		expect(kv.puts.length).toBeGreaterThanOrEqual(1);
 	});
 
 	it('retains valid cached elements past the refresh point and labels them retained, not refreshed', async () => {

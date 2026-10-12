@@ -1,3 +1,10 @@
+import {
+	AREA_UNIT_TO_ACRES,
+	DEFAULT_DISASTER_SEVERITY,
+	EARTHQUAKE_SEVERITY_MIN_MAGNITUDE,
+	WILDFIRE_SEVERITY_MIN_ACRES,
+} from './config';
+
 /**
  * Disaster Data Adapters (NASA EONET v3 + USGS Earthquakes)
  * Provides normalized, validated disaster records with per-source status.
@@ -19,7 +26,44 @@ export interface DisasterRecord {
 	lat: number;
 	date: string;
 	severity: DisasterSeverity;
+	/** Earthquakes only: USGS magnitude. */
 	magnitude?: number;
+	/** Wildfires only: reported burned area in acres (EONET size, unit-normalized). */
+	areaAcres?: number;
+}
+
+/** Earthquake severity from USGS magnitude (thresholds in config.ts). Unknown magnitude is low. */
+export function earthquakeSeverity(magnitude: number | undefined): DisasterSeverity {
+	if (magnitude === undefined) return 'low';
+	if (magnitude >= EARTHQUAKE_SEVERITY_MIN_MAGNITUDE.high) return 'high';
+	if (magnitude >= EARTHQUAKE_SEVERITY_MIN_MAGNITUDE.medium) return 'medium';
+	return 'low';
+}
+
+/**
+ * Wildfire severity from reported area in acres (thresholds in config.ts).
+ * Missing size keeps the pre-existing default rather than guessing.
+ */
+export function wildfireSeverity(areaAcres: number | undefined): DisasterSeverity {
+	if (areaAcres === undefined) return DEFAULT_DISASTER_SEVERITY;
+	if (areaAcres >= WILDFIRE_SEVERITY_MIN_ACRES.high) return 'high';
+	if (areaAcres >= WILDFIRE_SEVERITY_MIN_ACRES.medium) return 'medium';
+	return 'low';
+}
+
+/**
+ * Normalize an EONET size to acres. Only finite, positive values in a known
+ * unit count (zero/negative is not a real measured size; unknown units are
+ * never guessed). Rounded to 0.01 acre so unit conversion cannot flip a
+ * threshold comparison through floating-point noise.
+ */
+export function toAcres(value: unknown, unit: unknown): number | undefined {
+	if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return undefined;
+	if (typeof unit !== 'string') return undefined;
+	const factor = AREA_UNIT_TO_ACRES[unit.trim().toLowerCase()];
+	if (factor === undefined) return undefined;
+	const acres = Math.round(value * factor * 100) / 100;
+	return acres > 0 ? acres : undefined;
 }
 
 export type DisasterSourceName = 'eonet' | 'usgs';
@@ -165,17 +209,23 @@ export function normalizeEonetEvents(events: readonly unknown[]): NormalizeResul
 			continue;
 		}
 
-		let latest: { ms: number; point: LngLat } | null = null;
+		let latest: { ms: number; point: LngLat; areaAcres: number | undefined } | null = null;
 		for (const geom of event.geometry) {
-			const ms = parseTimestamp((geom as { date?: unknown } | null)?.date);
+			const g = geom as { date?: unknown; magnitudeValue?: unknown; magnitudeUnit?: unknown } | null;
+			const ms = parseTimestamp(g?.date);
 			const point = extractEonetCoordinates(geom);
 			if (ms === null || !point) continue;
-			if (!latest || ms > latest.ms) latest = { ms, point };
+			// Size is read from the same geometry that supplies position and date.
+			if (!latest || ms > latest.ms) latest = { ms, point, areaAcres: toAcres(g?.magnitudeValue, g?.magnitudeUnit) };
 		}
 		if (!latest) {
 			rejected++;
 			continue;
 		}
+
+		// Only wildfires carry a usable size; volcano geometries have none (see config.ts).
+		const areaAcres = type === 'fire' ? latest.areaAcres : undefined;
+		const severity = type === 'fire' ? wildfireSeverity(areaAcres) : DEFAULT_DISASTER_SEVERITY;
 
 		const title = typeof event.title === 'string' && event.title.trim() ? event.title.trim() : null;
 		records.push({
@@ -185,7 +235,8 @@ export function normalizeEonetEvents(events: readonly unknown[]): NormalizeResul
 			lng: latest.point.lng,
 			lat: latest.point.lat,
 			date: new Date(latest.ms).toISOString(),
-			severity: 'medium',
+			severity,
+			...(areaAcres !== undefined ? { areaAcres } : {}),
 		});
 	}
 
@@ -227,11 +278,7 @@ export function normalizeUsgsFeatures(features: readonly unknown[]): NormalizeRe
 		}
 
 		const magnitude = typeof mag === 'number' ? mag : undefined;
-		let severity: DisasterSeverity = 'low';
-		if (magnitude !== undefined) {
-			if (magnitude >= 6.0) severity = 'high';
-			else if (magnitude >= 4.5) severity = 'medium';
-		}
+		const severity = earthquakeSeverity(magnitude);
 
 		const place = feature.properties?.place;
 		records.push({

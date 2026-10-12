@@ -138,6 +138,23 @@ export function formatCapabilityContext(
  * - A Cron Trigger refreshes records older than TLE_SCHEDULED_REFRESH_AFTER_MS
  *   so user requests normally read the cache; the request path only fetches
  *   when that refresh has not kept up (cold cache, repeated cron failure).
+ * - Stale-while-revalidate: when a request finds ANY valid record and the
+ *   caller supplied waitUntil, the request is answered immediately from the
+ *   cache and the refresh runs in the background (never blocking the user on
+ *   CelesTrak, whose latency was observed at ~14-25 s). Only a request with
+ *   nothing servable (cold cache, no last-known-good) waits for upstream.
+ *   One background refresh runs per isolate at a time; other isolates may
+ *   duplicate it (KV is eventually consistent), bounded by the 15 min backoff.
+ * - Last known good: every refresh that leaves a non-empty, fully re-validated
+ *   set also writes TLE_LKG_CACHE_KEY. It is read only when the primary key is
+ *   missing records, so a wiped/expired/corrupt primary (e.g. after an
+ *   all-failure backoff write) cannot force a cold blocking fetch. It lives as
+ *   long as any record could still pass the epoch policy (7 days); a longer TTL
+ *   would only retain records validation must reject.
+ * - Nothing is stored or served unless it passed validateTleRecord (69-column
+ *   lines, checksums, matching NORAD id, epoch policy). An empty record set is
+ *   never served (HTTP 502). The primary document is still written after a
+ *   total failure, as a records-less backoff marker only, to stop refresh storms.
  */
 export const TLE_LINE_LENGTH = 69;
 export const TLE_MAX_EPOCH_AGE_DAYS = 7;
@@ -149,6 +166,9 @@ export const TLE_REFRESH_BACKOFF_MS = 15 * 60 * 1000;
 export const TLE_FETCH_TIMEOUT_MS = 25_000;
 export const TLE_CACHE_KEY = 'tles:v3';
 export const TLE_CACHE_TTL_SECONDS = TLE_MAX_EPOCH_AGE_DAYS * 24 * 60 * 60;
+/** Last-known-good copy of the validated set; see policy above for why 7 days. */
+export const TLE_LKG_CACHE_KEY = 'tles:lkg:v1';
+export const TLE_LKG_TTL_SECONDS = TLE_CACHE_TTL_SECONDS;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -354,6 +374,8 @@ export interface TleLoadResult {
 	/** IDs whose refresh attempt failed during this request. */
 	failed: number[];
 	backoffActive: boolean;
+	/** A background refresh was started (or is already running): records are served stale while it completes. */
+	revalidating: boolean;
 	/** Earliest time another upstream attempt is allowed, when one is being held back. */
 	nextAttemptAt: string | null;
 }
@@ -367,29 +389,133 @@ export function celestrakTleUrl(noradId: number): string {
 	return `https://celestrak.org/NORAD/elements/gp.php?CATNR=${noradId}&FORMAT=tle`;
 }
 
+async function readStore(store: TleStore, key: string): Promise<string | null> {
+	try {
+		return await store.get(key);
+	} catch (err) {
+		console.warn(`TLE cache read failed (${key}):`, err instanceof Error ? err.name : 'Error');
+		return null;
+	}
+}
+
+/**
+ * Fetch every due satellite in parallel, each with its own timeout. A record
+ * enters `records` only after full validation; failures leave it untouched.
+ */
+async function refreshDueRecords(
+	due: readonly number[],
+	records: Map<number, CachedTleRecord>,
+	opts: { fetchImpl: FetchLike; now: Date; timeoutMs: number },
+): Promise<{ refreshed: number[]; failed: number[] }> {
+	const refreshed: number[] = [];
+	const failed: number[] = [];
+	await Promise.all(
+		due.map(async (id) => {
+			try {
+				const response = await opts.fetchImpl(celestrakTleUrl(id), {
+					headers: { 'User-Agent': 'AegisMap/1.2 (Satellite-Monitor)' },
+					signal: AbortSignal.timeout(opts.timeoutMs),
+				});
+				if (!response.ok) {
+					console.warn(`TLE ${id}: HTTP ${response.status}`);
+					failed.push(id);
+					return;
+				}
+				const result = parseProviderTle(await response.text(), id, opts.now);
+				if (!result.valid || !result.record) {
+					console.warn(`TLE ${id}: rejected (${result.reason})`);
+					failed.push(id);
+					return;
+				}
+				records.set(id, { ...result.record, fetchedAt: opts.now.toISOString() });
+				refreshed.push(id);
+			} catch (err) {
+				console.warn(`TLE ${id}: ${err instanceof Error ? err.name : 'Error'}`);
+				failed.push(id);
+			}
+		}),
+	);
+	return { refreshed, failed };
+}
+
+/**
+ * Last-known-good document: only records that survive a full re-validation
+ * (line format, checksums, NORAD id, epoch policy) after serialization; null
+ * when nothing qualifies, so an empty or malformed set is never stored.
+ */
+export function buildLastKnownGood(records: Map<number, CachedTleRecord>, now: Date): string | null {
+	const checked = readTleCache(writeTleCache(records, null), now).records;
+	return checked.size > 0 ? writeTleCache(checked, null) : null;
+}
+
+/**
+ * Persist the primary document (also the records-less failure/backoff marker)
+ * and, after a successful refresh, the last-known-good copy.
+ */
+async function persistTles(
+	store: TleStore | undefined,
+	records: Map<number, CachedTleRecord>,
+	failedAt: Date | null,
+	refreshedAny: boolean,
+	now: Date,
+): Promise<void> {
+	if (!store) return;
+	try {
+		await store.put(TLE_CACHE_KEY, writeTleCache(records, failedAt), { expirationTtl: TLE_CACHE_TTL_SECONDS });
+	} catch (err) {
+		console.warn('TLE cache write failed:', err instanceof Error ? err.name : 'Error');
+	}
+	if (!refreshedAny) return;
+	const lkg = buildLastKnownGood(records, now);
+	if (!lkg) return;
+	try {
+		await store.put(TLE_LKG_CACHE_KEY, lkg, { expirationTtl: TLE_LKG_TTL_SECONDS });
+	} catch (err) {
+		console.warn('TLE last-known-good write failed:', err instanceof Error ? err.name : 'Error');
+	}
+}
+
+/** One background refresh per isolate; concurrent requests do not stack upstream fetches. */
+let backgroundRefreshRunning = false;
+
+export interface LoadMonitoredTlesOptions {
+	now?: Date;
+	fetchImpl?: FetchLike;
+	refreshAfterMs?: number;
+	/** Per-request upstream timeout (default TLE_FETCH_TIMEOUT_MS). */
+	timeoutMs?: number;
+	/**
+	 * Enables stale-while-revalidate: with any servable record, refresh runs in
+	 * the background through this hook (ctx.waitUntil). Without it (cron, tests)
+	 * the refresh is awaited inline.
+	 */
+	waitUntil?: (promise: Promise<unknown>) => void;
+}
+
 /**
  * Load monitored TLEs under the single cache policy above. One bounded
- * request per satellite needing refresh, no retries.
+ * request per satellite needing refresh, all in parallel, no retries.
  */
 export async function loadMonitoredTles(
 	store: TleStore | undefined,
-	options: { now?: Date; fetchImpl?: FetchLike; refreshAfterMs?: number } = {},
+	options: LoadMonitoredTlesOptions = {},
 ): Promise<TleLoadResult> {
 	const now = options.now ?? new Date();
 	const fetchImpl: FetchLike = options.fetchImpl ?? ((input, init) => fetch(input, init));
 	const refreshAfterMs = options.refreshAfterMs ?? TLE_REFRESH_AFTER_MS;
+	const fetchOptions = { fetchImpl, now, timeoutMs: options.timeoutMs ?? TLE_FETCH_TIMEOUT_MS };
 
-	let raw: string | null = null;
-	if (store) {
-		try {
-			raw = await store.get(TLE_CACHE_KEY);
-		} catch (err) {
-			console.warn('TLE cache read failed:', err instanceof Error ? err.name : 'Error');
-		}
-	}
-	const cache = readTleCache(raw, now);
+	const cache = readTleCache(store ? await readStore(store, TLE_CACHE_KEY) : null, now);
 	if (cache.dropped > 0) console.warn(`TLE cache: dropped ${cache.dropped} invalid or expired entries`);
 	const records = cache.records;
+
+	// Fall back to the last-known-good copy only for satellites the primary key lacks.
+	if (store && MONITORED_NORAD_IDS.some((id) => !records.has(id))) {
+		const lkg = readTleCache(await readStore(store, TLE_LKG_CACHE_KEY), now);
+		for (const [id, rec] of lkg.records) {
+			if (!records.has(id)) records.set(id, rec);
+		}
+	}
 
 	const due = MONITORED_NORAD_IDS.filter((id) => {
 		const rec = records.get(id);
@@ -398,45 +524,35 @@ export async function loadMonitoredTles(
 	const backoffActive =
 		cache.lastFailedRefreshAt !== null && now.getTime() - cache.lastFailedRefreshAt < TLE_REFRESH_BACKOFF_MS;
 
-	const refreshed: number[] = [];
-	const failed: number[] = [];
+	let refreshed: number[] = [];
+	let failed: number[] = [];
+	let revalidating = false;
 
 	if (due.length > 0 && !backoffActive) {
-		await Promise.all(
-			due.map(async (id) => {
-				try {
-					const response = await fetchImpl(celestrakTleUrl(id), {
-						headers: { 'User-Agent': 'AegisMap/1.2 (Satellite-Monitor)' },
-						signal: AbortSignal.timeout(TLE_FETCH_TIMEOUT_MS),
-					});
-					if (!response.ok) {
-						console.warn(`TLE ${id}: HTTP ${response.status}`);
-						failed.push(id);
-						return;
-					}
-					const result = parseProviderTle(await response.text(), id, now);
-					if (!result.valid || !result.record) {
-						console.warn(`TLE ${id}: rejected (${result.reason})`);
-						failed.push(id);
-						return;
-					}
-					records.set(id, { ...result.record, fetchedAt: now.toISOString() });
-					refreshed.push(id);
-				} catch (err) {
-					console.warn(`TLE ${id}: ${err instanceof Error ? err.name : 'Error'}`);
-					failed.push(id);
-				}
-			}),
-		);
-
-		if (store) {
-			try {
-				await store.put(TLE_CACHE_KEY, writeTleCache(records, failed.length > 0 ? now : null), {
-					expirationTtl: TLE_CACHE_TTL_SECONDS,
-				});
-			} catch (err) {
-				console.warn('TLE cache write failed:', err instanceof Error ? err.name : 'Error');
+		if (records.size > 0 && options.waitUntil) {
+			// Stale-while-revalidate: answer now, refresh a private copy in the background.
+			revalidating = true;
+			if (!backgroundRefreshRunning) {
+				backgroundRefreshRunning = true;
+				const working = new Map(records);
+				options.waitUntil(
+					(async () => {
+						try {
+							const outcome = await refreshDueRecords(due, working, fetchOptions);
+							await persistTles(store, working, outcome.failed.length > 0 ? now : null, outcome.refreshed.length > 0, now);
+						} catch (err) {
+							console.warn('TLE background refresh failed:', err instanceof Error ? err.name : 'Error');
+						} finally {
+							backgroundRefreshRunning = false;
+						}
+					})(),
+				);
 			}
+		} else {
+			const outcome = await refreshDueRecords(due, records, fetchOptions);
+			refreshed = outcome.refreshed;
+			failed = outcome.failed;
+			await persistTles(store, records, failed.length > 0 ? now : null, refreshed.length > 0, now);
 		}
 	}
 
@@ -454,5 +570,6 @@ export async function loadMonitoredTles(
 		retained,
 		failed: failed.sort((a, b) => a - b),
 		backoffActive,
+		revalidating,
 	};
 }

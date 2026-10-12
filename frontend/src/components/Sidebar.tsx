@@ -267,6 +267,9 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
             passTime: passIso,
             cloudCover,
             disasterType: disaster.type,
+            lat: disaster.lat,
+            lng: disaster.lng,
+            maxElevationDeg: nextPass.maxElevationDeg ?? nextPass.elevation,
         };
         debugLog('ai', `Requesting AI analysis for ${disaster.title}`, 'info', requestBody);
 

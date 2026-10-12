@@ -10,6 +10,7 @@ export interface SatellitePass {
     time: Date;
     elevation: number;
     azimuth: number;
+    maxElevationDeg: number;
 }
 
 /**
@@ -122,12 +123,31 @@ export function predictPasses(
                     // Check if satellite is above minimum elevation
                     if (elevationDeg >= minElevation) {
                         if (!inPass) {
+                            // Find max elevation across the pass duration (±15 min in 1-min steps)
+                            let maxEl = elevationDeg;
+                            let scanTime = new Date(currentTime.getTime() - 4 * 60 * 1000);
+                            const scanEnd = new Date(currentTime.getTime() + 16 * 60 * 1000);
+                            while (scanTime <= scanEnd) {
+                                const pvScan = satellite.propagate(satrec, scanTime);
+                                if (pvScan && pvScan.position && typeof pvScan.position !== 'boolean') {
+                                    const gmstScan = satellite.gstime(scanTime);
+                                    const ecfScan = satellite.eciToEcf(pvScan.position, gmstScan);
+                                    const laScan = satellite.ecfToLookAngles(observerGd, ecfScan);
+                                    const elDegScan = satellite.radiansToDegrees(laScan.elevation);
+                                    if (Number.isFinite(elDegScan) && elDegScan > maxEl) {
+                                        maxEl = elDegScan;
+                                    }
+                                }
+                                scanTime = new Date(scanTime.getTime() + 60 * 1000);
+                            }
+
                             // Start of a new pass
                             passes.push({
                                 satelliteName: sat.name,
                                 time: new Date(currentTime.getTime()),
                                 elevation: elevationDeg,
                                 azimuth: azimuthDeg,
+                                maxElevationDeg: Math.round(maxEl * 10) / 10,
                             });
                             inPass = true;
 

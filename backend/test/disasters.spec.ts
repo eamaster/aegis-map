@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
 	DisasterUpstreamError,
+	earthquakeSeverity,
 	EONET_QUERIES,
 	EONET_WILDFIRE_DAYS,
 	extractEonetCoordinates,
@@ -9,7 +10,9 @@ import {
 	normalizeEonetEvents,
 	normalizeUsgsFeatures,
 	polygonRepresentativePoint,
+	toAcres,
 	USGS_URL,
+	wildfireSeverity,
 } from '../src/disasters';
 
 const quake = (overrides: Record<string, unknown> = {}, props: Record<string, unknown> = {}, coords: unknown = [-122.75, 38.77, 2.5]) => ({
@@ -114,6 +117,103 @@ describe('EONET normalization', () => {
 			]),
 		]);
 		expect(records[0]).toMatchObject({ lng: -119, lat: 39 });
+	});
+
+	it('extracts magnitude and derives severity for wildfires', () => {
+		const { records } = normalizeEonetEvents([
+			fireEvent([
+				{
+					date: '2026-10-05T12:00:00Z',
+					type: 'Point',
+					coordinates: [-110, 35],
+					magnitudeValue: 15000,
+					magnitudeUnit: 'Acres',
+				},
+			], { id: 'high-fire' }),
+			fireEvent([
+				{
+					date: '2026-10-05T12:00:00Z',
+					type: 'Point',
+					coordinates: [-111, 35],
+					magnitudeValue: 2500,
+					magnitudeUnit: 'Acres',
+				},
+			], { id: 'med-fire' }),
+			fireEvent([
+				{
+					date: '2026-10-05T12:00:00Z',
+					type: 'Point',
+					coordinates: [-112, 35],
+					magnitudeValue: 350,
+					magnitudeUnit: 'Acres',
+				},
+			], { id: 'low-fire' }),
+			fireEvent([
+				{
+					date: '2026-10-05T12:00:00Z',
+					type: 'Point',
+					coordinates: [-113, 35],
+					magnitudeValue: null,
+					magnitudeUnit: null,
+				},
+			], { id: 'missing-mag-fire' }),
+		]);
+		expect(records).toHaveLength(4);
+		expect(records.find((r) => r.id === 'high-fire')).toMatchObject({
+			severity: 'high',
+			areaAcres: 15000,
+		});
+		expect(records.find((r) => r.id === 'med-fire')).toMatchObject({
+			severity: 'medium',
+			areaAcres: 2500,
+		});
+		expect(records.find((r) => r.id === 'low-fire')).toMatchObject({
+			severity: 'low',
+			areaAcres: 350,
+		});
+		const missing = records.find((r) => r.id === 'missing-mag-fire');
+		expect(missing?.severity).toBe('medium');
+		expect(missing?.areaAcres).toBeUndefined();
+	});
+});
+
+describe('Wildfire area and severity derivation', () => {
+	it('converts recognized units to acres accurately', () => {
+		expect(toAcres(100, 'Acres')).toBe(100);
+		expect(toAcres(100, 'acres')).toBe(100);
+		expect(toAcres(1000, 'ha')).toBe(2471.05);
+		expect(toAcres(1000, 'hectares')).toBe(2471.05);
+		expect(toAcres(10, 'sq km')).toBe(2471.05);
+		expect(toAcres(10, 'sqkm')).toBe(2471.05);
+	});
+
+	it('returns undefined for invalid, non-positive, or unknown units', () => {
+		expect(toAcres(0, 'Acres')).toBeUndefined();
+		expect(toAcres(-50, 'Acres')).toBeUndefined();
+		expect(toAcres(NaN, 'Acres')).toBeUndefined();
+		expect(toAcres('100', 'Acres')).toBeUndefined();
+		expect(toAcres(100, null)).toBeUndefined();
+		expect(toAcres(100, 'furlongs')).toBeUndefined();
+	});
+
+	it('derives wildfire severity according to config thresholds', () => {
+		expect(wildfireSeverity(undefined)).toBe('medium');
+		expect(wildfireSeverity(500)).toBe('low');
+		expect(wildfireSeverity(999.99)).toBe('low');
+		expect(wildfireSeverity(1000)).toBe('medium');
+		expect(wildfireSeverity(5000)).toBe('medium');
+		expect(wildfireSeverity(9999.99)).toBe('medium');
+		expect(wildfireSeverity(10000)).toBe('high');
+		expect(wildfireSeverity(50000)).toBe('high');
+	});
+
+	it('preserves earthquake severity thresholds', () => {
+		expect(earthquakeSeverity(undefined)).toBe('low');
+		expect(earthquakeSeverity(3.2)).toBe('low');
+		expect(earthquakeSeverity(4.5)).toBe('medium');
+		expect(earthquakeSeverity(5.9)).toBe('medium');
+		expect(earthquakeSeverity(6.0)).toBe('high');
+		expect(earthquakeSeverity(7.8)).toBe('high');
 	});
 });
 

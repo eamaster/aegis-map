@@ -46,6 +46,7 @@ const EXPOSED_HEADERS = [
 	'X-TLE-Missing',
 	'X-TLE-Refreshed',
 	'X-TLE-Retained',
+	'X-TLE-Revalidating',
 	'X-TLE-Oldest-Epoch',
 	'Retry-After',
 ];
@@ -178,7 +179,14 @@ app.get('/api/disasters', async (c) => {
 // Route 2: GET /api/tles
 // text/plain TLE body (compatible); freshness/partial status in X-TLE-* headers.
 app.get('/api/tles', async (c) => {
-	const result = await loadMonitoredTles(c.env.AEGIS_CACHE);
+	// Stale-while-revalidate needs ctx.waitUntil; absent (no execution context) the refresh is awaited inline.
+	let waitUntil: ((promise: Promise<unknown>) => void) | undefined;
+	try {
+		waitUntil = c.executionCtx.waitUntil.bind(c.executionCtx);
+	} catch {
+		waitUntil = undefined;
+	}
+	const result = await loadMonitoredTles(c.env.AEGIS_CACHE, { waitUntil });
 
 	if (result.records.size === 0) {
 		const retryAfterSeconds = result.nextAttemptAt
@@ -211,6 +219,7 @@ app.get('/api/tles', async (c) => {
 		'X-TLE-Missing': result.missing.join(','),
 		'X-TLE-Refreshed': result.refreshed.join(','),
 		'X-TLE-Retained': result.retained.join(','),
+		'X-TLE-Revalidating': String(result.revalidating),
 		'X-TLE-Oldest-Epoch': oldest,
 	});
 });

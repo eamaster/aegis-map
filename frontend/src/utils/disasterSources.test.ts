@@ -56,6 +56,34 @@ describe('isDisasterRecord', () => {
             }),
         ).toBe(true);
     });
+
+    it('accepts wildfire records with areaAcres and varied severities', () => {
+        expect(
+            isDisasterRecord({
+                id: 'EONET_100',
+                type: 'fire',
+                title: 'Large Fire',
+                lng: -120.5,
+                lat: 38.5,
+                date: '2026-10-05T00:00:00.000Z',
+                severity: 'high',
+                areaAcres: 15420.5,
+            }),
+        ).toBe(true);
+        expect(
+            isDisasterRecord({
+                id: 'EONET_101',
+                type: 'fire',
+                title: 'Small Fire',
+                lng: -120.5,
+                lat: 38.5,
+                date: '2026-10-05T00:00:00.000Z',
+                severity: 'low',
+                areaAcres: 250,
+            }),
+        ).toBe(true);
+        expect(isDisasterRecord({ ...base, areaAcres: NaN })).toBe(false);
+    });
 });
 
 describe('displayCategoryCount', () => {
