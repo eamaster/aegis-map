@@ -6,19 +6,23 @@ function readState(value: string | undefined): DisasterSourceState | 'unknown' {
     return SOURCE_STATES.includes(value as DisasterSourceState) ? (value as DisasterSourceState) : 'unknown';
 }
 
-/** Parses X-Disaster-Sources ("eonet=ok;usgs=failed") and X-Disaster-Partial. Returns null when absent. */
+/** Parses X-Disaster-Sources ("eonet=ok;usgs=failed"), X-FIRMS-Status, and X-Disaster-Partial. Returns null when absent. */
 export function parseDisasterSourceHeaders(headers: Headers): DisasterSourceStatus | null {
     const raw = headers.get('X-Disaster-Sources');
-    if (!raw) return null;
+    const firmsRaw = headers.get('X-FIRMS-Status');
+    if (!raw && !firmsRaw) return null;
     const entries = new Map<string, string>();
-    for (const part of raw.split(';')) {
-        const [name, value] = part.split('=').map((s) => s.trim());
-        if (name) entries.set(name, value);
+    if (raw) {
+        for (const part of raw.split(';')) {
+            const [name, value] = part.split('=').map((s) => s.trim());
+            if (name) entries.set(name, value);
+        }
     }
     const eonet = readState(entries.get('eonet'));
     const usgs = readState(entries.get('usgs'));
-    const partial = headers.get('X-Disaster-Partial') === 'true' || eonet !== 'ok' || usgs !== 'ok';
-    return { eonet, usgs, partial };
+    const firms = firmsRaw ? (firmsRaw as DisasterSourceStatus['firms']) : undefined;
+    const partial = headers.get('X-Disaster-Partial') === 'true' || eonet !== 'ok' || usgs !== 'ok' || (firms !== undefined && firms !== 'ok');
+    return { eonet, usgs, firms, partial };
 }
 
 /** Human-readable summary of degraded sources, or null when every source is ok. */
@@ -27,15 +31,17 @@ export function describeDisasterSources(status: DisasterSourceStatus | null): st
     const down: string[] = [];
     if (status.eonet !== 'ok') down.push('NASA EONET (wildfires, volcanoes)');
     if (status.usgs !== 'ok') down.push('USGS (earthquakes)');
+    if (status.firms === 'unavailable') down.push('NASA FIRMS (satellite thermal detections)');
     if (down.length === 0) return 'Some disaster sources are incomplete.';
     return `Unavailable: ${down.join(', ')}. Counts are incomplete.`;
 }
 
-/** Query scope per category, as served by the Worker (backend EONET_QUERIES and USGS_URL). */
+/** Query scope per category, as served by the Worker (backend EONET_QUERIES, USGS_URL, and FIRMS). */
 export const DISASTER_SCOPE = {
-    fire: 'open NASA EONET wildfires with activity in the last 60 days',
-    volcano: 'every open NASA EONET volcanic event, dated by its report (often months old)',
-    earthquake: 'USGS M2.5+ earthquakes from the past day',
+    fire: 'confirmed agency-reported wildfires (NASA EONET v3)',
+    fire_detection: 'satellite thermal anomaly cells (NASA FIRMS VIIRS 375m)',
+    volcano: 'active volcanic alert events (NASA EONET)',
+    earthquake: 'USGS M2.5+ earthquake events',
 } as const;
 
 /**
@@ -48,6 +54,10 @@ export function displayCategoryCount(
     status: DisasterSourceStatus | null,
     loadFailed: boolean,
 ): string {
+    if (type === 'fire_detection') {
+        if (count === 0 && (loadFailed || (status?.firms && status.firms !== 'ok' && status.firms !== 'stale'))) return '—';
+        return count.toLocaleString();
+    }
     const state = status ? (type === 'earthquake' ? status.usgs : status.eonet) : 'unknown';
     if (count === 0 && (loadFailed || state !== 'ok')) return '—';
     return count.toLocaleString();
@@ -59,7 +69,7 @@ export function isDisasterRecord(value: unknown): value is Disaster {
     const d = value as Record<string, unknown>;
     return (
         typeof d.id === 'string' && d.id.length > 0 &&
-        (d.type === 'fire' || d.type === 'volcano' || d.type === 'earthquake') &&
+        (d.type === 'fire' || d.type === 'volcano' || d.type === 'earthquake' || d.type === 'fire_detection') &&
         typeof d.title === 'string' &&
         typeof d.lat === 'number' && Number.isFinite(d.lat) && Math.abs(d.lat) <= 90 &&
         typeof d.lng === 'number' && Number.isFinite(d.lng) && Math.abs(d.lng) <= 180 &&

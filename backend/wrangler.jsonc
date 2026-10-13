@@ -18,12 +18,13 @@
 		"enabled": true
 	},
 	/**
-	 * Orbital-element refresh outside user requests (src/index.ts scheduled
-	 * handler). Every 6 h, offset from the hour; CelesTrak asks clients not to
-	 * re-download unchanged data more often than every 2 h.
+	 * Scheduled background refreshes:
+	 * - TLE orbital elements (src/satellites.ts)
+	 * - Worldwide FIRMS VIIRS hotspots cached to KV (src/firmsGlobal.ts)
+	 * Every 2 h, offset from the hour.
 	 */
 	"triggers": {
-		"crons": ["23 */6 * * *"]
+		"crons": ["23 */2 * * *"]
 	},
 	/**
 	 * KV Namespace for caching

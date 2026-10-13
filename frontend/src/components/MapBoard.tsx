@@ -6,11 +6,11 @@
 import { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { API_BASE } from '../config/api';
 import { debugLog } from '../utils/debug';
 import toast from 'react-hot-toast';
-import type { Disaster, DisasterSourceStatus } from '../types';
-import { describeDisasterSources, isDisasterRecord, parseDisasterSourceHeaders } from '../utils/disasterSources';
+import type { Disaster, DisasterSourceStatus, FireDetectionCell, ObservationWindow, VolcanoMode } from '../types';
+import { describeDisasterSources } from '../utils/disasterSources';
+import { cellToDisasterItem, fetchDisastersData } from '../utils/disastersClient';
 import MapLegend from './MapLegend';
 
 type LayerHandler = {
@@ -27,6 +27,10 @@ interface MapBoardProps {
     onDisasterSelect: (disaster: Disaster | null) => void;
     activeFilters: Set<string>;
     onFilterToggle: (type: string) => void;
+    observationWindow?: ObservationWindow;
+    onObservationWindowChange?: (window: ObservationWindow) => void;
+    volcanoMode?: VolcanoMode;
+    onVolcanoModeChange?: (mode: VolcanoMode) => void;
 }
 
 // Helper function to safely remove all disaster layers and sources
@@ -53,7 +57,7 @@ const removeDisasterLayers = (
     }
 
     // Remove layers (must be done before removing sources)
-    ['fires-layer', 'earthquakes-layer', 'volcanoes-layer'].forEach(layerId => {
+    ['fires-layer', 'fire-cells-layer', 'earthquakes-layer', 'volcanoes-layer'].forEach(layerId => {
         if (mapInstance.getLayer(layerId)) {
             try {
                 mapInstance.removeLayer(layerId);
@@ -64,7 +68,7 @@ const removeDisasterLayers = (
     });
 
     // Remove sources
-    ['fires', 'earthquakes', 'volcanoes'].forEach(sourceId => {
+    ['fires', 'fire-cells', 'earthquakes', 'volcanoes'].forEach(sourceId => {
         if (mapInstance.getSource(sourceId)) {
             try {
                 mapInstance.removeSource(sourceId);
@@ -76,13 +80,25 @@ const removeDisasterLayers = (
 };
 
 
-export default function MapBoard({ onDisasterSelect, activeFilters, onFilterToggle }: MapBoardProps) {
+export default function MapBoard({
+    onDisasterSelect,
+    activeFilters,
+    onFilterToggle,
+    observationWindow = '24h',
+    onObservationWindowChange,
+    volcanoMode = 'context',
+    onVolcanoModeChange,
+}: MapBoardProps) {
     const mapContainerRef = useRef<HTMLDivElement>(null);
     const map = useRef<mapboxgl.Map | null>(null);
     const tooltipRef = useRef<mapboxgl.Popup | null>(null);
     const [disasters, setDisasters] = useState<Disaster[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [mapError, setMapError] = useState<string>('');
+    const [fireCells, setFireCells] = useState<FireDetectionCell[]>([]);
+    const [detectionCountTotal, setDetectionCountTotal] = useState<number>(0);
+    const [loading, setLoading] = useState(Boolean(accessToken));
+    const [mapError, setMapError] = useState<string>(
+        !accessToken ? 'Mapbox access token is missing! Check .env file.' : ''
+    );
     const [lastUpdated, setLastUpdated] = useState<Date | undefined>(undefined);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [isMapLoaded, setIsMapLoaded] = useState(false);
@@ -94,203 +110,6 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
     // Animation interval refs for proper cleanup
     const animationIdsRef = useRef<Record<string, ReturnType<typeof setInterval>>>({});
     const layerHandlersRef = useRef<LayerHandler[]>([]);
-
-    // Initialize map only once
-    useEffect(() => {
-        if (map.current) return; // Prevent re-initialization
-
-        if (!mapContainerRef.current) {
-            console.error('Map container ref is null');
-            return;
-        }
-
-        if (!accessToken) {
-            const error = 'Mapbox access token is missing! Check .env file.';
-            console.error(error);
-            setMapError(error);
-            setLoading(false);
-            return;
-        }
-
-        try {
-            // Create map instance with Standard Satellite style
-            map.current = new mapboxgl.Map({
-                container: mapContainerRef.current,
-                style: 'mapbox://styles/mapbox/standard-satellite',
-                center: [0, 20], // ✅ Global center (Africa/Europe visible)
-                zoom: 1.3, // ✅ Full globe view showing all continents
-                projection: { name: 'globe' } as any,
-                pitch: 0, // Flat view for better overview
-                bearing: 0, // North-up orientation
-                attributionControl: false, // ✅ Remove default cluttered attribution
-            });
-
-            // ✅ Add compact attribution in bottom-left
-            map.current.addControl(
-                new mapboxgl.AttributionControl({
-                    compact: true,
-                    customAttribution: '© Mapbox © OpenStreetMap'
-                }),
-                'bottom-left'
-            );
-
-            // DEBUG: Expose map and selection handler for console debugging
-            (window as any).mapDebug = map.current;
-            (window as any).selectDisasterDebug = onDisasterSelect;
-
-            // Add navigation controls
-            map.current.addControl(new mapboxgl.NavigationControl(), 'bottom-right');
-
-            // Add geolocate control
-            map.current.addControl(
-                new mapboxgl.GeolocateControl({
-                    positionOptions: {
-                        enableHighAccuracy: true,
-                    },
-                    trackUserLocation: true,
-                }),
-                'bottom-right'
-            );
-
-            // Handle map errors
-            map.current.on('error', (e) => {
-                console.error('Mapbox error:', e);
-                setMapError(`Map error: ${e.error.message}`);
-                setLoading(false);
-            });
-
-            // ✅ PERFORMANCE: Load disaster data immediately in parallel with map
-            // Don't wait for map to finish loading - fetch data while map renders
-            loadDisasters();
-
-            // Add disaster layers when map finishes loading
-            map.current.on('load', () => {
-                console.log('✅ Map finished loading');
-                setIsMapLoaded(true);
-            });
-            map.current.on('style.load', () => {
-                setIsMapLoaded(true);
-            });
-        } catch (error) {
-            console.error('Error creating map:', error);
-            setMapError(`Failed to create map: ${error}`);
-            setLoading(false);
-        }
-    }, []); // Empty dependency array = run once
-
-
-    // Load disasters from backend
-    const loadDisasters = async () => {
-        try {
-            // DEBUG: Log API call
-            debugLog('backend', `Fetching disasters from ${API_BASE}/api/disasters`, 'info');
-
-            const response = await fetch(`${API_BASE}/api/disasters`);
-            const status = parseDisasterSourceHeaders(response.headers);
-            setSourceStatus(status);
-            if (!response.ok) {
-                throw new Error(`Disaster API error: ${response.status}`);
-            }
-            const data: unknown = await response.json();
-
-            // DEBUG: Validate disaster data
-            if (!Array.isArray(data)) {
-                debugLog('disasters', 'ERROR: Response is not an array', 'error', { data });
-                setLoading(false);
-                setIsRefreshing(false);
-                setLoadFailed(true);
-                isInitialLoadRef.current = false; // Mark as no longer initial load even on error
-                toast.error('Disaster API returned an unexpected response.', { duration: 5000 });
-                return;
-            }
-
-            const disastersList = data.filter(isDisasterRecord);
-            if (disastersList.length !== data.length) {
-                debugLog(
-                    'disasters',
-                    `WARNING: Dropped ${data.length - disastersList.length} malformed disaster records`,
-                    'warning'
-                );
-            }
-            disastersByIdRef.current = new Map(disastersList.map((d) => [d.id, d]));
-            setLoadFailed(false);
-            const fireCount = disastersList.filter(d => d.type === 'fire').length;
-            const volcanoCount = disastersList.filter(d => d.type === 'volcano').length;
-            const earthquakeCount = disastersList.filter(d => d.type === 'earthquake').length;
-
-            // DEBUG: Log disaster stats
-            debugLog(
-                'disasters',
-                `Loaded ${disastersList.length} disasters: ${fireCount} fires, ${volcanoCount} volcanoes, ${earthquakeCount} earthquakes`,
-                'success',
-                { count: disastersList.length, types: { fires: fireCount, volcanoes: volcanoCount, earthquakes: earthquakeCount } }
-            );
-
-            // DEBUG: Confirm backend is online
-            debugLog('backend', 'Backend connection successful', 'success');
-
-            const fetchedAtHeader = response.headers.get('X-Disaster-Fetched-At');
-            const fetchedAt = fetchedAtHeader ? new Date(fetchedAtHeader) : null;
-
-            setDisasters(disastersList);
-            setLoading(false);
-            setLastUpdated(fetchedAt && !Number.isNaN(fetchedAt.getTime()) ? fetchedAt : new Date());
-            setIsRefreshing(false);
-
-            // Layers are added by the effect below when disasters state updates
-
-            const degraded = describeDisasterSources(status);
-            if (degraded) {
-                toast(degraded, { duration: 6000, icon: '⚠️' });
-            }
-
-            // Show success toast only on manual refresh, not initial load
-            if (!isInitialLoadRef.current) {
-                toast.success(
-                    `✓ Refreshed${degraded ? ' (partial)' : ''}: ${disastersList.length} disasters\n${fireCount} 🔥 ${earthquakeCount} 🌍 ${volcanoCount} 🌋`,
-                    {
-                        duration: 3000,
-                        style: {
-                            minWidth: '250px',
-                        },
-                    }
-                );
-            }
-            isInitialLoadRef.current = false;
-        } catch (error) {
-            console.error('Error loading disasters:', error);
-            debugLog(
-                'disasters',
-                `FAILED to load disasters: ${error}`,
-                'error',
-                { error: String(error) }
-            );
-            setLoading(false);
-            setIsRefreshing(false);
-            setLoadFailed(true);
-            isInitialLoadRef.current = false; // Mark as no longer initial load even on error
-
-            // Show error toast
-            toast.error(`Failed to load disaster data: ${error}`, {
-                duration: 5000,
-            });
-        }
-    };
-
-    // Manual refresh handler
-    const handleRefresh = async () => {
-        setIsRefreshing(true);
-        // Existing layers stay until new data arrives; the effect below swaps them
-        await loadDisasters();
-    };
-
-    // Re-render layers when map is loaded, filters change, or disasters update
-    useEffect(() => {
-        if (!map.current || !isMapLoaded) return;
-
-        removeDisasterLayers(map.current, animationIdsRef.current, layerHandlersRef.current);
-        if (disasters.length > 0) addDisasterLayers(disasters);
-    }, [isMapLoaded, activeFilters, disasters]);
 
     // Selection always resolves to the backend record so valid zero values survive
     const bindLayerInteractions = (layerId: string, icon: string) => {
@@ -321,9 +140,21 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
             tooltipRef.current?.remove();
             const content = document.createElement('div');
             content.className = 'text-sm font-medium';
-            const magText = selected.magnitude !== undefined ? ` M${selected.magnitude}` : '';
-            const areaText = selected.areaAcres !== undefined ? ` (${Math.round(selected.areaAcres).toLocaleString()} ac)` : '';
-            content.textContent = `${icon} ${selected.title}${magText}${areaText}`;
+            if (selected.type === 'fire_detection') {
+                const count = selected.detectionCell?.detectionCount ?? '';
+                const frp = selected.detectionCell?.maxFrp !== null && selected.detectionCell?.maxFrp !== undefined
+                    ? ` (Peak FRP: ${selected.detectionCell.maxFrp} MW)`
+                    : '';
+                content.innerHTML = `
+                    <div style="font-weight: 700; color: #f97316;">${icon} Satellite Hotspots Cell</div>
+                    <div style="font-size: 0.75rem;">${count} detections${frp}</div>
+                    <div style="font-size: 0.65rem; color: #9ca3af; margin-top: 2px;">Sensor thermal signature — not confirmed perimeter</div>
+                `;
+            } else {
+                const magText = selected.magnitude !== undefined ? ` M${selected.magnitude}` : '';
+                const areaText = selected.areaAcres !== undefined ? ` (${Math.round(selected.areaAcres).toLocaleString()} ac)` : '';
+                content.textContent = `${icon} ${selected.title}${magText}${areaText}`;
+            }
             tooltipRef.current = new mapboxgl.Popup({
                 closeButton: false,
                 closeOnClick: false,
@@ -361,6 +192,7 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
 
         // Separate disasters by type
         const fires = visibleDisasters.filter((d) => d.type === 'fire');
+        const fireDetections = visibleDisasters.filter((d) => d.type === 'fire_detection');
         const volcanoes = visibleDisasters.filter((d) => d.type === 'volcano');
         const earthquakes = visibleDisasters.filter((d) => d.type === 'earthquake');
 
@@ -426,7 +258,7 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
                         radius,
                         8
                     ]);
-                } catch (e) {
+                } catch {
                     // Layer might be removed during animation
                 }
             };
@@ -437,6 +269,60 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
             animationIdsRef.current.fires = firesAnimationId;
 
             bindLayerInteractions('fires-layer', '🔥');
+        }
+
+        // Add satellite thermal detection cells layer (FIRMS VIIRS)
+        if (fireDetections.length > 0) {
+            debugLog(
+                'map',
+                `Adding fire-cells layer with ${fireDetections.length} cells`,
+                'info'
+            );
+
+            map.current.addSource('fire-cells', {
+                type: 'geojson',
+                data: {
+                    type: 'FeatureCollection',
+                    features: fireDetections.map((cellItem) => ({
+                        type: 'Feature',
+                        geometry: {
+                            type: 'Point',
+                            coordinates: [cellItem.lng, cellItem.lat],
+                        },
+                        properties: cellItem,
+                    })),
+                },
+            });
+
+            map.current.addLayer({
+                id: 'fire-cells-layer',
+                type: 'circle',
+                source: 'fire-cells',
+                paint: {
+                    'circle-color': [
+                        'match',
+                        ['get', 'severity'],
+                        'high', '#ef4444',
+                        'medium', '#f97316',
+                        /* default/low */ '#f59e0b'
+                    ],
+                    'circle-radius': [
+                        'interpolate',
+                        ['linear'],
+                        ['zoom'],
+                        1, 3.5,
+                        4, 5.5,
+                        8, 9,
+                        12, 14
+                    ],
+                    'circle-stroke-width': 1.5,
+                    'circle-stroke-color': '#ffffff',
+                    'circle-stroke-opacity': 0.85,
+                    'circle-opacity': 0.82,
+                },
+            });
+
+            bindLayerInteractions('fire-cells-layer', '🛰️');
         }
 
         // Add earthquakes layer
@@ -494,7 +380,7 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
                         radius,
                         8
                     ]);
-                } catch (e) {
+                } catch {
                     // Layer might be removed during animation
                 }
             };
@@ -560,7 +446,7 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
                         radius,
                         8
                     ]);
-                } catch (e) {
+                } catch {
                     // Layer might be removed during animation
                 }
             };
@@ -572,9 +458,178 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
         }
     };
 
+    // Load disasters from backend
+    const loadDisasters = async () => {
+        try {
+            debugLog('backend', `Fetching disasters (${observationWindow}, ${volcanoMode})`, 'info');
+
+            const result = await fetchDisastersData({ window: observationWindow, volcanoMode });
+            setSourceStatus(result.sourceStatus);
+            setLoadFailed(false);
+
+            // Convert thermal cells into selectable Disaster items
+            const cellItems = result.fireCells.map(cellToDisasterItem);
+            const allItems = [...result.wildfires, ...result.volcanoes, ...result.earthquakes, ...cellItems];
+            disastersByIdRef.current = new Map(allItems.map((d) => [d.id, d]));
+
+            setDisasters(allItems);
+            setFireCells(result.fireCells);
+            setDetectionCountTotal(result.detectionCountTotal);
+            setLastUpdated(result.fetchedAt);
+            setLoading(false);
+            setIsRefreshing(false);
+
+            debugLog(
+                'disasters',
+                `Loaded ${allItems.length} total items: ${result.wildfires.length} wildfires, ${result.detectionCountTotal} hotspots (${result.fireCells.length} cells), ${result.volcanoes.length} volcanoes, ${result.earthquakes.length} quakes`,
+                'success'
+            );
+
+            const degraded = describeDisasterSources(result.sourceStatus);
+            if (degraded) {
+                toast(degraded, { duration: 6000, icon: '⚠️' });
+            }
+
+            if (!isInitialLoadRef.current) {
+                toast.success(
+                    `✓ Refreshed: ${result.wildfires.length} wildfires, ${result.detectionCountTotal.toLocaleString()} hotspots, ${result.earthquakes.length} quakes, ${result.volcanoes.length} volcanoes`,
+                    {
+                        duration: 3000,
+                        style: {
+                            minWidth: '250px',
+                        },
+                    }
+                );
+            }
+            isInitialLoadRef.current = false;
+        } catch (error) {
+            console.error('Error loading disasters:', error);
+            debugLog('disasters', `FAILED to load disasters: ${error}`, 'error', { error: String(error) });
+            setLoading(false);
+            setIsRefreshing(false);
+            setLoadFailed(true);
+            isInitialLoadRef.current = false;
+
+            toast.error(`Failed to load disaster data: ${error}`, {
+                duration: 5000,
+            });
+        }
+    };
+
+    // Manual refresh handler
+    const handleRefresh = async () => {
+        setIsRefreshing(true);
+        // Existing layers stay until new data arrives; the effect below swaps them
+        await loadDisasters();
+    };
+
+    // Initialize map only once
+    useEffect(() => {
+        if (map.current) return; // Prevent re-initialization
+
+        if (!mapContainerRef.current) {
+            console.error('Map container ref is null');
+            return;
+        }
+
+        if (!accessToken) {
+            return;
+        }
+
+        try {
+            // Create map instance with Standard Satellite style
+            map.current = new mapboxgl.Map({
+                container: mapContainerRef.current,
+                style: 'mapbox://styles/mapbox/standard-satellite',
+                center: [0, 20], // ✅ Global center (Africa/Europe visible)
+                zoom: 1.3, // ✅ Full globe view showing all continents
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                projection: { name: 'globe' } as any,
+                pitch: 0, // Flat view for better overview
+                bearing: 0, // North-up orientation
+                attributionControl: false, // ✅ Remove default cluttered attribution
+            });
+
+            // ✅ Add compact attribution in bottom-left
+            map.current.addControl(
+                new mapboxgl.AttributionControl({
+                    compact: true,
+                    customAttribution: '© Mapbox © OpenStreetMap'
+                }),
+                'bottom-left'
+            );
+
+            // DEBUG: Expose map and selection handler for console debugging
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (window as any).mapDebug = map.current;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (window as any).selectDisasterDebug = onDisasterSelect;
+
+            // Add navigation controls
+            map.current.addControl(new mapboxgl.NavigationControl(), 'bottom-right');
+
+            // Add geolocate control
+            map.current.addControl(
+                new mapboxgl.GeolocateControl({
+                    positionOptions: {
+                        enableHighAccuracy: true,
+                    },
+                    trackUserLocation: true,
+                }),
+                'bottom-right'
+            );
+
+            // Handle map errors
+            map.current.on('error', (e) => {
+                console.error('Mapbox error:', e);
+                setMapError(`Map error: ${e.error.message}`);
+                setLoading(false);
+            });
+
+            // ✅ PERFORMANCE: Load disaster data immediately in parallel with map
+            // Don't wait for map to finish loading - fetch data while map renders
+            // eslint-disable-next-line react-hooks/set-state-in-effect
+            loadDisasters();
+
+            // Add disaster layers when map finishes loading
+            map.current.on('load', () => {
+                console.log('✅ Map finished loading');
+                setIsMapLoaded(true);
+            });
+            map.current.on('style.load', () => {
+                setIsMapLoaded(true);
+            });
+        } catch (error) {
+            console.error('Error creating map:', error);
+            setMapError(`Failed to create map: ${error}`);
+            setLoading(false);
+        }
+    }, []); // Empty dependency array = run once
+
+    // Reload when observation window or volcano mode changes
+    const isFirstMountRef = useRef(true);
+    useEffect(() => {
+        if (isFirstMountRef.current) {
+            isFirstMountRef.current = false;
+            return;
+        }
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        loadDisasters();
+    }, [observationWindow, volcanoMode]);
+
+    // Re-render layers when map is loaded, filters change, or disasters update
+    useEffect(() => {
+        if (!map.current || !isMapLoaded) return;
+
+        removeDisasterLayers(map.current, animationIdsRef.current, layerHandlersRef.current);
+        if (disasters.length > 0) addDisasterLayers(disasters);
+    }, [isMapLoaded, activeFilters, disasters]);
+
     // Calculate disaster counts
     const disasterCounts = {
         fires: disasters.filter(d => d.type === 'fire').length,
+        fireDetections: detectionCountTotal,
+        fireCells: fireCells.length,
         volcanoes: disasters.filter(d => d.type === 'volcano').length,
         earthquakes: disasters.filter(d => d.type === 'earthquake').length,
         total: disasters.length,
@@ -796,6 +851,10 @@ export default function MapBoard({ onDisasterSelect, activeFilters, onFilterTogg
                     onFilterToggle={onFilterToggle}
                     sourceStatus={sourceStatus}
                     loadFailed={loadFailed}
+                    observationWindow={observationWindow}
+                    onObservationWindowChange={onObservationWindowChange}
+                    volcanoMode={volcanoMode}
+                    onVolcanoModeChange={onVolcanoModeChange}
                 />
             )}
 

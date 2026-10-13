@@ -768,6 +768,6 @@ describe('health', () => {
 		expect(response.status).toBe(200);
 		const body = (await response.json()) as { version: string; capabilities: string[] };
 		expect(body.version).toBe('1.3.0');
-		expect(body.capabilities).toEqual(['workers-ai-analyze-v1', 'provider-status-v1']);
+		expect(body.capabilities).toEqual(['workers-ai-analyze-v1', 'provider-status-v1', 'firms-global-v2']);
 	});
 });

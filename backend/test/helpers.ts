@@ -45,6 +45,9 @@ export function memoryKv(options: { failGet?: boolean; failPut?: boolean; initia
 			if (options.failPut) throw new Error('KV put unavailable');
 			store.set(key, value);
 		},
+		async delete(key: string) {
+			store.delete(key);
+		},
 	} as unknown as KVNamespace;
 	return { kv, store, puts, gets };
 }

@@ -3,7 +3,7 @@ import { SELF } from 'cloudflare:test';
 import { EONET_QUERIES, USGS_URL } from '../src/disasters';
 import { buildFirmsBboxes, buildFirmsCacheKey, planFirmsWindows } from '../src/firms';
 import { CachedTleRecord, MONITORED_NORAD_IDS, TLE_CACHE_KEY, TLE_LKG_CACHE_KEY, writeTleCache } from '../src/satellites';
-import { refreshTlesScheduled } from '../src/index';
+import { refreshFirmsScheduled, refreshTlesScheduled } from '../src/index';
 import { callWorker, csvResponse, FIRMS_HEADER, makeTle, memoryKv, withFetch } from './helpers';
 
 const ORIGIN = { Origin: 'https://hesam.me' };
@@ -371,3 +371,169 @@ describe('GET /api/disasters', () => {
 		expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://hesam.me');
 	});
 });
+
+describe('GET /api/v2/disasters', () => {
+	const json = (data: unknown, status = 200) =>
+		new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
+
+	const mockEonet = {
+		events: [
+			{
+				id: 'EONET_W1',
+				title: 'Active Wildfire Today',
+				categories: [{ id: 'wildfires' }],
+				geometry: [{ date: new Date().toISOString(), type: 'Point', coordinates: [-120.0, 38.0] }],
+			},
+			{
+				id: 'EONET_V1',
+				title: 'Historical Volcano Eruption',
+				categories: [{ id: 'volcanoes' }],
+				geometry: [{ date: '2023-01-01T00:00:00Z', type: 'Point', coordinates: [130.0, 32.0] }],
+			},
+		],
+	};
+
+	const mockUsgs = {
+		type: 'FeatureCollection',
+		features: [
+			{
+				id: 'usgs_q1',
+				properties: { mag: 5.5, place: 'Recent Quake', time: Date.now() - 3600000 },
+				geometry: { type: 'Point', coordinates: [-118.0, 34.0] },
+			},
+		],
+	};
+
+	const sampleSnapshot = {
+		version: 2,
+		window: '24h',
+		windowRange: { startInclusive: '2026-10-12T00:00:00Z', endExclusive: '2026-10-13T00:00:00Z' },
+		generatedAt: '2026-10-13T01:00:00Z',
+		sensors: {
+			VIIRS_SNPP_NRT: { status: 'ok', rawRows: 1, acceptedRows: 1 },
+			VIIRS_NOAA20_NRT: { status: 'ok', rawRows: 1, acceptedRows: 1 },
+			VIIRS_NOAA21_NRT: { status: 'ok', rawRows: 1, acceptedRows: 1 },
+		},
+		accounting: { rawRows: 3, malformedRows: 0, outOfWindowRows: 0, duplicateRows: 0, acceptedDetections: 3 },
+		totalDetections: 3,
+		cells: [
+			{
+				cellId: 'cell:10.25:20.25',
+				lat: 10.25,
+				lng: 20.25,
+				bounds: [20.0, 10.0, 20.5, 10.5],
+				detectionCount: 3,
+				maxFrp: 30,
+				avgFrp: 20,
+				maxBrightTi4: 340,
+				latestAcqTime: '2026-10-13T00:30:00Z',
+				confidenceCounts: { high: 3, nominal: 0, low: 0, unknown: 0 },
+				dayNightCounts: { day: 3, night: 0, unknown: 0 },
+				satelliteCounts: { N20: 3 },
+				intensity: 'medium',
+			},
+		],
+	};
+
+	it('rejects invalid window and volcanoMode parameters with 400', async () => {
+		const badWindow = await SELF.fetch('http://example.com/api/v2/disasters?window=30d');
+		expect(badWindow.status).toBe(400);
+
+		const badMode = await SELF.fetch('http://example.com/api/v2/disasters?volcanoMode=unknown');
+		expect(badMode.status).toBe(400);
+	});
+
+	it('serves v2 response with pre-cached FIRMS cells and categorized disasters', async () => {
+		const kv = memoryKv({
+			initial: {
+				'firms:global:snapshot:v2:24h': JSON.stringify(sampleSnapshot),
+			},
+		});
+
+		const { result: res } = await withFetch(
+			(url) => (isEonet(url) ? json(mockEonet) : json(mockUsgs)),
+			() => callWorker('/api/v2/disasters?window=24h&volcanoMode=context', { AEGIS_CACHE: kv.kv }),
+		);
+
+		expect(res.status).toBe(200);
+		expect(res.headers.get('X-Disaster-Sources')).toBe('eonet=ok;usgs=ok');
+		expect(res.headers.get('X-FIRMS-Status')).toBe('ok');
+
+		const body = (await res.json()) as any;
+		expect(body.version).toBe(2);
+		expect(body.window).toBe('24h');
+		expect(body.summary.namedFires).toBe(1);
+		expect(body.summary.fireDetections).toBe(3);
+		expect(body.summary.fireCells).toBe(1);
+		expect(body.summary.earthquakes).toBe(1);
+		expect(body.summary.volcanoes).toBe(1);
+
+		// EONET wildfire is categorized
+		expect(body.wildfires[0].id).toBe('EONET_W1');
+		// FIRMS cell is present
+		expect(body.fireCells[0].cellId).toBe('cell:10.25:20.25');
+		// Context volcano has historical flag set
+		expect(body.volcanoes[0].id).toBe('EONET_V1');
+		expect(body.volcanoes[0].isHistoricalContext).toBe(true);
+	});
+
+	it('filters out historical volcanoes in strict mode', async () => {
+		const kv = memoryKv();
+		const { result: res } = await withFetch(
+			(url) => (isEonet(url) ? json(mockEonet) : json(mockUsgs)),
+			() => callWorker('/api/v2/disasters?window=24h&volcanoMode=strict', { AEGIS_CACHE: kv.kv }),
+		);
+
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as any;
+		// Historical volcano is excluded in strict mode
+		expect(body.volcanoes).toHaveLength(0);
+		expect(body.summary.volcanoes).toBe(0);
+	});
+
+	it('returns firms.status=unavailable when no snapshot is in KV without calling FIRMS upstream', async () => {
+		const kv = memoryKv(); // Empty KV
+		const { result: res, calls } = await withFetch(
+			(url) => (isEonet(url) ? json(mockEonet) : json(mockUsgs)),
+			() => callWorker('/api/v2/disasters', { AEGIS_CACHE: kv.kv }),
+		);
+
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as any;
+		expect(body.sources.firms.status).toBe('unavailable');
+		expect(body.fireCells).toEqual([]);
+
+		// No FIRMS calls made!
+		expect(calls.some((c) => c.includes('firms.modaps.eosdis.nasa.gov'))).toBe(false);
+	});
+});
+
+describe('Scheduled cron - refreshFirmsScheduled', () => {
+	it('skips gracefully when FIRMS_MAP_KEY is missing or unconfigured', async () => {
+		const kv = memoryKv();
+		await refreshFirmsScheduled({ AEGIS_CACHE: kv.kv, FIRMS_MAP_KEY: 'YOUR_FIRMS_MAP_KEY_HERE' });
+		expect(kv.puts).toEqual([]);
+	});
+
+	it('runs worldwide ingestion and persists snapshots to KV', async () => {
+		const kv = memoryKv();
+		const fetchImpl = async () =>
+			csvResponse(
+				[
+					FIRMS_HEADER,
+					'-1.2,36.8,330.0,0.4,0.4,2026-10-13,0600,N20,VIIRS,high,2.0NRT,290.0,25.0,D',
+				].join('\n'),
+			);
+
+		await refreshFirmsScheduled(
+			{ AEGIS_CACHE: kv.kv, FIRMS_MAP_KEY: 'test-cron-key' },
+			{ now: new Date('2026-10-13T12:00:00Z'), windows: ['24h'], fetchImpl },
+		);
+
+		// Snapshot and LKG put to KV
+		const putKeys = kv.puts.map((p) => p.key);
+		expect(putKeys).toContain('firms:global:snapshot:v2:24h');
+		expect(putKeys).toContain('firms:global:lkg:v2:24h');
+	});
+});
+

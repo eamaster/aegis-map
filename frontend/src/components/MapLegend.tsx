@@ -8,13 +8,15 @@
  */
 
 import { useState } from 'react';
-import { Flame, Mountain, Waves, RefreshCw, ChevronUp, ChevronDown } from 'lucide-react';
+import { Flame, Mountain, Waves, RefreshCw, ChevronUp, ChevronDown, Clock, Radio } from 'lucide-react';
 import { useDesignSystem } from '../hooks/useDesignSystem';
-import type { DisasterSourceStatus } from '../types';
+import type { DisasterSourceStatus, ObservationWindow, VolcanoMode } from '../types';
 import { describeDisasterSources, DISASTER_SCOPE, displayCategoryCount } from '../utils/disasterSources';
 
 interface DisasterCounts {
     fires: number;
+    fireDetections?: number;
+    fireCells?: number;
     volcanoes: number;
     earthquakes: number;
     total: number;
@@ -29,6 +31,10 @@ interface MapLegendProps {
     onFilterToggle: (type: string) => void;
     sourceStatus?: DisasterSourceStatus | null;
     loadFailed?: boolean;
+    observationWindow?: ObservationWindow;
+    onObservationWindowChange?: (window: ObservationWindow) => void;
+    volcanoMode?: VolcanoMode;
+    onVolcanoModeChange?: (mode: VolcanoMode) => void;
 }
 
 export default function MapLegend({
@@ -39,7 +45,11 @@ export default function MapLegend({
     activeFilters,
     onFilterToggle,
     sourceStatus = null,
-    loadFailed = false
+    loadFailed = false,
+    observationWindow = '24h',
+    onObservationWindowChange,
+    volcanoMode = 'context',
+    onVolcanoModeChange,
 }: MapLegendProps) {
     const sourceNotice = loadFailed
         ? counts.total > 0
@@ -260,9 +270,89 @@ export default function MapLegend({
                         )}
                     </div>
 
+                    {/* Window & Context Controls */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '10px' }}>
+                        {/* 24h / 7d Window Toggle */}
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.65rem', color: ds.text.secondary, fontWeight: '700' }}>
+                                <Clock size={11} strokeWidth={2.5} />
+                                <span>Window</span>
+                            </div>
+                            <div
+                                style={{
+                                    display: 'flex',
+                                    gap: '2px',
+                                    background: ds.surface.overlaySubtle,
+                                    padding: '2px',
+                                    borderRadius: '6px',
+                                    border: `1px solid ${ds.surface.border}`,
+                                }}
+                            >
+                                <button
+                                    type="button"
+                                    onClick={() => onObservationWindowChange?.('24h')}
+                                    style={{
+                                        padding: '2px 8px',
+                                        fontSize: '0.625rem',
+                                        fontWeight: observationWindow === '24h' ? '700' : '500',
+                                        borderRadius: '4px',
+                                        background: observationWindow === '24h' ? ds.colors.accent.blue : 'transparent',
+                                        color: observationWindow === '24h' ? '#ffffff' : ds.text.secondary,
+                                        border: 'none',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.15s ease',
+                                    }}
+                                >
+                                    24h
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => onObservationWindowChange?.('7d')}
+                                    style={{
+                                        padding: '2px 8px',
+                                        fontSize: '0.625rem',
+                                        fontWeight: observationWindow === '7d' ? '700' : '500',
+                                        borderRadius: '4px',
+                                        background: observationWindow === '7d' ? ds.colors.accent.blue : 'transparent',
+                                        color: observationWindow === '7d' ? '#ffffff' : ds.text.secondary,
+                                        border: 'none',
+                                        cursor: 'pointer',
+                                        transition: 'all 0.15s ease',
+                                    }}
+                                >
+                                    7d
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Volcano Context Mode Toggle */}
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <span style={{ fontSize: '0.625rem', color: ds.text.tertiary, fontWeight: '600' }}>
+                                Volcano Mode
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => onVolcanoModeChange?.(volcanoMode === 'context' ? 'strict' : 'context')}
+                                style={{
+                                    fontSize: '0.625rem',
+                                    fontWeight: '600',
+                                    padding: '2px 6px',
+                                    borderRadius: '4px',
+                                    background: ds.surface.overlaySubtle,
+                                    border: `1px solid ${ds.surface.border}`,
+                                    color: volcanoMode === 'context' ? ds.colors.accent.blueLight : ds.text.secondary,
+                                    cursor: 'pointer',
+                                }}
+                                title="Toggle between active volcanic context and strict time-window filtering"
+                            >
+                                {volcanoMode === 'context' ? 'Active Context' : 'Strict Window'}
+                            </button>
+                        </div>
+                    </div>
+
                     {/* Disaster Type Rows - VERY COMPACT */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                        {/* Wildfires */}
+                        {/* Wildfires (Confirmed EONET) */}
                         <button
                             onClick={() => onFilterToggle('fire')}
                             className="transition-all duration-200 hover:scale-[1.01] active:scale-[0.99]"
@@ -322,16 +412,21 @@ export default function MapLegend({
                                             }}
                                         />
                                     </div>
-                                    <span
-                                        style={{
-                                            fontSize: '0.75rem',
-                                            fontWeight: isActive('fire') ? '700' : '600',
-                                            color: isActive('fire') ? ds.text.primary : ds.text.secondary,
-                                            whiteSpace: 'nowrap',
-                                        }}
-                                    >
-                                        Wildfires
-                                    </span>
+                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                                        <span
+                                            style={{
+                                                fontSize: '0.75rem',
+                                                fontWeight: isActive('fire') ? '700' : '600',
+                                                color: isActive('fire') ? ds.text.primary : ds.text.secondary,
+                                                whiteSpace: 'nowrap',
+                                            }}
+                                        >
+                                            Confirmed Wildfires
+                                        </span>
+                                        <span style={{ fontSize: '0.55rem', color: ds.text.tertiary }}>
+                                            NASA EONET Agency
+                                        </span>
+                                    </div>
                                 </div>
                                 <span
                                     style={{
@@ -343,6 +438,96 @@ export default function MapLegend({
                                     }}
                                 >
                                     {displayCategoryCount(counts.fires, 'fire', sourceStatus, loadFailed)}
+                                </span>
+                            </div>
+                        </button>
+
+                        {/* Satellite Hotspots (FIRMS VIIRS) */}
+                        <button
+                            onClick={() => onFilterToggle('fire_detection')}
+                            className="transition-all duration-200 hover:scale-[1.01] active:scale-[0.99]"
+                            style={{
+                                width: '100%',
+                                minHeight: '28px',
+                                border: 'none',
+                                cursor: 'pointer',
+                                background: 'transparent',
+                                padding: 0,
+                            }}
+                            aria-label={`Toggle satellite hotspots filter - ${counts.fireDetections ?? 0} active`}
+                        >
+                            <div
+                                style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    gap: '12px',
+                                    padding: '7px 12px',
+                                    borderRadius: '8px',
+                                    background: isActive('fire_detection')
+                                        ? 'rgba(249, 115, 22, 0.15)'
+                                        : ds.surface.overlay,
+                                    border: `1px solid ${isActive('fire_detection')
+                                        ? 'rgba(249, 115, 22, 0.45)'
+                                        : ds.surface.border
+                                        }`,
+                                    opacity: isActive('fire_detection') ? 1 : 0.65,
+                                    transition: 'all 0.2s ease',
+                                }}
+                            >
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                    <div
+                                        style={{
+                                            width: '24px',
+                                            height: '24px',
+                                            borderRadius: '6px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            background: isActive('fire_detection')
+                                                ? '#f97316'
+                                                : ds.surface.overlaySubtle,
+                                            boxShadow: isActive('fire_detection')
+                                                ? '0 2px 8px rgba(249, 115, 22, 0.35)'
+                                                : 'none',
+                                            flexShrink: 0,
+                                            transition: 'all 0.2s ease',
+                                        }}
+                                    >
+                                        <Radio
+                                            size={14}
+                                            strokeWidth={2.5}
+                                            style={{
+                                                color: isActive('fire_detection') ? '#ffffff' : ds.text.secondary,
+                                            }}
+                                        />
+                                    </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
+                                        <span
+                                            style={{
+                                                fontSize: '0.75rem',
+                                                fontWeight: isActive('fire_detection') ? '700' : '600',
+                                                color: isActive('fire_detection') ? ds.text.primary : ds.text.secondary,
+                                                whiteSpace: 'nowrap',
+                                            }}
+                                        >
+                                            Satellite Hotspots
+                                        </span>
+                                        <span style={{ fontSize: '0.55rem', color: ds.text.tertiary }}>
+                                            FIRMS VIIRS ({counts.fireCells ?? 0} cells)
+                                        </span>
+                                    </div>
+                                </div>
+                                <span
+                                    style={{
+                                        fontSize: '0.95rem',
+                                        fontWeight: '800',
+                                        fontVariantNumeric: 'tabular-nums',
+                                        color: isActive('fire_detection') ? '#f97316' : ds.text.tertiary,
+                                        marginLeft: 'auto',
+                                    }}
+                                >
+                                    {displayCategoryCount(counts.fireDetections ?? 0, 'fire_detection', sourceStatus, loadFailed)}
                                 </span>
                             </div>
                         </button>

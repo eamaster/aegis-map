@@ -266,7 +266,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
             satelliteName: nextPass.satelliteName,
             passTime: passIso,
             cloudCover,
-            disasterType: disaster.type,
+            disasterType: disaster.type === 'fire_detection' ? 'fire' : disaster.type,
             lat: disaster.lat,
             lng: disaster.lng,
             maxElevationDeg: nextPass.maxElevationDeg ?? nextPass.elevation,
@@ -443,6 +443,118 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                     padding: '16px 20px',
                 }}
             >
+                {/* Thermal Hotspot Intelligence Card */}
+                {disaster.type === 'fire_detection' && disaster.detectionCell && (
+                    <div
+                        style={{
+                            padding: '14px',
+                            borderRadius: ds.borderRadius.lg,
+                            background: ds.surface.overlay,
+                            border: `1px solid rgba(249, 115, 22, 0.4)`,
+                            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.2)',
+                            marginBottom: '12px',
+                        }}
+                    >
+                        <div className="flex items-center justify-between mb-2">
+                            <span
+                                style={{
+                                    fontSize: '0.6875rem',
+                                    fontWeight: '800',
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.05em',
+                                    color: '#f97316',
+                                }}
+                            >
+                                Satellite Thermal Detection
+                            </span>
+                            <span
+                                style={{
+                                    fontSize: '0.625rem',
+                                    fontWeight: '700',
+                                    padding: '2px 6px',
+                                    borderRadius: '4px',
+                                    background: 'rgba(249, 115, 22, 0.15)',
+                                    color: '#f97316',
+                                }}
+                            >
+                                VIIRS 375m
+                            </span>
+                        </div>
+
+                        {/* Caveat Banner */}
+                        <div
+                            style={{
+                                padding: '8px 10px',
+                                borderRadius: '6px',
+                                background: 'rgba(245, 158, 11, 0.1)',
+                                border: '1px solid rgba(245, 158, 11, 0.25)',
+                                marginBottom: '10px',
+                                fontSize: '0.6875rem',
+                                color: ds.colors.status.warning,
+                                lineHeight: '1.4',
+                            }}
+                        >
+                            <strong>Satellite Hotspot Notice:</strong> Thermal signature detected by satellite sensors.
+                            Represents radiative heat anomaly, not a verified ground perimeter or confirmed wildfire incident.
+                        </div>
+
+                        {/* Metrics Grid */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', fontSize: '0.75rem' }}>
+                            <div style={{ padding: '8px', borderRadius: '6px', background: ds.surface.overlaySubtle }}>
+                                <span style={{ display: 'block', fontSize: '0.625rem', color: ds.text.tertiary }}>Sensor Detections</span>
+                                <span style={{ fontWeight: '800', color: ds.text.primary }}>
+                                    {disaster.detectionCell.detectionCount.toLocaleString()}
+                                </span>
+                            </div>
+                            <div style={{ padding: '8px', borderRadius: '6px', background: ds.surface.overlaySubtle }}>
+                                <span style={{ display: 'block', fontSize: '0.625rem', color: ds.text.tertiary }}>Peak Radiative Power</span>
+                                <span style={{ fontWeight: '800', color: '#f97316' }}>
+                                    {disaster.detectionCell.maxFrp !== null ? `${disaster.detectionCell.maxFrp} MW` : '—'}
+                                </span>
+                            </div>
+                            <div style={{ padding: '8px', borderRadius: '6px', background: ds.surface.overlaySubtle }}>
+                                <span style={{ display: 'block', fontSize: '0.625rem', color: ds.text.tertiary }}>Avg Radiative Power</span>
+                                <span style={{ fontWeight: '800', color: ds.text.primary }}>
+                                    {disaster.detectionCell.avgFrp !== null ? `${disaster.detectionCell.avgFrp} MW` : '—'}
+                                </span>
+                            </div>
+                            <div style={{ padding: '8px', borderRadius: '6px', background: ds.surface.overlaySubtle }}>
+                                <span style={{ display: 'block', fontSize: '0.625rem', color: ds.text.tertiary }}>Max Channel I-4 Temp</span>
+                                <span style={{ fontWeight: '800', color: ds.text.primary }}>
+                                    {disaster.detectionCell.maxBrightTi4 !== null ? `${disaster.detectionCell.maxBrightTi4} K` : '—'}
+                                </span>
+                            </div>
+                        </div>
+
+                        {/* Satellite & Passes Breakdown */}
+                        <div style={{ marginTop: '8px', fontSize: '0.65rem', color: ds.text.tertiary }}>
+                            <div>
+                                Sensors: {Object.entries(disaster.detectionCell.satelliteCounts).map(([s, c]) => `${s} (${c})`).join(', ')}
+                            </div>
+                            <div>
+                                Overpasses: {disaster.detectionCell.dayNightCounts.day} Day / {disaster.detectionCell.dayNightCounts.night} Night
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Historical Volcano Context Notice */}
+                {disaster.type === 'volcano' && disaster.isHistoricalContext && (
+                    <div
+                        style={{
+                            padding: '8px 10px',
+                            borderRadius: '6px',
+                            background: 'rgba(147, 51, 234, 0.1)',
+                            border: '1px solid rgba(147, 51, 234, 0.3)',
+                            marginBottom: '10px',
+                            fontSize: '0.6875rem',
+                            color: ds.text.secondary,
+                            lineHeight: '1.4',
+                        }}
+                    >
+                        <strong>Active Volcanic Context:</strong> Open volcanic event monitored for ongoing context. Initial activity report may precede current observation window.
+                    </div>
+                )}
 
                 {/* AI Insight Card - REDESIGNED */}
                 <div
@@ -574,7 +686,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                     <SatelliteImagery
                         lat={disaster.lat}
                         lng={disaster.lng}
-                        disasterType={disaster.type}
+                        disasterType={disaster.type === 'fire_detection' ? 'fire' : disaster.type}
                         date={disaster.date}
                         title={disaster.title}
                     />

@@ -7,13 +7,21 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { analyzeErrorResponse, parseAnalyzeRequest, runAnalyze } from './analyze';
-import { API_CAPABILITIES, APP_VERSION, reflectCorsOrigin, resolveAllowedOrigins } from './config';
+import {
+	API_CAPABILITIES,
+	APP_VERSION,
+	ObservationWindow,
+	reflectCorsOrigin,
+	resolveAllowedOrigins,
+} from './config';
 import {
 	DisasterRecord,
 	DisasterSourceStatus,
 	DisasterSources,
 	DisasterUpstreamError,
+	DisastersV2CategorizedResult,
 	fetchDisasters,
+	fetchDisastersV2Categorized,
 	formatDisasterSourcesHeader,
 } from './disasters';
 import {
@@ -25,6 +33,11 @@ import {
 	parseCoordinateQuery,
 	planFirmsWindows,
 } from './firms';
+import {
+	ingestGlobalFirms,
+	loadGlobalFirmsSnapshot,
+	saveGlobalFirmsSnapshot,
+} from './firmsGlobal';
 import { loadMonitoredTles, serializeTles, TLE_SCHEDULED_REFRESH_AFTER_MS } from './satellites';
 
 type Bindings = {
@@ -42,6 +55,8 @@ const EXPOSED_HEADERS = [
 	'X-Disaster-Sources',
 	'X-Disaster-Partial',
 	'X-Disaster-Fetched-At',
+	'X-FIRMS-Status',
+	'X-FIRMS-Generated-At',
 	'X-TLE-Status',
 	'X-TLE-Missing',
 	'X-TLE-Refreshed',
@@ -174,6 +189,114 @@ app.get('/api/disasters', async (c) => {
 		console.error('Error fetching disasters:', error instanceof Error ? error.name : 'Error');
 		return c.json({ error: 'Failed to fetch disaster data' }, 502);
 	}
+});
+
+// Route 1.5: GET /api/v2/disasters
+// Rich disaster catalog with strict window partitioning, separate satellite thermal cells,
+// and volcano context mode.
+app.get('/api/v2/disasters', async (c) => {
+	const rawWindow = c.req.query('window') ?? '24h';
+	if (rawWindow !== '24h' && rawWindow !== '7d') {
+		return c.json({ error: 'Invalid window parameter. Supported: 24h, 7d' }, 400);
+	}
+	const window = rawWindow as ObservationWindow;
+
+	const rawVolcanoMode = c.req.query('volcanoMode') ?? 'context';
+	if (rawVolcanoMode !== 'context' && rawVolcanoMode !== 'strict') {
+		return c.json({ error: 'Invalid volcanoMode parameter. Supported: context, strict' }, 400);
+	}
+	const volcanoMode = rawVolcanoMode as 'context' | 'strict';
+
+	// 1. Load FIRMS global snapshot from KV (zero upstream calls during public GET)
+	const firmsResult = await loadGlobalFirmsSnapshot(c.env.AEGIS_CACHE, window);
+
+	// 2. Load EONET + USGS disasters (cached in KV for 10 min)
+	const disastersCacheKey = `disasters:v2:${window}:${volcanoMode}`;
+	let disasterResult: DisastersV2CategorizedResult | null = null;
+	try {
+		const cachedRaw = await c.env.AEGIS_CACHE?.get(disastersCacheKey);
+		if (cachedRaw) {
+			disasterResult = JSON.parse(cachedRaw);
+		}
+	} catch (cacheErr) {
+		console.warn('Cache read error for v2 disasters:', cacheErr instanceof Error ? cacheErr.name : 'Error');
+	}
+
+	if (!disasterResult) {
+		try {
+			disasterResult = await fetchDisastersV2Categorized({ window, volcanoMode });
+			if (c.env.AEGIS_CACHE) {
+				try {
+					await c.env.AEGIS_CACHE.put(disastersCacheKey, JSON.stringify(disasterResult), {
+						expirationTtl: disasterResult.partial ? DISASTERS_PARTIAL_CACHE_TTL_SECONDS : DISASTERS_CACHE_TTL_SECONDS,
+					});
+				} catch (putErr) {
+					console.warn('Cache write error for v2 disasters:', putErr instanceof Error ? putErr.name : 'Error');
+				}
+			}
+		} catch (error) {
+			if (error instanceof DisasterUpstreamError) {
+				return c.json({ error: 'Failed to fetch disaster data', sources: error.sources }, 502, {
+					'X-Disaster-Sources': formatDisasterSourcesHeader(error.sources),
+				});
+			}
+			console.error('Error fetching v2 disasters:', error instanceof Error ? error.name : 'Error');
+			return c.json({ error: 'Failed to fetch disaster data' }, 502);
+		}
+	}
+
+	const firmsReport = firmsResult
+		? {
+				status: firmsResult.status,
+				generatedAt: firmsResult.snapshot.generatedAt,
+				isLkgFallback: firmsResult.isLkg,
+				sensors: firmsResult.snapshot.sensors,
+				accounting: firmsResult.snapshot.accounting,
+		  }
+		: {
+				status: 'unavailable' as const,
+				generatedAt: new Date().toISOString(),
+				sensors: {
+					VIIRS_SNPP_NRT: { status: 'failed' as const, rawRows: 0, acceptedRows: 0 },
+					VIIRS_NOAA20_NRT: { status: 'failed' as const, rawRows: 0, acceptedRows: 0 },
+					VIIRS_NOAA21_NRT: { status: 'failed' as const, rawRows: 0, acceptedRows: 0 },
+				},
+				accounting: { rawRows: 0, malformedRows: 0, outOfWindowRows: 0, duplicateRows: 0, acceptedDetections: 0 },
+		  };
+
+	const fireCells = firmsResult ? firmsResult.snapshot.cells : [];
+	const fetchedAt = new Date().toISOString();
+
+	const responsePayload = {
+		version: 2 as const,
+		window,
+		windowRange: disasterResult.windowRange,
+		summary: {
+			namedFires: disasterResult.wildfires.length,
+			fireDetections: firmsResult ? firmsResult.snapshot.totalDetections : 0,
+			fireCells: fireCells.length,
+			earthquakes: disasterResult.earthquakes.length,
+			volcanoes: disasterResult.volcanoes.length,
+		},
+		wildfires: disasterResult.wildfires,
+		fireCells,
+		earthquakes: disasterResult.earthquakes,
+		volcanoes: disasterResult.volcanoes,
+		sources: {
+			eonet: disasterResult.sources.eonet,
+			usgs: disasterResult.sources.usgs,
+			firms: firmsReport,
+		},
+		fetchedAt,
+	};
+
+	const headers: Record<string, string> = {
+		...disasterHeaders({ sources: disasterResult.sources, partial: disasterResult.partial, fetchedAt }),
+		'X-FIRMS-Status': firmsReport.status,
+		'X-FIRMS-Generated-At': firmsReport.generatedAt,
+	};
+
+	return c.json(responsePayload, 200, headers);
 });
 
 // Route 2: GET /api/tles
@@ -317,9 +440,52 @@ export async function refreshTlesScheduled(env: Pick<Bindings, 'AEGIS_CACHE'>): 
 	);
 }
 
+/**
+ * Cron Trigger: refresh worldwide FIRMS VIIRS detections across configured sensors.
+ * Fetches and aggregates into deterministic spatial cells for 24h and 7d rolling windows,
+ * writing both live snapshot and last-known-good backup into KV storage.
+ */
+export async function refreshFirmsScheduled(
+	env: Pick<Bindings, 'AEGIS_CACHE' | 'FIRMS_MAP_KEY'>,
+	options?: {
+		now?: Date;
+		windows?: ObservationWindow[];
+		fetchImpl?: (input: string, init?: RequestInit) => Promise<Response>;
+	},
+): Promise<void> {
+	if (!env.AEGIS_CACHE) {
+		console.warn('Scheduled FIRMS refresh skipped: AEGIS_CACHE not bound');
+		return;
+	}
+	const mapKey = env.FIRMS_MAP_KEY;
+	if (!mapKey || mapKey === 'YOUR_FIRMS_MAP_KEY_HERE') {
+		console.warn('Scheduled FIRMS refresh skipped: FIRMS_MAP_KEY not configured');
+		return;
+	}
+
+	const targetWindows = options?.windows ?? (['24h', '7d'] as const);
+	for (const window of targetWindows) {
+		try {
+			console.log(`Starting scheduled global FIRMS refresh for window: ${window}`);
+			const snapshot = await ingestGlobalFirms(mapKey, window, options);
+			await saveGlobalFirmsSnapshot(env.AEGIS_CACHE, snapshot);
+			console.log(
+				`Global FIRMS refresh completed for ${window}: ${snapshot.totalDetections} detections across ${snapshot.cells.length} cells (raw=${snapshot.accounting.rawRows}, rejected=${snapshot.accounting.malformedRows + snapshot.accounting.outOfWindowRows}, dup=${snapshot.accounting.duplicateRows})`,
+			);
+		} catch (err) {
+			console.error(`Scheduled FIRMS refresh failed for window ${window}:`, err instanceof Error ? err.name : 'Error');
+		}
+	}
+}
+
 export default {
 	fetch: app.fetch,
 	async scheduled(_controller: ScheduledController, env: Bindings, ctx: ExecutionContext) {
-		ctx.waitUntil(refreshTlesScheduled(env));
+		ctx.waitUntil(
+			Promise.all([
+				refreshTlesScheduled(env),
+				refreshFirmsScheduled(env),
+			]),
+		);
 	},
 } satisfies ExportedHandler<Bindings>;

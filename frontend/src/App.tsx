@@ -6,7 +6,7 @@ import MapBoard from './components/MapBoard';
 import Sidebar from './components/Sidebar';
 import DebugPanel from './components/DebugPanel';
 import ThemeToggle from './components/ThemeToggle';
-import type { Disaster } from './types';
+import type { Disaster, ObservationWindow, VolcanoMode } from './types';
 import { useDesignSystem } from './hooks/useDesignSystem';
 
 // Lazy load rarely-used components
@@ -17,10 +17,12 @@ function App() {
   const [selectedDisaster, setSelectedDisaster] = useState<Disaster | null>(null);
   const [showTutorial, setShowTutorial] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [observationWindow, setObservationWindow] = useState<ObservationWindow>('24h');
+  const [volcanoMode, setVolcanoMode] = useState<VolcanoMode>('context');
 
-  // Filter state - all disasters visible by default
+  // Filter state - all disaster and detection types visible by default
   const [activeFilters, setActiveFilters] = useState<Set<string>>(
-    new Set(['fire', 'earthquake', 'volcano'])
+    new Set(['fire', 'fire_detection', 'earthquake', 'volcano'])
   );
 
   // Filter toggle handler
@@ -176,6 +178,10 @@ function App() {
           onDisasterSelect={handleDisasterSelect}
           activeFilters={activeFilters}
           onFilterToggle={handleFilterToggle}
+          observationWindow={observationWindow}
+          onObservationWindowChange={setObservationWindow}
+          volcanoMode={volcanoMode}
+          onVolcanoModeChange={setVolcanoMode}
         />
       </main>
 

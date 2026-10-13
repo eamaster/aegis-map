@@ -2,9 +2,39 @@
  * Type definitions for AegisMap
  */
 
+export type ObservationWindow = '24h' | '7d';
+export type VolcanoMode = 'context' | 'strict';
+
+export type DetectionIntensity = 'low' | 'medium' | 'high';
+
+export interface FireDetectionCell {
+    cellId: string;
+    lat: number;
+    lng: number;
+    bounds: [number, number, number, number]; // [west, south, east, north]
+    detectionCount: number;
+    maxFrp: number | null;
+    avgFrp: number | null;
+    maxBrightTi4: number | null;
+    latestAcqTime: string; // ISO UTC string
+    confidenceCounts: {
+        high: number;
+        nominal: number;
+        low: number;
+        unknown: number;
+    };
+    dayNightCounts: {
+        day: number;
+        night: number;
+        unknown: number;
+    };
+    satelliteCounts: Record<string, number>;
+    intensity: DetectionIntensity;
+}
+
 export interface Disaster {
     id: string;
-    type: 'fire' | 'volcano' | 'earthquake';
+    type: 'fire' | 'volcano' | 'earthquake' | 'fire_detection';
     title: string;
     lat: number;
     lng: number;
@@ -12,6 +42,46 @@ export interface Disaster {
     severity: 'low' | 'medium' | 'high';
     magnitude?: number; // For earthquakes
     areaAcres?: number; // For wildfires (EONET size)
+    detectionCell?: FireDetectionCell; // For satellite fire detections
+    isHistoricalContext?: boolean; // For open volcanoes outside strict window
+}
+
+export interface DisastersV2Response {
+    version: 2;
+    window: ObservationWindow;
+    windowRange: {
+        startInclusive: string;
+        endExclusive: string;
+    };
+    summary: {
+        namedFires: number;
+        fireDetections: number;
+        fireCells: number;
+        earthquakes: number;
+        volcanoes: number;
+    };
+    wildfires: Disaster[];
+    fireCells: FireDetectionCell[];
+    earthquakes: Disaster[];
+    volcanoes: Disaster[];
+    sources: {
+        eonet: { status: DisasterSourceState; count: number; rejected: number };
+        usgs: { status: DisasterSourceState; count: number; rejected: number };
+        firms: {
+            status: 'ok' | 'stale' | 'partial' | 'unavailable';
+            generatedAt: string;
+            isLkgFallback?: boolean;
+            sensors: Record<string, { status: string; rawRows: number; acceptedRows: number }>;
+            accounting: {
+                rawRows: number;
+                malformedRows: number;
+                outOfWindowRows: number;
+                duplicateRows: number;
+                acceptedDetections: number;
+            };
+        };
+    };
+    fetchedAt: string;
 }
 
 export type DisasterSourceState = 'ok' | 'failed' | 'malformed';
@@ -20,6 +90,7 @@ export type DisasterSourceState = 'ok' | 'failed' | 'malformed';
 export interface DisasterSourceStatus {
     eonet: DisasterSourceState | 'unknown';
     usgs: DisasterSourceState | 'unknown';
+    firms?: 'ok' | 'stale' | 'partial' | 'unavailable' | 'unknown';
     partial: boolean;
 }
 

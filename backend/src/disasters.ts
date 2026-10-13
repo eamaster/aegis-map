@@ -2,8 +2,10 @@ import {
 	AREA_UNIT_TO_ACRES,
 	DEFAULT_DISASTER_SEVERITY,
 	EARTHQUAKE_SEVERITY_MIN_MAGNITUDE,
+	ObservationWindow,
 	WILDFIRE_SEVERITY_MIN_ACRES,
 } from './config';
+import { calculateWindowRange, WindowRange } from './firmsGlobal';
 
 /**
  * Disaster Data Adapters (NASA EONET v3 + USGS Earthquakes)
@@ -307,7 +309,13 @@ export const EONET_QUERIES = [
 	{ category: 'wildfires', url: `https://eonet.gsfc.nasa.gov/api/v3/events?status=open&category=wildfires&days=${EONET_WILDFIRE_DAYS}` },
 	{ category: 'volcanoes', url: 'https://eonet.gsfc.nasa.gov/api/v3/events?status=open&category=volcanoes' },
 ] as const;
-export const USGS_URL = 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson';
+export const USGS_URL_DAY = 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson';
+export const USGS_URL_WEEK = 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_week.geojson';
+export const USGS_URL = USGS_URL_DAY;
+
+export function usgsUrlForWindow(window: ObservationWindow): string {
+	return window === '7d' ? USGS_URL_WEEK : USGS_URL_DAY;
+}
 
 export function parseEonetPayload(payload: unknown): NormalizeResult {
 	const events = (payload as { events?: unknown } | null)?.events;
@@ -407,3 +415,93 @@ export async function fetchDisasters(fetchImpl?: FetchLike): Promise<DisasterFet
 export function formatDisasterSourcesHeader(sources: DisasterSources): string {
 	return `eonet=${sources.eonet.status};usgs=${sources.usgs.status}`;
 }
+
+export interface DisastersV2QueryOptions {
+	window?: ObservationWindow;
+	volcanoMode?: 'context' | 'strict';
+	now?: Date;
+	fetchImpl?: FetchLike;
+}
+
+export interface DisastersV2CategorizedResult {
+	window: ObservationWindow;
+	windowRange: WindowRange;
+	wildfires: DisasterRecord[];
+	earthquakes: DisasterRecord[];
+	volcanoes: (DisasterRecord & { isHistoricalContext?: boolean })[];
+	sources: DisasterSources;
+	partial: boolean;
+}
+
+/**
+ * Fetch and categorize v2 disaster records (wildfires, earthquakes, volcanoes)
+ * strictly partitioned and filtered against the observation window.
+ */
+export async function fetchDisastersV2Categorized(
+	options: DisastersV2QueryOptions = {},
+): Promise<DisastersV2CategorizedResult> {
+	const window = options.window ?? '24h';
+	const volcanoMode = options.volcanoMode ?? 'context';
+	const now = options.now ?? new Date();
+	const doFetch: FetchLike = options.fetchImpl ?? ((input, init) => fetch(input, init));
+
+	const windowRange = calculateWindowRange(window, now);
+	const usgsUrl = usgsUrlForWindow(window);
+
+	const [eonet, usgs] = await Promise.all([
+		loadEonet(doFetch),
+		loadSource('usgs', usgsUrl, 8000, parseUsgsPayload, doFetch),
+	]);
+
+	const sources: DisasterSources = { eonet: eonet.status, usgs: usgs.status };
+	if (eonet.records.length === 0 && eonet.status.status !== 'ok' && usgs.status.status !== 'ok') {
+		throw new DisasterUpstreamError(sources);
+	}
+
+	const wildfires: DisasterRecord[] = [];
+	const earthquakes: DisasterRecord[] = [];
+	const volcanoes: (DisasterRecord & { isHistoricalContext?: boolean })[] = [];
+
+	const seenEonetIds = new Set<string>();
+	for (const rec of eonet.records) {
+		if (seenEonetIds.has(rec.id)) continue;
+		seenEonetIds.add(rec.id);
+
+		if (rec.type === 'fire') {
+			if (rec.date >= windowRange.startInclusive && rec.date < windowRange.endExclusive) {
+				wildfires.push(rec);
+			}
+		} else if (rec.type === 'volcano') {
+			const isInWindow = rec.date >= windowRange.startInclusive && rec.date < windowRange.endExclusive;
+			if (volcanoMode === 'strict') {
+				if (isInWindow) volcanoes.push(rec);
+			} else {
+				volcanoes.push({
+					...rec,
+					...(isInWindow ? {} : { isHistoricalContext: true }),
+				});
+			}
+		}
+	}
+
+	const seenUsgsIds = new Set<string>();
+	for (const rec of usgs.records) {
+		if (seenUsgsIds.has(rec.id)) continue;
+		seenUsgsIds.add(rec.id);
+
+		if (rec.date >= windowRange.startInclusive && rec.date < windowRange.endExclusive) {
+			earthquakes.push(rec);
+		}
+	}
+
+	return {
+		window,
+		windowRange,
+		wildfires,
+		earthquakes,
+		volcanoes,
+		sources,
+		partial: eonet.status.status !== 'ok' || usgs.status.status !== 'ok',
+	};
+}
+

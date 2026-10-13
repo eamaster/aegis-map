@@ -14,8 +14,10 @@ export const APP_VERSION = '1.3.0';
  * - workers-ai-analyze-v1: /api/analyze success responses carry source "workers-ai".
  * - provider-status-v1: FIRMS coverage windows/unavailable (502), disaster
  *   source headers, and TLE status headers.
+ * - firms-global-v2: Global FIRMS VIIRS ingestion, spatial grid aggregation,
+ *   and /api/v2/disasters endpoints.
  */
-export const API_CAPABILITIES = ['workers-ai-analyze-v1', 'provider-status-v1'] as const;
+export const API_CAPABILITIES = ['workers-ai-analyze-v1', 'provider-status-v1', 'firms-global-v2'] as const;
 
 /**
  * Analysis cache + prompt schema version.
@@ -186,3 +188,38 @@ export const AREA_UNIT_TO_ACRES: Readonly<Record<string, number>> = {
 	'sq mi': 640,
 	sqmi: 640,
 };
+
+/**
+ * Global FIRMS VIIRS sensor products ingested for worldwide coverage.
+ * S-NPP (Suomi NPP), NOAA-20 (JPSS-1), and NOAA-21 (JPSS-2).
+ */
+export const GLOBAL_FIRMS_PRODUCTS = ['VIIRS_SNPP_NRT', 'VIIRS_NOAA20_NRT', 'VIIRS_NOAA21_NRT'] as const;
+export type GlobalFirmsProduct = (typeof GLOBAL_FIRMS_PRODUCTS)[number];
+
+export function isGlobalFirmsProduct(value: unknown): value is GlobalFirmsProduct {
+	return typeof value === 'string' && (GLOBAL_FIRMS_PRODUCTS as readonly string[]).includes(value);
+}
+
+/** Supported rolling observation windows. */
+export const OBSERVATION_WINDOWS = ['24h', '7d'] as const;
+export type ObservationWindow = (typeof OBSERVATION_WINDOWS)[number];
+
+export function isObservationWindow(value: unknown): value is ObservationWindow {
+	return typeof value === 'string' && (OBSERVATION_WINDOWS as readonly string[]).includes(value);
+}
+
+/** Deterministic spatial grid cell size in degrees (~55 km at equator). */
+export const FIRMS_GRID_SIZE_DEG = 0.5;
+
+/** Detection intensity thresholds for aggregated cells. */
+export const FIRMS_INTENSITY_THRESHOLDS = {
+	high: { minDetections: 20, minFrp: 100 },
+	medium: { minDetections: 5, minFrp: 20 },
+} as const;
+
+/** Cache keys and TTLs for global FIRMS snapshots. */
+export const FIRMS_GLOBAL_CACHE_PREFIX = 'firms:global:snapshot:v2';
+export const FIRMS_GLOBAL_LKG_PREFIX = 'firms:global:lkg:v2';
+export const FIRMS_GLOBAL_CACHE_TTL_SECONDS = 14400; // 4 hours
+export const FIRMS_GLOBAL_LKG_TTL_SECONDS = 604800; // 7 days
+
