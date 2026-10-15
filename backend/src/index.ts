@@ -10,9 +10,24 @@ import { analyzeErrorResponse, parseAnalyzeRequest, runAnalyze } from './analyze
 import {
 	API_CAPABILITIES,
 	APP_VERSION,
+	buildDisastersV2CacheKey,
+	DEFAULT_OBSERVATION_WINDOW,
+	DEFAULT_VOLCANO_MODE,
+	DISASTERS_CACHE_KEY,
+	DISASTERS_CACHE_TTL_SECONDS,
+	DISASTERS_PARTIAL_CACHE_TTL_SECONDS,
+	FIRMS_GLOBAL_LOCK_PREFIX,
+	FIRMS_GLOBAL_LOCK_TTL_SECONDS,
+	GlobalFirmsProduct,
+	INVALID_VOLCANO_MODE_ERROR,
+	INVALID_WINDOW_ERROR,
+	isObservationWindow,
+	isVolcanoMode,
 	ObservationWindow,
+	OBSERVATION_WINDOWS,
 	reflectCorsOrigin,
 	resolveAllowedOrigins,
+	VolcanoMode,
 } from './config';
 import {
 	DisasterRecord,
@@ -34,9 +49,13 @@ import {
 	planFirmsWindows,
 } from './firms';
 import {
+	buildFallbackFirmsReport,
+	FirmsReportStatus,
 	ingestGlobalFirms,
+	isSnapshotUsable,
 	loadGlobalFirmsSnapshot,
 	saveGlobalFirmsSnapshot,
+	SensorCoverageReport,
 } from './firmsGlobal';
 import { loadMonitoredTles, serializeTles, TLE_SCHEDULED_REFRESH_AFTER_MS } from './satellites';
 
@@ -82,11 +101,6 @@ app.use('/*', async (c, next) => {
 app.get('/', (c) => {
 	return c.json({ status: 'AegisMap API Online', version: APP_VERSION, capabilities: API_CAPABILITIES });
 });
-
-const DISASTERS_CACHE_KEY = 'disasters:v2';
-const DISASTERS_CACHE_TTL_SECONDS = 600;
-/** Partial results are cached briefly so a recovered source is picked up soon. */
-const DISASTERS_PARTIAL_CACHE_TTL_SECONDS = 60;
 
 interface DisastersCacheDocument {
 	version: 2;
@@ -195,23 +209,86 @@ app.get('/api/disasters', async (c) => {
 // Rich disaster catalog with strict window partitioning, separate satellite thermal cells,
 // and volcano context mode.
 app.get('/api/v2/disasters', async (c) => {
-	const rawWindow = c.req.query('window') ?? '24h';
-	if (rawWindow !== '24h' && rawWindow !== '7d') {
-		return c.json({ error: 'Invalid window parameter. Supported: 24h, 7d' }, 400);
+	const rawWindow = c.req.query('window') ?? DEFAULT_OBSERVATION_WINDOW;
+	if (!isObservationWindow(rawWindow)) {
+		return c.json({ error: INVALID_WINDOW_ERROR }, 400);
 	}
-	const window = rawWindow as ObservationWindow;
+	const window = rawWindow;
 
-	const rawVolcanoMode = c.req.query('volcanoMode') ?? 'context';
-	if (rawVolcanoMode !== 'context' && rawVolcanoMode !== 'strict') {
-		return c.json({ error: 'Invalid volcanoMode parameter. Supported: context, strict' }, 400);
+	const rawVolcanoMode = c.req.query('volcanoMode') ?? DEFAULT_VOLCANO_MODE;
+	if (!isVolcanoMode(rawVolcanoMode)) {
+		return c.json({ error: INVALID_VOLCANO_MODE_ERROR }, 400);
 	}
-	const volcanoMode = rawVolcanoMode as 'context' | 'strict';
+	const volcanoMode = rawVolcanoMode;
 
-	// 1. Load FIRMS global snapshot from KV (zero upstream calls during public GET)
+	// 1. Load FIRMS global snapshot from KV (zero upstream calls during public GET unless missing snapshot triggers warm-up)
 	const firmsResult = await loadGlobalFirmsSnapshot(c.env.AEGIS_CACHE, window);
 
+	let firmsReport: {
+		status: FirmsReportStatus;
+		generatedAt: string;
+		isLkgFallback?: boolean;
+		sensors: Record<GlobalFirmsProduct, SensorCoverageReport>;
+		accounting: {
+			rawRows: number;
+			malformedRows: number;
+			outOfWindowRows: number;
+			duplicateRows: number;
+			acceptedDetections: number;
+		};
+	};
+
+	if (firmsResult) {
+		firmsReport = {
+			status: firmsResult.status,
+			generatedAt: firmsResult.snapshot.generatedAt,
+			isLkgFallback: firmsResult.isLkg,
+			sensors: firmsResult.snapshot.sensors,
+			accounting: firmsResult.snapshot.accounting,
+		};
+	} else {
+		// Missing snapshot (and no LKG available).
+		const mapKey = c.env.FIRMS_MAP_KEY;
+		const hasValidKey = !!mapKey && mapKey !== 'YOUR_FIRMS_MAP_KEY_HERE';
+
+		if (c.env.AEGIS_CACHE && hasValidKey) {
+			const lockKey = `${FIRMS_GLOBAL_LOCK_PREFIX}:${window}`;
+			let isLocked = false;
+			try {
+				isLocked = !!(await c.env.AEGIS_CACHE.get(lockKey));
+			} catch (err) {
+				console.warn('Cache read error for FIRMS warm-up lock:', err instanceof Error ? err.name : 'Error');
+			}
+
+			if (!isLocked) {
+				try {
+					await c.env.AEGIS_CACHE.put(lockKey, new Date().toISOString(), {
+						expirationTtl: FIRMS_GLOBAL_LOCK_TTL_SECONDS,
+					});
+				} catch (err) {
+					console.warn('Cache write error for FIRMS warm-up lock:', err instanceof Error ? err.name : 'Error');
+				}
+
+				let waitUntil: ((promise: Promise<unknown>) => void) | undefined;
+				try {
+					waitUntil = c.executionCtx.waitUntil.bind(c.executionCtx);
+				} catch {
+					waitUntil = undefined;
+				}
+
+				if (waitUntil) {
+					waitUntil(refreshFirmsScheduled(c.env, { windows: [window] }));
+				}
+			}
+
+			firmsReport = buildFallbackFirmsReport('warming');
+		} else {
+			firmsReport = buildFallbackFirmsReport('unavailable');
+		}
+	}
+
 	// 2. Load EONET + USGS disasters (cached in KV for 10 min)
-	const disastersCacheKey = `disasters:v2:${window}:${volcanoMode}`;
+	const disastersCacheKey = buildDisastersV2CacheKey(window, volcanoMode);
 	let disasterResult: DisastersV2CategorizedResult | null = null;
 	try {
 		const cachedRaw = await c.env.AEGIS_CACHE?.get(disastersCacheKey);
@@ -244,25 +321,6 @@ app.get('/api/v2/disasters', async (c) => {
 			return c.json({ error: 'Failed to fetch disaster data' }, 502);
 		}
 	}
-
-	const firmsReport = firmsResult
-		? {
-				status: firmsResult.status,
-				generatedAt: firmsResult.snapshot.generatedAt,
-				isLkgFallback: firmsResult.isLkg,
-				sensors: firmsResult.snapshot.sensors,
-				accounting: firmsResult.snapshot.accounting,
-		  }
-		: {
-				status: 'unavailable' as const,
-				generatedAt: new Date().toISOString(),
-				sensors: {
-					VIIRS_SNPP_NRT: { status: 'failed' as const, rawRows: 0, acceptedRows: 0 },
-					VIIRS_NOAA20_NRT: { status: 'failed' as const, rawRows: 0, acceptedRows: 0 },
-					VIIRS_NOAA21_NRT: { status: 'failed' as const, rawRows: 0, acceptedRows: 0 },
-				},
-				accounting: { rawRows: 0, malformedRows: 0, outOfWindowRows: 0, duplicateRows: 0, acceptedDetections: 0 },
-		  };
 
 	const fireCells = firmsResult ? firmsResult.snapshot.cells : [];
 	const fetchedAt = new Date().toISOString();
@@ -463,11 +521,17 @@ export async function refreshFirmsScheduled(
 		return;
 	}
 
-	const targetWindows = options?.windows ?? (['24h', '7d'] as const);
+	const targetWindows = options?.windows ?? OBSERVATION_WINDOWS;
 	for (const window of targetWindows) {
 		try {
 			console.log(`Starting scheduled global FIRMS refresh for window: ${window}`);
 			const snapshot = await ingestGlobalFirms(mapKey, window, options);
+			if (!isSnapshotUsable(snapshot)) {
+				console.warn(
+					`Scheduled FIRMS refresh for ${window} produced unusable snapshot (all sensors failed). Not caching.`,
+				);
+				continue;
+			}
 			await saveGlobalFirmsSnapshot(env.AEGIS_CACHE, snapshot);
 			console.log(
 				`Global FIRMS refresh completed for ${window}: ${snapshot.totalDetections} detections across ${snapshot.cells.length} cells (raw=${snapshot.accounting.rawRows}, rejected=${snapshot.accounting.malformedRows + snapshot.accounting.outOfWindowRows}, dup=${snapshot.accounting.duplicateRows})`,

@@ -2,8 +2,8 @@
  * Type definitions for AegisMap
  */
 
-export type ObservationWindow = '24h' | '7d';
-export type VolcanoMode = 'context' | 'strict';
+import type { ObservationWindow, VolcanoMode } from '../config/disasters';
+export type { ObservationWindow, VolcanoMode };
 
 export type DetectionIntensity = 'low' | 'medium' | 'high';
 
@@ -68,7 +68,7 @@ export interface DisastersV2Response {
         eonet: { status: DisasterSourceState; count: number; rejected: number };
         usgs: { status: DisasterSourceState; count: number; rejected: number };
         firms: {
-            status: 'ok' | 'stale' | 'partial' | 'unavailable';
+            status: 'ok' | 'stale' | 'partial' | 'unavailable' | 'warming';
             generatedAt: string;
             isLkgFallback?: boolean;
             sensors: Record<string, { status: string; rawRows: number; acceptedRows: number }>;
@@ -90,7 +90,7 @@ export type DisasterSourceState = 'ok' | 'failed' | 'malformed';
 export interface DisasterSourceStatus {
     eonet: DisasterSourceState | 'unknown';
     usgs: DisasterSourceState | 'unknown';
-    firms?: 'ok' | 'stale' | 'partial' | 'unavailable' | 'unknown';
+    firms?: 'ok' | 'stale' | 'partial' | 'unavailable' | 'warming' | 'unknown';
     partial: boolean;
 }
 

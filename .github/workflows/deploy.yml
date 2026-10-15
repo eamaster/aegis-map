@@ -1,10 +1,8 @@
-name: Deploy to GitHub Pages
+name: Coordinated Deploy (Backend & Frontend)
 
 on:
   push:
     branches: [ main, master ]
-    paths:
-      - 'frontend/**' # Only trigger when frontend changes
 
 # Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
@@ -13,32 +11,62 @@ permissions:
   id-token: write
 
 concurrency:
-  group: "pages"
+  group: "deploy"
   cancel-in-progress: true
 
 jobs:
-  build:
-    environment:
-      name: github-pages
+  deploy-backend:
+    name: Deploy Cloudflare Worker
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Node
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        run: cd backend && npm ci
+
+      - name: Typecheck backend
+        run: cd backend && npm run typecheck
+
+      - name: Test backend
+        run: cd backend && npm test
+
+      - name: Deploy Worker to Cloudflare
+        run: cd backend && npx wrangler deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+  build-frontend:
+    name: Build Frontend
+    needs: [deploy-backend]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Install dependencies
+      - name: Install frontend dependencies
         run: cd frontend && npm ci
 
-      # Coordinated release gate: do not publish a frontend against a backend
-      # that lacks the API contract it relies on (see backend/src/config.ts
-      # API_CAPABILITIES and docs/COORDINATED_RELEASE.md).
-      - name: Verify production backend API contract
+      - name: Test frontend
+        run: cd frontend && npm test
+
+      # Coordinated release gate: verify backend contract and smoke check v2 endpoint
+      - name: Verify production backend API contract & smoke check
         env:
           VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
         run: |
@@ -52,7 +80,7 @@ jobs:
           BODY=$(curl -fsS --max-time 30 "${BASE}/")
           echo "$BODY"
           node -e '
-            const required = ["workers-ai-analyze-v1", "provider-status-v1"];
+            const required = ["workers-ai-analyze-v1", "provider-status-v1", "firms-global-v2"];
             const body = JSON.parse(process.argv[1]);
             const v = String(body.version || "");
             const caps = Array.isArray(body.capabilities) ? body.capabilities : [];
@@ -64,9 +92,17 @@ jobs:
             console.log("Backend contract gate passed:", v, caps.join(", "));
           ' "$BODY"
 
-      - name: Build
+          echo "Running smoke check: GET ${BASE}/api/v2/disasters?window=24h"
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "${BASE}/api/v2/disasters?window=24h")
+          echo "Status: $STATUS"
+          if [ "$STATUS" != "200" ]; then
+            echo "Smoke check failed: expected 200, got $STATUS"
+            exit 1
+          fi
+          echo "Smoke check passed!"
+
+      - name: Build frontend
         env:
-          # These pull from the secrets you set in Step 3
           VITE_MAPBOX_TOKEN: ${{ secrets.VITE_MAPBOX_TOKEN }}
           VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
         run: cd frontend && npm run build
@@ -74,16 +110,17 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v4
 
-      - name: Upload artifact
+      - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: './frontend/dist'
 
-  deploy:
+  deploy-frontend:
+    name: Deploy to GitHub Pages
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    needs: build
+    needs: build-frontend
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to GitHub Pages

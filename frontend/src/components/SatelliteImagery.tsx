@@ -18,6 +18,8 @@ interface SatelliteImageryProps {
   title: string;
 }
 
+import { GIBS_WMS_THERMAL_LAYERS } from '../config/gibs';
+
 const MAX_MARKERS = 30;
 
 const fireHotspotsUrl = (lat: number, lng: number) =>
@@ -26,7 +28,7 @@ const fireHotspotsUrl = (lat: number, lng: number) =>
 const getWorldviewLayers = (type: string): string => {
   switch (type) {
     case 'fire':
-      return 'VIIRS_NOAA20_Thermal_Anomalies_375m_All,VIIRS_SNPP_Thermal_Anomalies_375m_All,MODIS_Combined_Thermal_Anomalies_All,MODIS_Terra_Aerosol,Coastlines_15m';
+      return GIBS_WMS_THERMAL_LAYERS;
     case 'volcano':
       return 'ASTER_Volcanic_Sulfur_Dioxide_Index,MODIS_Terra_CorrectedReflectance_Bands721,MODIS_Aqua_CorrectedReflectance_Bands721,Coastlines_15m';
     case 'earthquake':

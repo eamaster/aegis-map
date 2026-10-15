@@ -10,8 +10,15 @@
 import { useState } from 'react';
 import { Flame, Mountain, Waves, RefreshCw, ChevronUp, ChevronDown, Clock, Radio } from 'lucide-react';
 import { useDesignSystem } from '../hooks/useDesignSystem';
+import { DEFAULT_OBSERVATION_WINDOW, DEFAULT_VOLCANO_MODE, OBSERVATION_WINDOWS } from '../config/disasters';
 import type { DisasterSourceStatus, ObservationWindow, VolcanoMode } from '../types';
-import { describeDisasterSources, DISASTER_SCOPE, displayCategoryCount } from '../utils/disasterSources';
+import {
+    describeDisasterSources,
+    DISASTER_SCOPE,
+    displayCategoryCount,
+    formatFireCellsSubtitle,
+    getFirmsStatusNotice,
+} from '../utils/disasterSources';
 
 interface DisasterCounts {
     fires: number;
@@ -35,6 +42,7 @@ interface MapLegendProps {
     onObservationWindowChange?: (window: ObservationWindow) => void;
     volcanoMode?: VolcanoMode;
     onVolcanoModeChange?: (mode: VolcanoMode) => void;
+    isV2?: boolean;
 }
 
 export default function MapLegend({
@@ -46,10 +54,11 @@ export default function MapLegend({
     onFilterToggle,
     sourceStatus = null,
     loadFailed = false,
-    observationWindow = '24h',
+    observationWindow = DEFAULT_OBSERVATION_WINDOW,
     onObservationWindowChange,
-    volcanoMode = 'context',
+    volcanoMode = DEFAULT_VOLCANO_MODE,
     onVolcanoModeChange,
+    isV2 = true,
 }: MapLegendProps) {
     const sourceNotice = loadFailed
         ? counts.total > 0
@@ -270,15 +279,56 @@ export default function MapLegend({
                         )}
                     </div>
 
+                    {/* Legacy Data Notice */}
+                    {!isV2 && (
+                        <div
+                            data-testid="legacy-data-notice"
+                            style={{
+                                padding: '6px 10px',
+                                marginBottom: '10px',
+                                borderRadius: '6px',
+                                background: addOpacity(ds.colors.status.warning, 15),
+                                border: `1px solid ${addOpacity(ds.colors.status.warning, 40)}`,
+                                color: ds.colors.status.warning,
+                                fontSize: '0.65rem',
+                                fontWeight: '700',
+                                lineHeight: '1.3',
+                            }}
+                        >
+                            Legacy data: time window not applied
+                        </div>
+                    )}
+
+                    {/* FIRMS Warm-up / Unavailable Status Notice */}
+                    {isV2 && getFirmsStatusNotice(sourceStatus, isV2) && (
+                        <div
+                            data-testid="firms-status-notice"
+                            style={{
+                                padding: '6px 10px',
+                                marginBottom: '10px',
+                                borderRadius: '6px',
+                                background: addOpacity(ds.colors.status.warning, 12),
+                                border: `1px solid ${addOpacity(ds.colors.status.warning, 30)}`,
+                                color: ds.colors.status.warning,
+                                fontSize: '0.625rem',
+                                fontWeight: '600',
+                                lineHeight: '1.3',
+                            }}
+                        >
+                            {getFirmsStatusNotice(sourceStatus, isV2)}
+                        </div>
+                    )}
+
                     {/* Window & Context Controls */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '10px' }}>
-                        {/* 24h / 7d Window Toggle */}
+                        {/* Dynamic Window Toggle */}
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '0.65rem', color: ds.text.secondary, fontWeight: '700' }}>
                                 <Clock size={11} strokeWidth={2.5} />
                                 <span>Window</span>
                             </div>
                             <div
+                                data-testid="window-toggle-container"
                                 style={{
                                     display: 'flex',
                                     gap: '2px',
@@ -286,42 +336,32 @@ export default function MapLegend({
                                     padding: '2px',
                                     borderRadius: '6px',
                                     border: `1px solid ${ds.surface.border}`,
+                                    opacity: isV2 ? 1 : 0.45,
+                                    pointerEvents: isV2 ? 'auto' : 'none',
                                 }}
+                                aria-disabled={!isV2}
                             >
-                                <button
-                                    type="button"
-                                    onClick={() => onObservationWindowChange?.('24h')}
-                                    style={{
-                                        padding: '2px 8px',
-                                        fontSize: '0.625rem',
-                                        fontWeight: observationWindow === '24h' ? '700' : '500',
-                                        borderRadius: '4px',
-                                        background: observationWindow === '24h' ? ds.colors.accent.blue : 'transparent',
-                                        color: observationWindow === '24h' ? '#ffffff' : ds.text.secondary,
-                                        border: 'none',
-                                        cursor: 'pointer',
-                                        transition: 'all 0.15s ease',
-                                    }}
-                                >
-                                    24h
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => onObservationWindowChange?.('7d')}
-                                    style={{
-                                        padding: '2px 8px',
-                                        fontSize: '0.625rem',
-                                        fontWeight: observationWindow === '7d' ? '700' : '500',
-                                        borderRadius: '4px',
-                                        background: observationWindow === '7d' ? ds.colors.accent.blue : 'transparent',
-                                        color: observationWindow === '7d' ? '#ffffff' : ds.text.secondary,
-                                        border: 'none',
-                                        cursor: 'pointer',
-                                        transition: 'all 0.15s ease',
-                                    }}
-                                >
-                                    7d
-                                </button>
+                                {OBSERVATION_WINDOWS.map((win) => (
+                                    <button
+                                        key={win}
+                                        type="button"
+                                        disabled={!isV2}
+                                        onClick={() => isV2 && onObservationWindowChange?.(win)}
+                                        style={{
+                                            padding: '2px 8px',
+                                            fontSize: '0.625rem',
+                                            fontWeight: observationWindow === win ? '700' : '500',
+                                            borderRadius: '4px',
+                                            background: observationWindow === win ? ds.colors.accent.blue : 'transparent',
+                                            color: observationWindow === win ? '#ffffff' : ds.text.secondary,
+                                            border: 'none',
+                                            cursor: isV2 ? 'pointer' : 'not-allowed',
+                                            transition: 'all 0.15s ease',
+                                        }}
+                                    >
+                                        {win}
+                                    </button>
+                                ))}
                             </div>
                         </div>
 
@@ -424,7 +464,7 @@ export default function MapLegend({
                                             Confirmed Wildfires
                                         </span>
                                         <span style={{ fontSize: '0.55rem', color: ds.text.tertiary }}>
-                                            NASA EONET Agency
+                                            {isV2 ? 'NASA EONET Agency' : 'NASA EONET Agency (Past 60 days)'}
                                         </span>
                                     </div>
                                 </div>
@@ -444,13 +484,14 @@ export default function MapLegend({
 
                         {/* Satellite Hotspots (FIRMS VIIRS) */}
                         <button
-                            onClick={() => onFilterToggle('fire_detection')}
+                            onClick={() => isV2 && onFilterToggle('fire_detection')}
+                            disabled={!isV2}
                             className="transition-all duration-200 hover:scale-[1.01] active:scale-[0.99]"
                             style={{
                                 width: '100%',
                                 minHeight: '28px',
                                 border: 'none',
-                                cursor: 'pointer',
+                                cursor: isV2 ? 'pointer' : 'not-allowed',
                                 background: 'transparent',
                                 padding: 0,
                             }}
@@ -471,7 +512,7 @@ export default function MapLegend({
                                         ? 'rgba(249, 115, 22, 0.45)'
                                         : ds.surface.border
                                         }`,
-                                    opacity: isActive('fire_detection') ? 1 : 0.65,
+                                    opacity: isV2 ? (isActive('fire_detection') ? 1 : 0.65) : 0.45,
                                     transition: 'all 0.2s ease',
                                 }}
                             >
@@ -513,12 +554,16 @@ export default function MapLegend({
                                         >
                                             Satellite Hotspots
                                         </span>
-                                        <span style={{ fontSize: '0.55rem', color: ds.text.tertiary }}>
-                                            FIRMS VIIRS ({counts.fireCells ?? 0} cells)
+                                        <span
+                                            data-testid="satellite-hotspots-subtitle"
+                                            style={{ fontSize: '0.55rem', color: ds.text.tertiary }}
+                                        >
+                                            {formatFireCellsSubtitle(counts.fireCells, sourceStatus, isV2)}
                                         </span>
                                     </div>
                                 </div>
                                 <span
+                                    data-testid="satellite-hotspots-count"
                                     style={{
                                         fontSize: '0.95rem',
                                         fontWeight: '800',
@@ -527,7 +572,7 @@ export default function MapLegend({
                                         marginLeft: 'auto',
                                     }}
                                 >
-                                    {displayCategoryCount(counts.fireDetections ?? 0, 'fire_detection', sourceStatus, loadFailed)}
+                                    {displayCategoryCount(counts.fireDetections ?? 0, 'fire_detection', sourceStatus, loadFailed, isV2)}
                                 </span>
                             </div>
                         </button>

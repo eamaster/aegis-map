@@ -21,7 +21,11 @@ export function parseDisasterSourceHeaders(headers: Headers): DisasterSourceStat
     const eonet = readState(entries.get('eonet'));
     const usgs = readState(entries.get('usgs'));
     const firms = firmsRaw ? (firmsRaw as DisasterSourceStatus['firms']) : undefined;
-    const partial = headers.get('X-Disaster-Partial') === 'true' || eonet !== 'ok' || usgs !== 'ok' || (firms !== undefined && firms !== 'ok');
+    const partial =
+        headers.get('X-Disaster-Partial') === 'true' ||
+        eonet !== 'ok' ||
+        usgs !== 'ok' ||
+        (firms !== undefined && firms !== 'ok' && firms !== 'stale');
     return { eonet, usgs, firms, partial };
 }
 
@@ -31,9 +35,34 @@ export function describeDisasterSources(status: DisasterSourceStatus | null): st
     const down: string[] = [];
     if (status.eonet !== 'ok') down.push('NASA EONET (wildfires, volcanoes)');
     if (status.usgs !== 'ok') down.push('USGS (earthquakes)');
-    if (status.firms === 'unavailable') down.push('NASA FIRMS (satellite thermal detections)');
+    if (status.firms === 'warming') down.push('NASA FIRMS (warming up)');
+    else if (status.firms === 'unavailable') down.push('NASA FIRMS (satellite thermal detections)');
     if (down.length === 0) return 'Some disaster sources are incomplete.';
     return `Unavailable: ${down.join(', ')}. Counts are incomplete.`;
+}
+
+/** Notice displayed when satellite thermal hotspots are warming up or down. */
+export function getFirmsStatusNotice(status: DisasterSourceStatus | null, isV2: boolean = true): string | null {
+    if (!isV2) return 'Satellite hotspots: unavailable (legacy mode)';
+    if (status?.firms === 'warming' || status?.firms === 'unavailable') {
+        return 'Satellite hotspots: unavailable (warming up / source down)';
+    }
+    return null;
+}
+
+/** Subtitle for the Satellite Hotspots row in the Live Monitor legend. */
+export function formatFireCellsSubtitle(
+    cellCount: number | undefined,
+    status: DisasterSourceStatus | null,
+    isV2: boolean = true,
+): string {
+    if (!isV2) return 'FIRMS VIIRS (unavailable)';
+    if (status?.firms === 'warming') return 'FIRMS VIIRS (warming up...)';
+    if (status?.firms === 'unavailable') return 'FIRMS VIIRS (source down)';
+    if (status?.firms === 'ok' || status?.firms === 'stale') {
+        return `FIRMS VIIRS (${cellCount ?? 0} cells)`;
+    }
+    return 'FIRMS VIIRS (unavailable)';
 }
 
 /** Query scope per category, as served by the Worker (backend EONET_QUERIES, USGS_URL, and FIRMS). */
@@ -46,16 +75,20 @@ export const DISASTER_SCOPE = {
 
 /**
  * Legend count text. Zero is only shown as confirmed absence when the
- * category's source loaded successfully; otherwise it is unknown.
+ * category's source loaded successfully; otherwise it is unknown or unavailable.
  */
 export function displayCategoryCount(
     count: number,
     type: Disaster['type'],
     status: DisasterSourceStatus | null,
     loadFailed: boolean,
+    isV2: boolean = true,
 ): string {
     if (type === 'fire_detection') {
-        if (count === 0 && (loadFailed || (status?.firms && status.firms !== 'ok' && status.firms !== 'stale'))) return '—';
+        if (!isV2) return 'unavailable';
+        if (status?.firms === 'warming') return 'warming up';
+        if (status?.firms === 'unavailable') return 'unavailable';
+        if (loadFailed || (status?.firms && status.firms !== 'ok' && status.firms !== 'stale')) return 'unavailable';
         return count.toLocaleString();
     }
     const state = status ? (type === 'earthquake' ? status.usgs : status.eonet) : 'unknown';

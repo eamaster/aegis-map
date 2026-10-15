@@ -200,13 +200,30 @@ export function isGlobalFirmsProduct(value: unknown): value is GlobalFirmsProduc
 	return typeof value === 'string' && (GLOBAL_FIRMS_PRODUCTS as readonly string[]).includes(value);
 }
 
+/** Localized /api/fire-hotspots primary sensor. */
+export const LOCAL_FIRMS_SOURCE: GlobalFirmsProduct = 'VIIRS_SNPP_NRT';
+
 /** Supported rolling observation windows. */
 export const OBSERVATION_WINDOWS = ['24h', '7d'] as const;
 export type ObservationWindow = (typeof OBSERVATION_WINDOWS)[number];
+export const DEFAULT_OBSERVATION_WINDOW: ObservationWindow = '24h';
 
 export function isObservationWindow(value: unknown): value is ObservationWindow {
 	return typeof value === 'string' && (OBSERVATION_WINDOWS as readonly string[]).includes(value);
 }
+
+/** Supported volcano context modes. */
+export const VOLCANO_MODES = ['context', 'strict'] as const;
+export type VolcanoMode = (typeof VOLCANO_MODES)[number];
+export const DEFAULT_VOLCANO_MODE: VolcanoMode = 'context';
+
+export function isVolcanoMode(value: unknown): value is VolcanoMode {
+	return typeof value === 'string' && (VOLCANO_MODES as readonly string[]).includes(value);
+}
+
+/** Derived route validation error messages. */
+export const INVALID_WINDOW_ERROR = `Invalid window parameter. Supported: ${OBSERVATION_WINDOWS.join(', ')}`;
+export const INVALID_VOLCANO_MODE_ERROR = `Invalid volcanoMode parameter. Supported: ${VOLCANO_MODES.join(', ')}`;
 
 /** Deterministic spatial grid cell size in degrees (~55 km at equator). */
 export const FIRMS_GRID_SIZE_DEG = 0.5;
@@ -217,9 +234,39 @@ export const FIRMS_INTENSITY_THRESHOLDS = {
 	medium: { minDetections: 5, minFrp: 20 },
 } as const;
 
-/** Cache keys and TTLs for global FIRMS snapshots. */
+/** Cache keys and TTLs for legacy and v2 disaster feeds. */
+export const DISASTERS_CACHE_KEY = 'disasters:v2';
+export const DISASTERS_V2_CACHE_PREFIX = 'disasters:v2';
+export const DISASTERS_CACHE_TTL_SECONDS = 600;
+/** Partial results are cached briefly so a recovered source is picked up soon. */
+export const DISASTERS_PARTIAL_CACHE_TTL_SECONDS = 60;
+
+export function buildDisastersV2CacheKey(
+	window: ObservationWindow,
+	volcanoMode: VolcanoMode,
+	prefix = DISASTERS_V2_CACHE_PREFIX,
+): string {
+	return `${prefix}:${window}:${volcanoMode}`;
+}
+
+/**
+ * Cache keys, locks, and TTLs for global FIRMS snapshots.
+ *
+ * NASA FIRMS upstream rate bound:
+ * - Cache hit: 0 upstream calls for 4 hours (FIRMS_GLOBAL_CACHE_TTL_SECONDS).
+ * - Cache miss / warm-up lock: 300 s TTL (FIRMS_GLOBAL_LOCK_TTL_SECONDS) prevents
+ *   concurrent public requests from hammering upstream. Max 12 warm-up cycles/hour.
+ * - Upper bound: 12 lock cycles/hr * (3 calls for 24h + 6 calls for 7d) = 108 calls/hr
+ *   worst case across all windows during complete cache cold-starts.
+ * - Scheduled cron: runs every 2 h ("23 *\/2 * * *"), consuming 9 calls per run (108 calls/day).
+ */
 export const FIRMS_GLOBAL_CACHE_PREFIX = 'firms:global:snapshot:v2';
 export const FIRMS_GLOBAL_LKG_PREFIX = 'firms:global:lkg:v2';
+export const FIRMS_GLOBAL_LOCK_PREFIX = 'firms:global:lock:v2';
 export const FIRMS_GLOBAL_CACHE_TTL_SECONDS = 14400; // 4 hours
 export const FIRMS_GLOBAL_LKG_TTL_SECONDS = 604800; // 7 days
+export const FIRMS_GLOBAL_LOCK_TTL_SECONDS = 300; // 5 minutes warm-up lock
+export const CRON_SCHEDULE_FIRMS = '23 */2 * * *';
+export const FIRMS_GLOBAL_FETCH_TIMEOUT_MS = 240_000; // 240s for worldwide streaming downloads on slow/congested networks
+
 
