@@ -587,7 +587,34 @@ POST /api/analyze
 
 ## 🚢 Deployment
 
-### Backend (Cloudflare Workers)
+### Automated CI/CD Pipeline (GitHub Actions)
+
+AegisMap uses an automated, coordinated deployment workflow (`.github/workflows/deploy.yml`) on Node 22:
+
+1. **Backend First**: On merge to `main`, runs backend typecheck and Vitest tests, then executes `npx wrangler deploy`.
+2. **Release Contract & Smoke Gate**: Verifies the live Worker reports `firms-global-v2` capability on `GET /` and executes a live smoke check verifying `GET /api/v2/disasters?window=24h` returns HTTP 200.
+3. **Frontend Build & Deploy**: Builds the frontend bundle with Vite and publishes directly to GitHub Pages.
+
+#### Required GitHub Repository Secrets
+
+Configure the following under **GitHub Repo → Settings → Secrets and variables → Actions**:
+
+| Secret | Description | Where It's Used |
+|--------|-------------|-----------------|
+| `CLOUDFLARE_API_TOKEN` | Cloudflare API token with `Workers:Edit` permissions | `deploy-backend` job |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare Account ID | `deploy-backend` job |
+| `VITE_API_BASE_URL` | Live Worker base URL (e.g., `https://aegis-map-backend.smah0085.workers.dev`) | Contract gate & Frontend build |
+| `VITE_MAPBOX_TOKEN` | Public Mapbox GL token for map rendering | Frontend build |
+
+#### Cloudflare Worker Secrets (Managed via CLI)
+
+| Secret | Description | How to Configure |
+|--------|-------------|------------------|
+| `FIRMS_MAP_KEY` | NASA FIRMS MAP Key for VIIRS hotspot ingestion | `cd backend && npx wrangler secret put FIRMS_MAP_KEY` |
+
+> ⚠️ **Security**: Never commit tokens or secrets to git. The automated deploy job uses `wrangler deploy` which uploads Worker code without overwriting existing Cloudflare Worker secrets.
+
+### Manual Backend Deployment (Cloudflare Workers)
 
 1. **Create KV namespace:**
    ```bash
@@ -607,11 +634,10 @@ POST /api/analyze
    }
    ```
 
-3. **Set production secrets / bindings:**
+3. **Set production secret:**
    ```bash
-   # AI binding is declared in wrangler.jsonc (no GEMINI_API_KEY)
-   wrangler secret put FIRMS_MAP_KEY
-   # Paste your FIRMS key when prompted
+   npx wrangler secret put FIRMS_MAP_KEY
+   # Enter your NASA FIRMS MAP key when prompted
    ```
 
 4. **Deploy:**
@@ -619,7 +645,7 @@ POST /api/analyze
    npm run deploy
    ```
 
-5. **Note your Worker URL** (e.g., `https://aegis-map-backend.YOUR_SUBDOMAIN.workers.dev`)
+5. **Verify live Worker URL** (e.g., `https://aegis-map-backend.YOUR_SUBDOMAIN.workers.dev`)
 
 ### Frontend (Cloudflare Pages)
 

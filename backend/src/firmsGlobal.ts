@@ -1,12 +1,15 @@
 import {
+	DEFAULT_OBSERVATION_WINDOW,
 	FIRMS_GLOBAL_CACHE_PREFIX,
 	FIRMS_GLOBAL_CACHE_TTL_SECONDS,
+	FIRMS_GLOBAL_FETCH_TIMEOUT_MS,
 	FIRMS_GLOBAL_LKG_PREFIX,
 	FIRMS_GLOBAL_LKG_TTL_SECONDS,
 	FIRMS_GRID_SIZE_DEG,
 	FIRMS_INTENSITY_THRESHOLDS,
 	GLOBAL_FIRMS_PRODUCTS,
 	GlobalFirmsProduct,
+	isObservationWindow,
 	ObservationWindow,
 } from './config';
 import {
@@ -20,18 +23,15 @@ import {
 /**
  * NASA FIRMS Worldwide Satellite Thermal Detection Adapter & Grid Aggregator
  *
- * Ingests worldwide VIIRS data across 3 operational sensors:
- * - VIIRS_SNPP_NRT (Suomi NPP, 375 m)
- * - VIIRS_NOAA20_NRT (NOAA-20 / JPSS-1, 375 m)
- * - VIIRS_NOAA21_NRT (NOAA-21 / JPSS-2, 375 m)
+ * Ingests worldwide VIIRS data across operational sensors configured in config.
  *
  * Aggregates tens of thousands of raw sensor observations into deterministic 0.5°
  * spatial cells, strictly tracking accounting identities:
  *   rawRows === malformedRows + outOfWindowRows + duplicateRows + acceptedDetections
  *   sum(cell.detectionCount) === acceptedDetections
  *
- * Public GET /api/v2/disasters never touches NASA FIRMS upstream. Data is pre-cached
- * in Cloudflare KV via Scheduled Cron triggers.
+ * Public GET /api/v2/disasters reads validated KV snapshots or triggers a single
+ * background warm-up. Data is also pre-cached via Scheduled Cron triggers.
  */
 
 export type DetectionIntensity = 'low' | 'medium' | 'high';
@@ -74,7 +74,8 @@ export interface WindowRange {
 	endExclusive: string;   // ISO UTC
 }
 
-export type SensorStatus = 'ok' | 'failed' | 'timeout' | 'malformed';
+export type SensorStatus = 'ok' | 'failed' | 'timeout' | 'malformed' | 'warming';
+export type FirmsReportStatus = 'ok' | 'stale' | 'partial' | 'unavailable' | 'warming';
 
 export interface SensorCoverageReport {
 	status: SensorStatus;
@@ -129,7 +130,7 @@ export function computeCellBounds(lat: number, lng: number, gridSize = FIRMS_GRI
 
 /** Compute rolling UTC [startInclusive, endExclusive) interval. */
 export function calculateWindowRange(window: ObservationWindow, now = new Date()): WindowRange {
-	const durationMs = window === '24h' ? 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
+	const durationMs = window === DEFAULT_OBSERVATION_WINDOW ? 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
 	const startMs = now.getTime() - durationMs;
 	return {
 		startInclusive: new Date(startMs).toISOString(),
@@ -160,7 +161,7 @@ const FIRMS_AREA_BASE = 'https://firms.modaps.eosdis.nasa.gov/api/area/csv';
 export function planWorldFirmsRequests(window: ObservationWindow, now = new Date()): FirmsWorldPlan[] {
 	const plans: FirmsWorldPlan[] = [];
 
-	if (window === '24h') {
+	if (window === DEFAULT_OBSERVATION_WINDOW) {
 		const startDate = utcDateString(addUtcDays(now, -1));
 		for (const product of GLOBAL_FIRMS_PRODUCTS) {
 			plans.push({
@@ -431,53 +432,50 @@ export async function ingestGlobalFirms(
 ): Promise<FirmsGlobalSnapshot> {
 	const now = options.now ?? new Date();
 	const fetchImpl = options.fetchImpl ?? ((input, init) => fetch(input, init));
-	const timeoutMs = options.timeoutMs ?? 25000;
+	const timeoutMs = options.timeoutMs ?? FIRMS_GLOBAL_FETCH_TIMEOUT_MS;
 
 	const windowRange = calculateWindowRange(window, now);
 	const plans = planWorldFirmsRequests(window, now);
 	const aggregator = new WorldGridAggregator(windowRange);
 
-	const sensors: Record<GlobalFirmsProduct, SensorCoverageReport> = {
-		VIIRS_SNPP_NRT: { status: 'ok', rawRows: 0, acceptedRows: 0 },
-		VIIRS_NOAA20_NRT: { status: 'ok', rawRows: 0, acceptedRows: 0 },
-		VIIRS_NOAA21_NRT: { status: 'ok', rawRows: 0, acceptedRows: 0 },
-	};
+	const sensors = {} as Record<GlobalFirmsProduct, SensorCoverageReport>;
+	for (const product of GLOBAL_FIRMS_PRODUCTS) {
+		sensors[product] = { status: 'ok', rawRows: 0, acceptedRows: 0 };
+	}
 
-	// Execute planned fetches in parallel
-	await Promise.all(
-		plans.map(async (plan) => {
-			const url = buildGlobalFirmsUrl(mapKey, plan.product, plan.dayRange, plan.startDate);
-			try {
-				const res = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs) });
-				if (!res.ok) {
-					console.warn(`FIRMS World ${plan.description}: HTTP ${res.status}`);
-					sensors[plan.product].status = 'failed';
-					sensors[plan.product].httpStatus = res.status;
-					sensors[plan.product].errorReason = `HTTP ${res.status}`;
-					return;
-				}
-				const text = await res.text();
-				const result = aggregator.ingestCsv(text);
-				if (!result.ok) {
-					console.warn(`FIRMS World ${plan.description}: malformed (${result.error})`);
-					if (sensors[plan.product].status === 'ok') {
-						sensors[plan.product].status = 'malformed';
-						sensors[plan.product].errorReason = result.error;
-					}
-				} else {
-					sensors[plan.product].acceptedRows += result.acceptedRows;
-				}
-			} catch (err) {
-				const isTimeout =
-					err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError');
-				const status: SensorStatus = isTimeout ? 'timeout' : 'failed';
-				const message = err instanceof Error ? redactSecret(err.message, mapKey) : 'unknown';
-				console.warn(`FIRMS World ${plan.description}: ${status} (${message})`);
-				sensors[plan.product].status = status;
-				sensors[plan.product].errorReason = message;
+	// Execute planned fetches sequentially to respect upstream bandwidth & avoid NASA multi-stream throttling
+	for (const plan of plans) {
+		const url = buildGlobalFirmsUrl(mapKey, plan.product, plan.dayRange, plan.startDate);
+		try {
+			const res = await fetchImpl(url, { signal: AbortSignal.timeout(timeoutMs) });
+			if (!res.ok) {
+				console.warn(`FIRMS World ${plan.description}: HTTP ${res.status}`);
+				sensors[plan.product].status = 'failed';
+				sensors[plan.product].httpStatus = res.status;
+				sensors[plan.product].errorReason = `HTTP ${res.status}`;
+				continue;
 			}
-		}),
-	);
+			const text = await res.text();
+			const result = aggregator.ingestCsv(text);
+			if (!result.ok) {
+				console.warn(`FIRMS World ${plan.description}: malformed (${result.error})`);
+				if (sensors[plan.product].status === 'ok') {
+					sensors[plan.product].status = 'malformed';
+					sensors[plan.product].errorReason = result.error;
+				}
+			} else {
+				sensors[plan.product].acceptedRows += result.acceptedRows;
+			}
+		} catch (err) {
+			const isTimeout =
+				err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError');
+			const status: SensorStatus = isTimeout ? 'timeout' : 'failed';
+			const message = err instanceof Error ? redactSecret(err.message, mapKey) : 'unknown';
+			console.warn(`FIRMS World ${plan.description}: ${status} (${message})`);
+			sensors[plan.product].status = status;
+			sensors[plan.product].errorReason = message;
+		}
+	}
 
 	if (!aggregator.assertAccountingIdentity()) {
 		console.error('Accounting invariant violation in WorldGridAggregator!', aggregator.accounting);
@@ -505,7 +503,7 @@ export function isValidSnapshot(doc: unknown): doc is FirmsGlobalSnapshot {
 	const s = doc as Partial<FirmsGlobalSnapshot>;
 	return (
 		s.version === 2 &&
-		(s.window === '24h' || s.window === '7d') &&
+		isObservationWindow(s.window) &&
 		typeof s.generatedAt === 'string' &&
 		typeof s.totalDetections === 'number' &&
 		Array.isArray(s.cells) &&
@@ -514,6 +512,38 @@ export function isValidSnapshot(doc: unknown): doc is FirmsGlobalSnapshot {
 		typeof s.accounting.acceptedDetections === 'number' &&
 		s.accounting.acceptedDetections === s.totalDetections
 	);
+}
+
+export function isSnapshotUsable(snapshot: FirmsGlobalSnapshot): boolean {
+	return Object.values(snapshot.sensors).some((s) => s.status === 'ok');
+}
+
+/**
+ * Build fallback FIRMS coverage report across all configured sensors.
+ * Iterates GLOBAL_FIRMS_PRODUCTS so adding a sensor in config requires no route edits.
+ */
+export function buildFallbackFirmsReport(status: 'unavailable' | 'warming' = 'unavailable'): {
+	status: 'unavailable' | 'warming';
+	generatedAt: string;
+	isLkgFallback: false;
+	sensors: Record<GlobalFirmsProduct, SensorCoverageReport>;
+	accounting: FirmsAccounting;
+} {
+	const sensors = {} as Record<GlobalFirmsProduct, SensorCoverageReport>;
+	for (const product of GLOBAL_FIRMS_PRODUCTS) {
+		sensors[product] = {
+			status: status === 'warming' ? 'warming' : 'failed',
+			rawRows: 0,
+			acceptedRows: 0,
+		};
+	}
+	return {
+		status,
+		generatedAt: new Date().toISOString(),
+		isLkgFallback: false,
+		sensors,
+		accounting: { rawRows: 0, malformedRows: 0, outOfWindowRows: 0, duplicateRows: 0, acceptedDetections: 0 },
+	};
 }
 
 /**

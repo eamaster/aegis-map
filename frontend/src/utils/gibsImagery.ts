@@ -33,11 +33,9 @@ const GIBS_WMS = 'https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi';
 
 export const FIRE_BBOX_HALF_DEG = 0.5;
 const FALSE_COLOR_BBOX_HALF_DEG = 0.3;
-/** MODIS corrected reflectance is typically complete a few days after acquisition. */
 const MODIS_AQUA_LAG_DAYS = 3;
 const MODIS_TERRA_LAG_DAYS = 4;
-/** Previous UTC day: a full day of VIIRS passes rather than a partial current day. */
-const VIIRS_OVERLAY_LAG_DAYS = 1;
+import { GIBS_VIIRS_OVERLAY_LAG_DAYS, GIBS_VIIRS_SNPP_THERMAL_PRODUCT } from '../config/gibs';
 
 export function utcDateOffset(now: Date, days: number): string {
     const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
@@ -64,7 +62,7 @@ export function bboxLimitation(lat: number, lng: number, half: number): string |
 export function buildImagerySpec(layer: ImageryLayer, lat: number, lng: number, now: Date, mapboxToken: string): ImagerySpec {
     if (layer === 'fire') {
         const date = utcDateOffset(now, MODIS_AQUA_LAG_DAYS);
-        const overlayDate = utcDateOffset(now, VIIRS_OVERLAY_LAG_DAYS);
+        const overlayDate = utcDateOffset(now, GIBS_VIIRS_OVERLAY_LAG_DAYS);
         return {
             layer,
             provider: 'NASA GIBS',
@@ -74,10 +72,10 @@ export function buildImagerySpec(layer: ImageryLayer, lat: number, lng: number, 
             url: gibsUrl('MODIS_Aqua_CorrectedReflectance_TrueColor', date, lat, lng, FIRE_BBOX_HALF_DEG, 'image/jpeg'),
             halfSizeDeg: FIRE_BBOX_HALF_DEG,
             overlay: {
-                product: 'VIIRS_SNPP_Thermal_Anomalies_375m_All',
+                product: GIBS_VIIRS_SNPP_THERMAL_PRODUCT,
                 label: 'VIIRS S-NPP thermal anomalies (single requested UTC day)',
                 date: overlayDate,
-                url: gibsUrl('VIIRS_SNPP_Thermal_Anomalies_375m_All', overlayDate, lat, lng, FIRE_BBOX_HALF_DEG, 'image/png'),
+                url: gibsUrl(GIBS_VIIRS_SNPP_THERMAL_PRODUCT, overlayDate, lat, lng, FIRE_BBOX_HALF_DEG, 'image/png'),
             },
             limitation: bboxLimitation(lat, lng, FIRE_BBOX_HALF_DEG),
         };

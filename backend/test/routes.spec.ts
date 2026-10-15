@@ -1,7 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import { SELF } from 'cloudflare:test';
+import {
+	FIRMS_GLOBAL_LOCK_TTL_SECONDS,
+	GLOBAL_FIRMS_PRODUCTS,
+	INVALID_VOLCANO_MODE_ERROR,
+	INVALID_WINDOW_ERROR,
+	OBSERVATION_WINDOWS,
+	VOLCANO_MODES,
+} from '../src/config';
 import { EONET_QUERIES, USGS_URL } from '../src/disasters';
 import { buildFirmsBboxes, buildFirmsCacheKey, planFirmsWindows } from '../src/firms';
+import { buildFallbackFirmsReport } from '../src/firmsGlobal';
 import { CachedTleRecord, MONITORED_NORAD_IDS, TLE_CACHE_KEY, TLE_LKG_CACHE_KEY, writeTleCache } from '../src/satellites';
 import { refreshFirmsScheduled, refreshTlesScheduled } from '../src/index';
 import { callWorker, csvResponse, FIRMS_HEADER, makeTle, memoryKv, withFetch } from './helpers';
@@ -435,12 +444,46 @@ describe('GET /api/v2/disasters', () => {
 		],
 	};
 
-	it('rejects invalid window and volcanoMode parameters with 400', async () => {
+	it('rejects invalid window and volcanoMode parameters with 400 and derived messages', async () => {
+		for (const w of OBSERVATION_WINDOWS) {
+			const { result: res } = await withFetch(
+				(url) => (isEonet(url) ? json(mockEonet) : json(mockUsgs)),
+				() => callWorker(`/api/v2/disasters?window=${w}`, { AEGIS_CACHE: memoryKv().kv, FIRMS_MAP_KEY: '' }),
+			);
+			expect(res.status).toBe(200);
+		}
 		const badWindow = await SELF.fetch('http://example.com/api/v2/disasters?window=30d');
 		expect(badWindow.status).toBe(400);
+		expect(await badWindow.json()).toEqual({ error: INVALID_WINDOW_ERROR });
 
+		for (const m of VOLCANO_MODES) {
+			const { result: res } = await withFetch(
+				(url) => (isEonet(url) ? json(mockEonet) : json(mockUsgs)),
+				() => callWorker(`/api/v2/disasters?volcanoMode=${m}`, { AEGIS_CACHE: memoryKv().kv, FIRMS_MAP_KEY: '' }),
+			);
+			expect(res.status).toBe(200);
+		}
 		const badMode = await SELF.fetch('http://example.com/api/v2/disasters?volcanoMode=unknown');
 		expect(badMode.status).toBe(400);
+		expect(await badMode.json()).toEqual({ error: INVALID_VOLCANO_MODE_ERROR });
+	});
+
+	it('includes every configured sensor in fallback and warming FIRMS reports', async () => {
+		const unavailableReport = buildFallbackFirmsReport('unavailable');
+		expect(Object.keys(unavailableReport.sensors).sort()).toEqual([...GLOBAL_FIRMS_PRODUCTS].sort());
+		expect(unavailableReport.status).toBe('unavailable');
+
+		const warmingReport = buildFallbackFirmsReport('warming');
+		expect(Object.keys(warmingReport.sensors).sort()).toEqual([...GLOBAL_FIRMS_PRODUCTS].sort());
+		expect(warmingReport.status).toBe('warming');
+
+		const kv = memoryKv();
+		const { result: res } = await withFetch(
+			(url) => (isEonet(url) ? json(mockEonet) : json(mockUsgs)),
+			() => callWorker('/api/v2/disasters?window=24h', { AEGIS_CACHE: kv.kv, FIRMS_MAP_KEY: '' }),
+		);
+		const body = (await res.json()) as any;
+		expect(Object.keys(body.sources.firms.sensors).sort()).toEqual([...GLOBAL_FIRMS_PRODUCTS].sort());
 	});
 
 	it('serves v2 response with pre-cached FIRMS cells and categorized disasters', async () => {
@@ -491,19 +534,108 @@ describe('GET /api/v2/disasters', () => {
 		expect(body.summary.volcanoes).toBe(0);
 	});
 
-	it('returns firms.status=unavailable when no snapshot is in KV without calling FIRMS upstream', async () => {
-		const kv = memoryKv(); // Empty KV
+	it('triggers background warm-up guarded by lock when snapshot is missing, returning warming', async () => {
+		const kv = memoryKv();
+		const fetchImpl = async (url: string) => {
+			if (isEonet(url)) return json(mockEonet);
+			if (url.includes('earthquake.usgs.gov')) return json(mockUsgs);
+			return csvResponse(
+				[
+					FIRMS_HEADER,
+					'-1.2,36.8,330.0,0.4,0.4,2026-10-13,0600,N20,VIIRS,high,2.0NRT,290.0,25.0,D',
+				].join('\n'),
+			);
+		};
+
+		const { result: res } = await withFetch(
+			fetchImpl,
+			() => callWorker('/api/v2/disasters?window=24h', { AEGIS_CACHE: kv.kv, FIRMS_MAP_KEY: 'test-warmup-key' }),
+		);
+
+		expect(res.status).toBe(200);
+		expect(res.headers.get('X-FIRMS-Status')).toBe('warming');
+		const body = (await res.json()) as any;
+		expect(body.sources.firms.status).toBe('warming');
+		expect(body.fireCells).toEqual([]);
+
+		// Lock was written to KV
+		const lockPut = kv.puts.find((p) => p.key === 'firms:global:lock:v2:24h');
+		expect(lockPut).toBeDefined();
+		expect(lockPut?.options?.expirationTtl).toBe(FIRMS_GLOBAL_LOCK_TTL_SECONDS);
+
+		// Background refresh executed and saved snapshot into KV
+		const snapshotPut = kv.puts.find((p) => p.key === 'firms:global:snapshot:v2:24h');
+		expect(snapshotPut).toBeDefined();
+	});
+
+	it('suppresses duplicate refresh under concurrent requests when lock is held', async () => {
+		const kv = memoryKv({
+			initial: {
+				'firms:global:lock:v2:24h': new Date().toISOString(),
+			},
+		});
+
 		const { result: res, calls } = await withFetch(
 			(url) => (isEonet(url) ? json(mockEonet) : json(mockUsgs)),
-			() => callWorker('/api/v2/disasters', { AEGIS_CACHE: kv.kv }),
+			() => callWorker('/api/v2/disasters?window=24h', { AEGIS_CACHE: kv.kv, FIRMS_MAP_KEY: 'test-warmup-key' }),
+		);
+
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as any;
+		expect(body.sources.firms.status).toBe('warming');
+
+		// No FIRMS calls triggered because lock held
+		expect(calls.some((c) => c.includes('firms.modaps.eosdis.nasa.gov'))).toBe(false);
+	});
+
+	it('triggers no refresh when snapshot is already present in KV', async () => {
+		const kv = memoryKv({
+			initial: {
+				'firms:global:snapshot:v2:24h': JSON.stringify(sampleSnapshot),
+			},
+		});
+
+		const { result: res, calls } = await withFetch(
+			(url) => (isEonet(url) ? json(mockEonet) : json(mockUsgs)),
+			() => callWorker('/api/v2/disasters?window=24h', { AEGIS_CACHE: kv.kv, FIRMS_MAP_KEY: 'test-warmup-key' }),
+		);
+
+		expect(res.status).toBe(200);
+		expect(res.headers.get('X-FIRMS-Status')).toBe('ok');
+		expect(calls.some((c) => c.includes('firms.modaps.eosdis.nasa.gov'))).toBe(false);
+	});
+
+	it('does not cache a snapshot when warm-up refresh fails', async () => {
+		const kv = memoryKv();
+		const { result: res } = await withFetch(
+			(url) => {
+				if (url.includes('firms.modaps.eosdis.nasa.gov')) {
+					return new Response('Upstream error', { status: 500 });
+				}
+				return isEonet(url) ? json(mockEonet) : json(mockUsgs);
+			},
+			() => callWorker('/api/v2/disasters?window=24h', { AEGIS_CACHE: kv.kv, FIRMS_MAP_KEY: 'test-warmup-key' }),
+		);
+
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as any;
+		expect(body.sources.firms.status).toBe('warming');
+
+		const snapshotPut = kv.puts.find((p) => p.key === 'firms:global:snapshot:v2:24h');
+		expect(snapshotPut).toBeUndefined();
+	});
+
+	it('returns firms.status=unavailable when FIRMS_MAP_KEY is missing or unconfigured', async () => {
+		const kv = memoryKv();
+		const { result: res, calls } = await withFetch(
+			(url) => (isEonet(url) ? json(mockEonet) : json(mockUsgs)),
+			() => callWorker('/api/v2/disasters', { AEGIS_CACHE: kv.kv, FIRMS_MAP_KEY: '' }),
 		);
 
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as any;
 		expect(body.sources.firms.status).toBe('unavailable');
 		expect(body.fireCells).toEqual([]);
-
-		// No FIRMS calls made!
 		expect(calls.some((c) => c.includes('firms.modaps.eosdis.nasa.gov'))).toBe(false);
 	});
 });

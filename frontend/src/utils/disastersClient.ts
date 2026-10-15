@@ -1,4 +1,5 @@
 import { apiUrl } from '../config/api';
+import { DEFAULT_OBSERVATION_WINDOW, DEFAULT_VOLCANO_MODE } from '../config/disasters';
 import type {
     Disaster,
     DisasterSourceStatus,
@@ -24,6 +25,8 @@ export interface LoadDisastersResult {
     fetchedAt: Date;
     window: ObservationWindow;
     isV2: boolean;
+    firmsStatus?: 'ok' | 'stale' | 'partial' | 'unavailable' | 'warming';
+    firmsGeneratedAt?: string;
 }
 
 export function isV2Response(data: unknown): data is DisastersV2Response {
@@ -62,8 +65,8 @@ export function cellToDisasterItem(cell: FireDetectionCell): Disaster {
 export async function fetchDisastersData(
     options: LoadDisastersOptions = {},
 ): Promise<LoadDisastersResult> {
-    const window = options.window ?? '24h';
-    const volcanoMode = options.volcanoMode ?? 'context';
+    const window = options.window ?? DEFAULT_OBSERVATION_WINDOW;
+    const volcanoMode = options.volcanoMode ?? DEFAULT_VOLCANO_MODE;
 
     const v2Url = apiUrl(
         `/api/v2/disasters?window=${encodeURIComponent(window)}&volcanoMode=${encodeURIComponent(volcanoMode)}`,
@@ -75,15 +78,19 @@ export async function fetchDisastersData(
             const data: unknown = await response.json();
             if (isV2Response(data)) {
                 const headerStatus = parseDisasterSourceHeaders(response.headers);
+                const firmsStatus = data.sources.firms.status;
                 const status = headerStatus ?? {
                     eonet: data.sources.eonet.status,
                     usgs: data.sources.usgs.status,
-                    firms: data.sources.firms.status,
+                    firms: firmsStatus,
                     partial:
                         data.sources.eonet.status !== 'ok' ||
                         data.sources.usgs.status !== 'ok' ||
-                        (data.sources.firms.status !== 'ok' && data.sources.firms.status !== 'stale'),
+                        (firmsStatus !== 'ok' && firmsStatus !== 'stale'),
                 };
+                if (!status.firms) {
+                    status.firms = firmsStatus;
+                }
 
                 const fetchedAt = new Date(data.fetchedAt);
                 return {
@@ -96,6 +103,8 @@ export async function fetchDisastersData(
                     fetchedAt: Number.isNaN(fetchedAt.getTime()) ? new Date() : fetchedAt,
                     window: data.window,
                     isV2: true,
+                    firmsStatus,
+                    firmsGeneratedAt: data.sources.firms.generatedAt,
                 };
             }
         }
@@ -131,5 +140,6 @@ export async function fetchDisastersData(
         fetchedAt: Number.isNaN(fetchedAt.getTime()) ? new Date() : fetchedAt,
         window,
         isV2: false,
+        firmsStatus: 'unavailable',
     };
 }

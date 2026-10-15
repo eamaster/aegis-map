@@ -89,7 +89,9 @@ export interface FireHotspotsResponse extends HotspotStats {
 	cacheVersion: string;
 }
 
-export const FIRMS_SOURCE = 'VIIRS_SNPP_NRT';
+import { LOCAL_FIRMS_SOURCE } from './config';
+
+export const FIRMS_SOURCE = LOCAL_FIRMS_SOURCE;
 export const FIRMS_SENSOR_LABEL = 'VIIRS S-NPP 375 m (NRT)';
 export const FIRMS_BBOX_DELTA = 0.5;
 export const FIRMS_CACHE_TTL_SECONDS = 1800;
