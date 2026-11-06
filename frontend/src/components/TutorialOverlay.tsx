@@ -199,8 +199,9 @@ export default function TutorialOverlay({ onClose }: TutorialOverlayProps) {
                         >
                             <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                                 <DisasterType color={ds.colors.disaster.fire} label="Red circles" text="Wildfires" ds={ds} />
-                                <DisasterType color={ds.colors.disaster.earthquake} label="Orange circles" text="Earthquakes" ds={ds} />
-                                <DisasterType color={ds.colors.disaster.volcano} label="Orange-red circles" text="Volcanoes" ds={ds} />
+                                <DisasterType color={ds.colors.disaster.fire_detection} label="Orange cells" text="Satellite Hotspots (FIRMS)" ds={ds} />
+                                <DisasterType color={ds.colors.disaster.volcano} label="Purple circles" text="Volcanoes" ds={ds} />
+                                <DisasterType color={ds.colors.disaster.earthquake} label="Amber circles" text="Earthquakes" ds={ds} />
                             </div>
                         </FeatureCard>
 

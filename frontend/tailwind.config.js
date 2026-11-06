@@ -8,9 +8,10 @@ export default {
         extend: {
             colors: {
                 disaster: {
-                    fire: '#FF4444',
-                    volcano: '#FF6B35',
-                    earthquake: '#FF8C00',
+                    fire: '#ef4444',
+                    fire_detection: '#f97316',
+                    volcano: '#a855f7',
+                    earthquake: '#f59e0b',
                 }
             },
             backdropBlur: {

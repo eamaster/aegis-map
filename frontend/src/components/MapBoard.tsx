@@ -12,6 +12,7 @@ import type { Disaster, DisasterSourceStatus, FireDetectionCell, ObservationWind
 import { DEFAULT_OBSERVATION_WINDOW, DEFAULT_VOLCANO_MODE } from '../config/disasters';
 import { describeDisasterSources } from '../utils/disasterSources';
 import { cellToDisasterItem, fetchDisastersData } from '../utils/disastersClient';
+import { DESIGN_SYSTEM } from '../constants/designSystem';
 import MapLegend from './MapLegend';
 
 type LayerHandler = {
@@ -148,7 +149,7 @@ export default function MapBoard({
                     ? ` (Peak FRP: ${selected.detectionCell.maxFrp} MW)`
                     : '';
                 content.innerHTML = `
-                    <div style="font-weight: 700; color: #f97316;">${icon} Satellite Hotspots Cell</div>
+                    <div style="font-weight: 700; color: ${DESIGN_SYSTEM.colors.disaster.fire_detection};">${icon} Satellite Hotspots Cell</div>
                     <div style="font-size: 0.75rem;">${count} detections${frp}</div>
                     <div style="font-size: 0.65rem; color: #9ca3af; margin-top: 2px;">Sensor thermal signature — not confirmed perimeter</div>
                 `;
@@ -233,7 +234,7 @@ export default function MapBoard({
                         10, // Larger for high severity
                         8
                     ],
-                    'circle-color': '#FF4444',
+                    'circle-color': DESIGN_SYSTEM.colors.disaster.fire,
                     'circle-stroke-width': [
                         'case',
                         ['==', ['get', 'severity'], 'high'],
@@ -304,9 +305,9 @@ export default function MapBoard({
                     'circle-color': [
                         'match',
                         ['get', 'severity'],
-                        'high', '#ef4444',
-                        'medium', '#f97316',
-                        /* default/low */ '#f59e0b'
+                        'high', DESIGN_SYSTEM.colors.disaster.fire,
+                        'medium', DESIGN_SYSTEM.colors.disaster.fire_detection,
+                        /* default/low */ DESIGN_SYSTEM.colors.disaster.earthquake
                     ],
                     'circle-radius': [
                         'interpolate',
@@ -355,7 +356,7 @@ export default function MapBoard({
                         10, // Larger for high severity
                         8
                     ],
-                    'circle-color': '#FF8C00',
+                    'circle-color': DESIGN_SYSTEM.colors.disaster.earthquake,
                     'circle-stroke-width': [
                         'case',
                         ['==', ['get', 'severity'], 'high'],
@@ -421,7 +422,7 @@ export default function MapBoard({
                         10, // Larger for high severity
                         8
                     ],
-                    'circle-color': '#FF6B35',
+                    'circle-color': DESIGN_SYSTEM.colors.disaster.volcano,
                     'circle-stroke-width': [
                         'case',
                         ['==', ['get', 'severity'], 'high'],

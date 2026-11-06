@@ -52,7 +52,8 @@ export const DESIGN_SYSTEM = {
     colors: {
         disaster: {
             fire: '#ef4444',
-            volcano: '#f97316',
+            fire_detection: '#f97316',
+            volcano: '#a855f7',
             earthquake: '#f59e0b',
         },
         status: {

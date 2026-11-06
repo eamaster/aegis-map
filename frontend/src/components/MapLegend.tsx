@@ -97,7 +97,7 @@ export default function MapLegend({
     const isActive = (type: string) => activeFilters.has(type);
 
     // Get disaster-specific colors from design system
-    const getDisasterColor = (type: 'fire' | 'volcano' | 'earthquake') => {
+    const getDisasterColor = (type: 'fire' | 'fire_detection' | 'volcano' | 'earthquake') => {
         return ds.colors.disaster[type];
     };
 
@@ -504,10 +504,10 @@ export default function MapLegend({
                                     padding: '7px 12px',
                                     borderRadius: '8px',
                                     background: isActive('fire_detection')
-                                        ? 'rgba(249, 115, 22, 0.15)'
+                                        ? addOpacity(getDisasterColor('fire_detection'), 15)
                                         : ds.surface.overlay,
                                     border: `1px solid ${isActive('fire_detection')
-                                        ? 'rgba(249, 115, 22, 0.45)'
+                                        ? addOpacity(getDisasterColor('fire_detection'), 45)
                                         : ds.surface.border
                                         }`,
                                     opacity: isV2 ? (isActive('fire_detection') ? 1 : 0.65) : 0.45,
@@ -524,10 +524,10 @@ export default function MapLegend({
                                             alignItems: 'center',
                                             justifyContent: 'center',
                                             background: isActive('fire_detection')
-                                                ? '#f97316'
+                                                ? getDisasterColor('fire_detection')
                                                 : ds.surface.overlaySubtle,
                                             boxShadow: isActive('fire_detection')
-                                                ? '0 2px 8px rgba(249, 115, 22, 0.35)'
+                                                ? `0 2px 8px ${addOpacity(getDisasterColor('fire_detection'), 35)}`
                                                 : 'none',
                                             flexShrink: 0,
                                             transition: 'all 0.2s ease',
@@ -566,7 +566,7 @@ export default function MapLegend({
                                         fontSize: '0.95rem',
                                         fontWeight: '800',
                                         fontVariantNumeric: 'tabular-nums',
-                                        color: isActive('fire_detection') ? '#f97316' : ds.text.tertiary,
+                                        color: isActive('fire_detection') ? getDisasterColor('fire_detection') : ds.text.tertiary,
                                         marginLeft: 'auto',
                                     }}
                                 >

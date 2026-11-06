@@ -462,7 +462,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                                     fontWeight: '800',
                                     textTransform: 'uppercase',
                                     letterSpacing: '0.05em',
-                                    color: '#f97316',
+                                    color: ds.colors.disaster.fire_detection,
                                 }}
                             >
                                 Satellite Thermal Detection
@@ -474,7 +474,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                                     padding: '2px 6px',
                                     borderRadius: '4px',
                                     background: 'rgba(249, 115, 22, 0.15)',
-                                    color: '#f97316',
+                                    color: ds.colors.disaster.fire_detection,
                                 }}
                             >
                                 VIIRS 375m
@@ -508,7 +508,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                             </div>
                             <div style={{ padding: '8px', borderRadius: '6px', background: ds.surface.overlaySubtle }}>
                                 <span style={{ display: 'block', fontSize: '0.625rem', color: ds.text.tertiary }}>Peak Radiative Power</span>
-                                <span style={{ fontWeight: '800', color: '#f97316' }}>
+                                <span style={{ fontWeight: '800', color: ds.colors.disaster.fire_detection }}>
                                     {disaster.detectionCell.maxFrp !== null ? `${disaster.detectionCell.maxFrp} MW` : '—'}
                                 </span>
                             </div>
