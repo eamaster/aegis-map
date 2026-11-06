@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	FIRMS_GLOBAL_STALE_AFTER_MS,
 	FIRMS_INTENSITY_THRESHOLDS,
 	GLOBAL_FIRMS_PRODUCTS,
 } from '../src/config';
@@ -7,12 +8,15 @@ import {
 	calculateWindowRange,
 	computeCellBounds,
 	computeIntensity,
+	computeSnapshotStatus,
 	FirmsGlobalSnapshot,
 	ingestGlobalFirms,
 	isValidSnapshot,
+	loadGlobalFirmsMeta,
 	loadGlobalFirmsSnapshot,
 	planWorldFirmsRequests,
 	saveGlobalFirmsSnapshot,
+	saveGlobalFirmsSnapshotSplit,
 	WorldGridAggregator,
 } from '../src/firmsGlobal';
 import { csvResponse, memoryKv } from './helpers';
@@ -139,6 +143,8 @@ describe('firmsGlobal - WorldGridAggregator & Accounting', () => {
 
 		const result = agg.ingestCsv(csv);
 		expect(result.ok).toBe(true);
+		expect(result.status).toBe('ok');
+		expect(result.rawRows).toBe(8);
 		expect(result.acceptedRows).toBe(3);
 
 		// Assert accounting numbers:
@@ -181,17 +187,34 @@ describe('firmsGlobal - WorldGridAggregator & Accounting', () => {
 		expect(afCell!.satelliteCounts).toEqual({ NPP: 1 });
 	});
 
+	it('treats an empty or header-only FIRMS body as sensor status no_data rather than malformed', () => {
+		const agg = new WorldGridAggregator(windowRange);
+		const emptyResult = agg.ingestCsv('   \n  ');
+		expect(emptyResult.ok).toBe(false);
+		expect(emptyResult.status).toBe('no_data');
+		expect(emptyResult.rawRows).toBe(0);
+		expect(emptyResult.acceptedRows).toBe(0);
+
+		const headerOnlyResult = agg.ingestCsv(`${SAMPLE_HEADER}\n`);
+		expect(headerOnlyResult.ok).toBe(false);
+		expect(headerOnlyResult.status).toBe('no_data');
+		expect(headerOnlyResult.rawRows).toBe(0);
+		expect(headerOnlyResult.acceptedRows).toBe(0);
+		expect(agg.assertAccountingIdentity()).toBe(true);
+	});
+
 	it('rejects completely malformed CSV missing required columns', () => {
 		const agg = new WorldGridAggregator(windowRange);
 		const badCsv = 'some,other,headers\n1,2,3';
 		const result = agg.ingestCsv(badCsv);
 		expect(result.ok).toBe(false);
+		expect(result.status).toBe('malformed');
 		expect(result.error).toContain('Missing required columns');
 	});
 });
 
-describe('firmsGlobal - Snapshot KV Persistence & LKG Fallback', () => {
-	it('saves and reads snapshot and falls back to last-known-good when snapshot missing', async () => {
+describe('firmsGlobal - Snapshot KV Persistence, Split Meta/Cells & Status', () => {
+	it('saves and reads split meta/cells and falls back to LKG or marks stale past 2x cadence', async () => {
 		const { kv } = memoryKv();
 		const now = new Date('2026-10-13T12:00:00Z');
 		const snapshot: FirmsGlobalSnapshot = {
@@ -236,28 +259,81 @@ describe('firmsGlobal - Snapshot KV Persistence & LKG Fallback', () => {
 
 		expect(isValidSnapshot(snapshot)).toBe(true);
 
-		// Save to KV
+		// Save to KV (writes both legacy snapshot and split meta/cells + LKG)
 		await saveGlobalFirmsSnapshot(kv, snapshot);
 
-		// Read active snapshot
-		const res1 = await loadGlobalFirmsSnapshot(kv, '24h');
+		// Read active split meta + cells within cadence window
+		const split1 = await loadGlobalFirmsMeta(kv, '24h', { now: new Date('2026-10-13T13:00:00Z') });
+		expect(split1).not.toBeNull();
+		expect(split1!.isLkg).toBe(false);
+		expect(split1!.status).toBe('ok');
+		expect(split1!.meta.totalDetections).toBe(45);
+		expect(split1!.meta.cellCount).toBe(1);
+		expect(JSON.parse(split1!.cellsJson)).toHaveLength(1);
+
+		// Read active split meta + cells past 2x cadence (6h) -> marked stale even before KV expiry
+		const pastStale = new Date(now.getTime() + FIRMS_GLOBAL_STALE_AFTER_MS + 60_000);
+		const splitStale = await loadGlobalFirmsMeta(kv, '24h', { now: pastStale });
+		expect(splitStale).not.toBeNull();
+		expect(splitStale!.isLkg).toBe(false);
+		expect(splitStale!.status).toBe('stale');
+
+		// Simulate primary split keys expiry or deletion (only LKG remains)
+		await kv.delete('firms:global:meta:v2:24h');
+		await kv.delete('firms:global:cells:v2:24h');
+
+		const splitLkg = await loadGlobalFirmsMeta(kv, '24h', { now: new Date('2026-10-13T13:00:00Z') });
+		expect(splitLkg).not.toBeNull();
+		expect(splitLkg!.isLkg).toBe(true);
+		expect(splitLkg!.status).toBe('stale');
+		expect(splitLkg!.meta.totalDetections).toBe(45);
+
+		// Also verify loadGlobalFirmsSnapshot compatibility
+		const res1 = await loadGlobalFirmsSnapshot(kv, '24h', { now: new Date('2026-10-13T13:00:00Z') });
 		expect(res1).not.toBeNull();
 		expect(res1!.isLkg).toBe(false);
 		expect(res1!.status).toBe('ok');
-		expect(res1!.snapshot.totalDetections).toBe(45);
 
-		// Simulate primary snapshot expiry or deletion (only LKG remains)
 		await kv.delete('firms:global:snapshot:v2:24h');
-
-		const res2 = await loadGlobalFirmsSnapshot(kv, '24h');
+		const res2 = await loadGlobalFirmsSnapshot(kv, '24h', { now: new Date('2026-10-13T13:00:00Z') });
 		expect(res2).not.toBeNull();
 		expect(res2!.isLkg).toBe(true);
 		expect(res2!.status).toBe('stale');
-		expect(res2!.snapshot.totalDetections).toBe(45);
 
 		// Unsaved window returns null
-		const res3 = await loadGlobalFirmsSnapshot(kv, '7d');
-		expect(res3).toBeNull();
+		expect(await loadGlobalFirmsMeta(kv, '7d')).toBeNull();
+		expect(await loadGlobalFirmsSnapshot(kv, '7d')).toBeNull();
+	});
+
+	it('reports snapshot status partial when one sensor has no_data and others are ok', async () => {
+		const { kv } = memoryKv();
+		const now = new Date('2026-10-13T12:00:00Z');
+		const partialSnapshot: FirmsGlobalSnapshot = {
+			version: 2,
+			window: '24h',
+			windowRange: calculateWindowRange('24h', now),
+			generatedAt: now.toISOString(),
+			sensors: {
+				VIIRS_SNPP_NRT: { status: 'no_data', rawRows: 0, acceptedRows: 0, errorReason: 'Empty response' },
+				VIIRS_NOAA20_NRT: { status: 'ok', rawRows: 10, acceptedRows: 10 },
+				VIIRS_NOAA21_NRT: { status: 'ok', rawRows: 15, acceptedRows: 15 },
+			},
+			accounting: {
+				rawRows: 25,
+				malformedRows: 0,
+				outOfWindowRows: 0,
+				duplicateRows: 0,
+				acceptedDetections: 25,
+			},
+			totalDetections: 25,
+			cells: [],
+		};
+
+		await saveGlobalFirmsSnapshotSplit(kv, partialSnapshot);
+		const loaded = await loadGlobalFirmsMeta(kv, '24h', { now: new Date('2026-10-13T13:00:00Z') });
+		expect(loaded).not.toBeNull();
+		expect(loaded!.status).toBe('partial');
+		expect(loaded!.meta.sensors.VIIRS_SNPP_NRT.status).toBe('no_data');
 	});
 });
 
@@ -265,10 +341,11 @@ describe('firmsGlobal - Ingestion workflow with mocked fetch', () => {
 	it('ingests world data across 3 sensors and builds aggregated snapshot', async () => {
 		const now = new Date('2026-10-13T12:00:00Z');
 
-		const mockCsv = (sat: string) => [
-			SAMPLE_HEADER,
-			`-1.2,36.8,330.0,0.4,0.4,2026-10-13,0600,${sat},VIIRS,high,2.0NRT,290.0,25.0,D`,
-		].join('\n');
+		const mockCsv = (sat: string) =>
+			[
+				SAMPLE_HEADER,
+				`-1.2,36.8,330.0,0.4,0.4,2026-10-13,0600,${sat},VIIRS,high,2.0NRT,290.0,25.0,D`,
+			].join('\n');
 
 		const fetchImpl = async (url: string) => {
 			if (url.includes('VIIRS_SNPP_NRT')) return csvResponse(mockCsv('NPP'));
@@ -283,8 +360,33 @@ describe('firmsGlobal - Ingestion workflow with mocked fetch', () => {
 		expect(snapshot.cells).toHaveLength(1);
 		expect(snapshot.cells[0].detectionCount).toBe(3);
 		expect(snapshot.cells[0].satelliteCounts).toEqual({ NPP: 1, N20: 1, N21: 1 });
-		expect(snapshot.sensors.VIIRS_SNPP_NRT.status).toBe('ok');
+		expect(snapshot.sensors.VIIRS_SNPP_NRT).toMatchObject({ status: 'ok', rawRows: 1, acceptedRows: 1 });
+		expect(snapshot.sensors.VIIRS_NOAA20_NRT).toMatchObject({ status: 'ok', rawRows: 1, acceptedRows: 1 });
+		expect(snapshot.sensors.VIIRS_NOAA21_NRT).toMatchObject({ status: 'ok', rawRows: 1, acceptedRows: 1 });
+		expect(computeSnapshotStatus(snapshot, { now })).toBe('ok');
+	});
+
+	it('marks lagging sensor with empty body as no_data and derives snapshot status partial', async () => {
+		const now = new Date('2026-10-13T12:00:00Z');
+		const mockCsv = (sat: string) =>
+			[
+				SAMPLE_HEADER,
+				`-1.2,36.8,330.0,0.4,0.4,2026-10-13,0600,${sat},VIIRS,high,2.0NRT,290.0,25.0,D`,
+			].join('\n');
+
+		const fetchImpl = async (url: string) => {
+			// S-NPP returns empty body due to upstream availability lag
+			if (url.includes('VIIRS_SNPP_NRT')) return csvResponse('');
+			if (url.includes('VIIRS_NOAA20_NRT')) return csvResponse(mockCsv('N20'));
+			if (url.includes('VIIRS_NOAA21_NRT')) return csvResponse(mockCsv('N21'));
+			return new Response('Not found', { status: 404 });
+		};
+
+		const snapshot = await ingestGlobalFirms('test-key', '24h', { now, fetchImpl });
+		expect(snapshot.sensors.VIIRS_SNPP_NRT.status).toBe('no_data');
 		expect(snapshot.sensors.VIIRS_NOAA20_NRT.status).toBe('ok');
 		expect(snapshot.sensors.VIIRS_NOAA21_NRT.status).toBe('ok');
+		expect(snapshot.totalDetections).toBe(2);
+		expect(computeSnapshotStatus(snapshot, { now })).toBe('partial');
 	});
 });

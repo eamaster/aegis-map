@@ -16,15 +16,13 @@ import {
 	DISASTERS_CACHE_KEY,
 	DISASTERS_CACHE_TTL_SECONDS,
 	DISASTERS_PARTIAL_CACHE_TTL_SECONDS,
-	FIRMS_GLOBAL_LOCK_PREFIX,
-	FIRMS_GLOBAL_LOCK_TTL_SECONDS,
+	DISASTERS_V2_EDGE_CACHE_TTL_SECONDS,
 	GlobalFirmsProduct,
 	INVALID_VOLCANO_MODE_ERROR,
 	INVALID_WINDOW_ERROR,
 	isObservationWindow,
 	isVolcanoMode,
 	ObservationWindow,
-	OBSERVATION_WINDOWS,
 	reflectCorsOrigin,
 	resolveAllowedOrigins,
 	VolcanoMode,
@@ -51,11 +49,9 @@ import {
 import {
 	buildFallbackFirmsReport,
 	FirmsReportStatus,
-	ingestGlobalFirms,
-	isSnapshotUsable,
-	loadGlobalFirmsSnapshot,
-	saveGlobalFirmsSnapshot,
+	loadGlobalFirmsMeta,
 	SensorCoverageReport,
+	WindowRange,
 } from './firmsGlobal';
 import { loadMonitoredTles, serializeTles, TLE_SCHEDULED_REFRESH_AFTER_MS } from './satellites';
 
@@ -205,9 +201,18 @@ app.get('/api/disasters', async (c) => {
 	}
 });
 
+export function buildDisastersV2EdgeCacheKey(window: ObservationWindow, volcanoMode: VolcanoMode): Request {
+	return new Request(`https://cache.aegis-map.internal/api/v2/disasters?window=${window}&volcanoMode=${volcanoMode}`, {
+		method: 'GET',
+	});
+}
+
 // Route 1.5: GET /api/v2/disasters
 // Rich disaster catalog with strict window partitioning, separate satellite thermal cells,
 // and volcano context mode.
+// Reads split FIRMS `meta` (parsed) and `cells` (raw JSON string) from KV without
+// parsing the multi-MB cells array on the Worker, and caches the assembled response
+// in the Cloudflare Cache API (~5 min).
 app.get('/api/v2/disasters', async (c) => {
 	const rawWindow = c.req.query('window') ?? DEFAULT_OBSERVATION_WINDOW;
 	if (!isObservationWindow(rawWindow)) {
@@ -221,13 +226,42 @@ app.get('/api/v2/disasters', async (c) => {
 	}
 	const volcanoMode = rawVolcanoMode;
 
-	// 1. Load FIRMS global snapshot from KV (zero upstream calls during public GET unless missing snapshot triggers warm-up)
-	const firmsResult = await loadGlobalFirmsSnapshot(c.env.AEGIS_CACHE, window);
+	// 0. Check Cloudflare Edge Cache API first
+	const edgeCache = typeof caches !== 'undefined' ? caches.default : undefined;
+	const edgeCacheKey = buildDisastersV2EdgeCacheKey(window, volcanoMode);
+	if (edgeCache) {
+		try {
+			const cachedRes = await edgeCache.match(edgeCacheKey);
+			if (cachedRes) {
+				const cachedHeaders: Record<string, string> = {
+					'Content-Type': cachedRes.headers.get('Content-Type') ?? 'application/json; charset=utf-8',
+				};
+				for (const h of [
+					'X-Disaster-Sources',
+					'X-Disaster-Partial',
+					'X-Disaster-Fetched-At',
+					'X-FIRMS-Status',
+					'X-FIRMS-Generated-At',
+				]) {
+					const val = cachedRes.headers.get(h);
+					if (val !== null) cachedHeaders[h] = val;
+				}
+				return c.newResponse(cachedRes.body, 200, cachedHeaders);
+			}
+		} catch (cacheErr) {
+			console.warn('Edge cache read error for v2 disasters:', cacheErr instanceof Error ? cacheErr.name : 'Error');
+		}
+	}
+
+	// 1. Load split FIRMS global metadata + raw cells JSON from KV (zero upstream calls, zero multi-MB JSON.parse)
+	const firmsResult = await loadGlobalFirmsMeta(c.env.AEGIS_CACHE, window);
 
 	let firmsReport: {
 		status: FirmsReportStatus;
 		generatedAt: string;
 		isLkgFallback?: boolean;
+		/** Window the snapshot was ingested against (may lag the response windowRange). */
+		windowRange?: WindowRange;
 		sensors: Record<GlobalFirmsProduct, SensorCoverageReport>;
 		accounting: {
 			rawRows: number;
@@ -241,50 +275,14 @@ app.get('/api/v2/disasters', async (c) => {
 	if (firmsResult) {
 		firmsReport = {
 			status: firmsResult.status,
-			generatedAt: firmsResult.snapshot.generatedAt,
+			generatedAt: firmsResult.meta.generatedAt,
 			isLkgFallback: firmsResult.isLkg,
-			sensors: firmsResult.snapshot.sensors,
-			accounting: firmsResult.snapshot.accounting,
+			windowRange: firmsResult.meta.windowRange,
+			sensors: firmsResult.meta.sensors,
+			accounting: firmsResult.meta.accounting,
 		};
 	} else {
-		// Missing snapshot (and no LKG available).
-		const mapKey = c.env.FIRMS_MAP_KEY;
-		const hasValidKey = !!mapKey && mapKey !== 'YOUR_FIRMS_MAP_KEY_HERE';
-
-		if (c.env.AEGIS_CACHE && hasValidKey) {
-			const lockKey = `${FIRMS_GLOBAL_LOCK_PREFIX}:${window}`;
-			let isLocked = false;
-			try {
-				isLocked = !!(await c.env.AEGIS_CACHE.get(lockKey));
-			} catch (err) {
-				console.warn('Cache read error for FIRMS warm-up lock:', err instanceof Error ? err.name : 'Error');
-			}
-
-			if (!isLocked) {
-				try {
-					await c.env.AEGIS_CACHE.put(lockKey, new Date().toISOString(), {
-						expirationTtl: FIRMS_GLOBAL_LOCK_TTL_SECONDS,
-					});
-				} catch (err) {
-					console.warn('Cache write error for FIRMS warm-up lock:', err instanceof Error ? err.name : 'Error');
-				}
-
-				let waitUntil: ((promise: Promise<unknown>) => void) | undefined;
-				try {
-					waitUntil = c.executionCtx.waitUntil.bind(c.executionCtx);
-				} catch {
-					waitUntil = undefined;
-				}
-
-				if (waitUntil) {
-					waitUntil(refreshFirmsScheduled(c.env, { windows: [window] }));
-				}
-			}
-
-			firmsReport = buildFallbackFirmsReport('warming');
-		} else {
-			firmsReport = buildFallbackFirmsReport('unavailable');
-		}
+		firmsReport = buildFallbackFirmsReport('unavailable');
 	}
 
 	// 2. Load EONET + USGS disasters (cached in KV for 10 min)
@@ -322,22 +320,27 @@ app.get('/api/v2/disasters', async (c) => {
 		}
 	}
 
-	const fireCells = firmsResult ? firmsResult.snapshot.cells : [];
+	// 3. Splice raw pre-filtered FIRMS cells JSON string directly into the response body
+	const windowRange = disasterResult.windowRange;
+	const cellsJson = firmsResult ? firmsResult.cellsJson : '[]';
+	const fireDetections = firmsResult ? firmsResult.meta.totalDetections : 0;
+	const fireCellCount = firmsResult ? firmsResult.meta.cellCount : 0;
 	const fetchedAt = new Date().toISOString();
 
-	const responsePayload = {
+	const prefix = JSON.stringify({
 		version: 2 as const,
 		window,
-		windowRange: disasterResult.windowRange,
+		windowRange,
 		summary: {
 			namedFires: disasterResult.wildfires.length,
-			fireDetections: firmsResult ? firmsResult.snapshot.totalDetections : 0,
-			fireCells: fireCells.length,
+			fireDetections,
+			fireCells: fireCellCount,
 			earthquakes: disasterResult.earthquakes.length,
 			volcanoes: disasterResult.volcanoes.length,
 		},
 		wildfires: disasterResult.wildfires,
-		fireCells,
+	});
+	const suffix = JSON.stringify({
 		earthquakes: disasterResult.earthquakes,
 		volcanoes: disasterResult.volcanoes,
 		sources: {
@@ -346,15 +349,41 @@ app.get('/api/v2/disasters', async (c) => {
 			firms: firmsReport,
 		},
 		fetchedAt,
-	};
+	});
+	const responseBody = `${prefix.slice(0, -1)},"fireCells":${cellsJson},${suffix.slice(1)}`;
 
 	const headers: Record<string, string> = {
+		'Content-Type': 'application/json; charset=utf-8',
 		...disasterHeaders({ sources: disasterResult.sources, partial: disasterResult.partial, fetchedAt }),
 		'X-FIRMS-Status': firmsReport.status,
 		'X-FIRMS-Generated-At': firmsReport.generatedAt,
 	};
 
-	return c.json(responsePayload, 200, headers);
+	if (edgeCache && firmsResult && !disasterResult.partial) {
+		const cacheResponse = new Response(responseBody, {
+			status: 200,
+			headers: {
+				...headers,
+				'Cache-Control': `public, max-age=${DISASTERS_V2_EDGE_CACHE_TTL_SECONDS}`,
+			},
+		});
+		let waitUntil: ((promise: Promise<unknown>) => void) | undefined;
+		try {
+			waitUntil = c.executionCtx.waitUntil.bind(c.executionCtx);
+		} catch {
+			waitUntil = undefined;
+		}
+		const putPromise = edgeCache.put(edgeCacheKey, cacheResponse).catch((err) => {
+			console.warn('Edge cache write error for v2 disasters:', err instanceof Error ? err.name : 'Error');
+		});
+		if (waitUntil) {
+			waitUntil(putPromise);
+		} else {
+			await putPromise;
+		}
+	}
+
+	return c.newResponse(responseBody, 200, headers);
 });
 
 // Route 2: GET /api/tles
@@ -498,58 +527,9 @@ export async function refreshTlesScheduled(env: Pick<Bindings, 'AEGIS_CACHE'>): 
 	);
 }
 
-/**
- * Cron Trigger: refresh worldwide FIRMS VIIRS detections across configured sensors.
- * Fetches and aggregates into deterministic spatial cells for 24h and 7d rolling windows,
- * writing both live snapshot and last-known-good backup into KV storage.
- */
-export async function refreshFirmsScheduled(
-	env: Pick<Bindings, 'AEGIS_CACHE' | 'FIRMS_MAP_KEY'>,
-	options?: {
-		now?: Date;
-		windows?: ObservationWindow[];
-		fetchImpl?: (input: string, init?: RequestInit) => Promise<Response>;
-	},
-): Promise<void> {
-	if (!env.AEGIS_CACHE) {
-		console.warn('Scheduled FIRMS refresh skipped: AEGIS_CACHE not bound');
-		return;
-	}
-	const mapKey = env.FIRMS_MAP_KEY;
-	if (!mapKey || mapKey === 'YOUR_FIRMS_MAP_KEY_HERE') {
-		console.warn('Scheduled FIRMS refresh skipped: FIRMS_MAP_KEY not configured');
-		return;
-	}
-
-	const targetWindows = options?.windows ?? OBSERVATION_WINDOWS;
-	for (const window of targetWindows) {
-		try {
-			console.log(`Starting scheduled global FIRMS refresh for window: ${window}`);
-			const snapshot = await ingestGlobalFirms(mapKey, window, options);
-			if (!isSnapshotUsable(snapshot)) {
-				console.warn(
-					`Scheduled FIRMS refresh for ${window} produced unusable snapshot (all sensors failed). Not caching.`,
-				);
-				continue;
-			}
-			await saveGlobalFirmsSnapshot(env.AEGIS_CACHE, snapshot);
-			console.log(
-				`Global FIRMS refresh completed for ${window}: ${snapshot.totalDetections} detections across ${snapshot.cells.length} cells (raw=${snapshot.accounting.rawRows}, rejected=${snapshot.accounting.malformedRows + snapshot.accounting.outOfWindowRows}, dup=${snapshot.accounting.duplicateRows})`,
-			);
-		} catch (err) {
-			console.error(`Scheduled FIRMS refresh failed for window ${window}:`, err instanceof Error ? err.name : 'Error');
-		}
-	}
-}
-
 export default {
 	fetch: app.fetch,
 	async scheduled(_controller: ScheduledController, env: Bindings, ctx: ExecutionContext) {
-		ctx.waitUntil(
-			Promise.all([
-				refreshTlesScheduled(env),
-				refreshFirmsScheduled(env),
-			]),
-		);
+		ctx.waitUntil(refreshTlesScheduled(env));
 	},
 } satisfies ExportedHandler<Bindings>;

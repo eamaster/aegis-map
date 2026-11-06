@@ -27,6 +27,64 @@ export interface LoadDisastersResult {
     isV2: boolean;
     firmsStatus?: 'ok' | 'stale' | 'partial' | 'unavailable' | 'warming';
     firmsGeneratedAt?: string;
+    legacyNotice?: string;
+}
+
+let hasWarnedV2Fallback = false;
+
+/** Reset the one-time v2 fallback warning flag (used in unit tests). */
+export function resetV2FallbackWarning(): void {
+    hasWarnedV2Fallback = false;
+}
+
+function warnV2FallbackOnce(reason: string): void {
+    if (hasWarnedV2Fallback) return;
+    hasWarnedV2Fallback = true;
+    console.warn(`[AegisMap] /api/v2/disasters unavailable (${reason}); falling back to legacy /api/disasters.`);
+}
+
+/**
+ * Filter legacy `/api/disasters` records by the selected observation window and volcano mode.
+ * Note: Legacy `/api/disasters` only fetches the USGS 24h M2.5+ feed, so `7d` in legacy mode
+ * filters wildfires/volcanoes to 7 days while earthquakes remain limited to ~24h.
+ */
+export function filterLegacyDisastersByWindow(
+    records: Disaster[],
+    window: ObservationWindow,
+    volcanoMode: VolcanoMode = DEFAULT_VOLCANO_MODE,
+    now: Date = new Date(),
+): { wildfires: Disaster[]; volcanoes: Disaster[]; earthquakes: Disaster[]; legacyNotice: string } {
+    const windowHours = window === '7d' ? 168 : 24;
+    const endMs = now.getTime();
+    const startMs = endMs - windowHours * 3_600_000;
+
+    const isInWindow = (isoDate: string): boolean => {
+        const ms = Date.parse(isoDate);
+        return !Number.isNaN(ms) && ms >= startMs && ms < endMs;
+    };
+
+    const wildfires = records.filter((d) => d.type === 'fire' && isInWindow(d.date));
+    const earthquakes = records.filter((d) => d.type === 'earthquake' && isInWindow(d.date));
+    const volcanoes: Disaster[] = [];
+
+    for (const d of records) {
+        if (d.type !== 'volcano') continue;
+        const inWin = isInWindow(d.date);
+        if (volcanoMode === 'strict') {
+            if (inWin) {
+                volcanoes.push({ ...d, isHistoricalContext: false });
+            }
+        } else {
+            volcanoes.push({ ...d, isHistoricalContext: !inWin });
+        }
+    }
+
+    const legacyNotice =
+        window === '7d'
+            ? 'Legacy fallback (7d): earthquakes limited to ~24h feed; satellite hotspots unavailable'
+            : 'Legacy fallback (24h): satellite hotspots unavailable';
+
+    return { wildfires, volcanoes, earthquakes, legacyNotice };
 }
 
 export function isV2Response(data: unknown): data is DisastersV2Response {
@@ -79,7 +137,7 @@ export async function fetchDisastersData(
             if (isV2Response(data)) {
                 const headerStatus = parseDisasterSourceHeaders(response.headers);
                 const firmsStatus = data.sources.firms.status;
-                const status = headerStatus ?? {
+                const status: DisasterSourceStatus = headerStatus ?? {
                     eonet: data.sources.eonet.status,
                     usgs: data.sources.usgs.status,
                     firms: firmsStatus,
@@ -91,6 +149,8 @@ export async function fetchDisastersData(
                 if (!status.firms) {
                     status.firms = firmsStatus;
                 }
+                status.firmsGeneratedAt = data.sources.firms.generatedAt;
+                status.firmsSensors = data.sources.firms.sensors;
 
                 const fetchedAt = new Date(data.fetchedAt);
                 return {
@@ -107,9 +167,12 @@ export async function fetchDisastersData(
                     firmsGeneratedAt: data.sources.firms.generatedAt,
                 };
             }
+            warnV2FallbackOnce('invalid v2 payload');
+        } else {
+            warnV2FallbackOnce(`HTTP ${response.status}`);
         }
-    } catch {
-        // Fall back to legacy /api/disasters
+    } catch (err) {
+        warnV2FallbackOnce(err instanceof Error ? err.message : 'network error');
     }
 
     const legacyUrl = apiUrl('/api/disasters');
@@ -123,12 +186,16 @@ export async function fetchDisastersData(
     }
 
     const legacyList = legacyData as Disaster[];
-    const wildfires = legacyList.filter((d) => d.type === 'fire');
-    const volcanoes = legacyList.filter((d) => d.type === 'volcano');
-    const earthquakes = legacyList.filter((d) => d.type === 'earthquake');
     const status = parseDisasterSourceHeaders(legacyResponse.headers);
     const fetchedAtHeader = legacyResponse.headers.get('X-Disaster-Fetched-At');
-    const fetchedAt = fetchedAtHeader ? new Date(fetchedAtHeader) : new Date();
+    const parsedFetchedAt = fetchedAtHeader ? new Date(fetchedAtHeader) : new Date();
+    const fetchedAt = Number.isNaN(parsedFetchedAt.getTime()) ? new Date() : parsedFetchedAt;
+    const { wildfires, volcanoes, earthquakes, legacyNotice } = filterLegacyDisastersByWindow(
+        legacyList,
+        window,
+        volcanoMode,
+        fetchedAt,
+    );
 
     return {
         wildfires,
@@ -137,9 +204,10 @@ export async function fetchDisastersData(
         volcanoes,
         detectionCountTotal: 0,
         sourceStatus: status,
-        fetchedAt: Number.isNaN(fetchedAt.getTime()) ? new Date() : fetchedAt,
+        fetchedAt,
         window,
         isV2: false,
         firmsStatus: 'unavailable',
+        legacyNotice,
     };
 }

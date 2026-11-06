@@ -20,8 +20,8 @@
 	/**
 	 * Scheduled background refreshes:
 	 * - TLE orbital elements (src/satellites.ts)
-	 * - Worldwide FIRMS VIIRS hotspots cached to KV (src/firmsGlobal.ts)
 	 * Every 2 h, offset from the hour.
+	 * (Worldwide FIRMS VIIRS ingestion runs off-Worker via .github/workflows/firms-ingest.yml)
 	 */
 	"triggers": {
 		"crons": ["23 */2 * * *"]

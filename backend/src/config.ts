@@ -5,7 +5,7 @@
  */
 
 /** Public API / health-check version (independent of AI provider). */
-export const APP_VERSION = '1.3.0';
+export const APP_VERSION = '1.4.0';
 
 /**
  * Capabilities reported by the health route. The Pages release gate
@@ -240,6 +240,8 @@ export const DISASTERS_V2_CACHE_PREFIX = 'disasters:v2';
 export const DISASTERS_CACHE_TTL_SECONDS = 600;
 /** Partial results are cached briefly so a recovered source is picked up soon. */
 export const DISASTERS_PARTIAL_CACHE_TTL_SECONDS = 60;
+/** Edge Cache API TTL for assembled GET /api/v2/disasters responses. */
+export const DISASTERS_V2_EDGE_CACHE_TTL_SECONDS = 300;
 
 export function buildDisastersV2CacheKey(
 	window: ObservationWindow,
@@ -250,23 +252,32 @@ export function buildDisastersV2CacheKey(
 }
 
 /**
- * Cache keys, locks, and TTLs for global FIRMS snapshots.
+ * Cache keys, staleness thresholds, and TTLs for global FIRMS snapshots.
  *
- * NASA FIRMS upstream rate bound:
- * - Cache hit: 0 upstream calls for 4 hours (FIRMS_GLOBAL_CACHE_TTL_SECONDS).
- * - Cache miss / warm-up lock: 300 s TTL (FIRMS_GLOBAL_LOCK_TTL_SECONDS) prevents
- *   concurrent public requests from hammering upstream. Max 12 warm-up cycles/hour.
- * - Upper bound: 12 lock cycles/hr * (3 calls for 24h + 6 calls for 7d) = 108 calls/hr
- *   worst case across all windows during complete cache cold-starts.
- * - Scheduled cron: runs every 2 h ("23 *\/2 * * *"), consuming 9 calls per run (108 calls/day).
+ * Worldwide FIRMS ingestion runs off-Worker in a scheduled GitHub Actions job
+ * (`.github/workflows/firms-ingest.yml`, every 3h) via `backend/scripts/ingest-firms.mjs`
+ * to stay well within Cloudflare Workers Free CPU (10 ms) and memory (128 MB) limits:
+ * - Public GET /api/v2/disasters makes 0 upstream FIRMS calls and never parses the
+ *   multi-MB cells array: it parses only the small `meta` key and splices the raw
+ *   pre-filtered `cells` JSON array string directly into the response body.
+ * - Scheduled ingestion: every 3 h ("17 *\/3 * * *"), 8 runs/day × (3 calls for 24h +
+ *   6 calls for 7d) = 72 NASA FIRMS calls/day (limit: 5,000 calls / 10 min) and
+ *   16 bulk KV writes/day (4 keys per window × 2 windows × 8 runs = 64 key writes/day,
+ *   well within the 1,000 writes/day KV free tier).
+ * - Snapshots older than 2× cadence (6 hours) or served from LKG are reported as `stale`.
  */
+export const FIRMS_GLOBAL_META_PREFIX = 'firms:global:meta:v2';
+export const FIRMS_GLOBAL_CELLS_PREFIX = 'firms:global:cells:v2';
+export const FIRMS_GLOBAL_LKG_META_PREFIX = 'firms:global:lkg:meta:v2';
+export const FIRMS_GLOBAL_LKG_CELLS_PREFIX = 'firms:global:lkg:cells:v2';
 export const FIRMS_GLOBAL_CACHE_PREFIX = 'firms:global:snapshot:v2';
 export const FIRMS_GLOBAL_LKG_PREFIX = 'firms:global:lkg:v2';
-export const FIRMS_GLOBAL_LOCK_PREFIX = 'firms:global:lock:v2';
-export const FIRMS_GLOBAL_CACHE_TTL_SECONDS = 14400; // 4 hours
+export const FIRMS_GLOBAL_CACHE_TTL_SECONDS = 21600; // 6 hours (2× 3h ingestion cadence)
 export const FIRMS_GLOBAL_LKG_TTL_SECONDS = 604800; // 7 days
-export const FIRMS_GLOBAL_LOCK_TTL_SECONDS = 300; // 5 minutes warm-up lock
-export const CRON_SCHEDULE_FIRMS = '23 */2 * * *';
-export const FIRMS_GLOBAL_FETCH_TIMEOUT_MS = 240_000; // 240s for worldwide streaming downloads on slow/congested networks
+export const FIRMS_INGEST_CADENCE_HOURS = 3;
+/** Snapshots older than 2× ingestion cadence (6 hours) are marked stale. */
+export const FIRMS_GLOBAL_STALE_AFTER_MS = FIRMS_INGEST_CADENCE_HOURS * 2 * 60 * 60 * 1000;
+export const CRON_SCHEDULE_FIRMS = '17 */3 * * *';
+export const FIRMS_GLOBAL_FETCH_TIMEOUT_MS = 240_000; // 240s for worldwide downloads on slow/congested networks
 
 

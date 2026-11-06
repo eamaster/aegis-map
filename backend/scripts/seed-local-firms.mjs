@@ -1,6 +1,7 @@
 /**
  * Seed realistic worldwide FIRMS VIIRS detections into local KV storage.
  * Used for local E2E testing to simulate post-refresh cache state.
+ * Writes both split `meta` + `cells` keys (and LKG backups) and the full snapshot.
  */
 const now = new Date();
 const start = new Date(now.getTime() - 24 * 3600 * 1000);
@@ -40,7 +41,7 @@ const cells = [
 
 const totalDetections = cells.reduce((sum, c) => sum + c.detectionCount, 0);
 
-const snapshot = {
+const meta = {
 	version: 2,
 	window: '24h',
 	windowRange: {
@@ -51,7 +52,11 @@ const snapshot = {
 	sensors: {
 		VIIRS_SNPP_NRT: { status: 'ok', rawRows: Math.floor(totalDetections * 0.3), acceptedRows: Math.floor(totalDetections * 0.3) },
 		VIIRS_NOAA20_NRT: { status: 'ok', rawRows: Math.floor(totalDetections * 0.5), acceptedRows: Math.floor(totalDetections * 0.5) },
-		VIIRS_NOAA21_NRT: { status: 'ok', rawRows: totalDetections - Math.floor(totalDetections * 0.3) - Math.floor(totalDetections * 0.5), acceptedRows: totalDetections - Math.floor(totalDetections * 0.3) - Math.floor(totalDetections * 0.5) },
+		VIIRS_NOAA21_NRT: {
+			status: 'ok',
+			rawRows: totalDetections - Math.floor(totalDetections * 0.3) - Math.floor(totalDetections * 0.5),
+			acceptedRows: totalDetections - Math.floor(totalDetections * 0.3) - Math.floor(totalDetections * 0.5),
+		},
 	},
 	accounting: {
 		rawRows: totalDetections,
@@ -61,25 +66,31 @@ const snapshot = {
 		acceptedDetections: totalDetections,
 	},
 	totalDetections,
-	cells,
+	cellCount: cells.length,
 };
 
-const jsonStr = JSON.stringify(snapshot);
+const snapshot = { ...meta, cells };
+const metaJson = JSON.stringify(meta);
+const cellsJson = JSON.stringify(cells);
+const snapshotJson = JSON.stringify(snapshot);
 
-// Put into local miniflare KV via explorer API
-const kvUrl = 'http://127.0.0.1:8787/cdn-cgi/local/explorer/api/storage/kv/namespaces/7f6c89c7faa84c288f31941bef51b14c/values/firms:global:snapshot:v2:24h';
-const res = await fetch(kvUrl, { method: 'PUT', body: jsonStr });
-if (!res.ok) {
-	console.error('KV PUT failed:', res.status, await res.text());
-	process.exit(1);
+const kvBase = 'http://127.0.0.1:8787/cdn-cgi/local/explorer/api/storage/kv/namespaces/7f6c89c7faa84c288f31941bef51b14c/values';
+
+const puts = [
+	['firms:global:meta:v2:24h', metaJson],
+	['firms:global:cells:v2:24h', cellsJson],
+	['firms:global:lkg:meta:v2:24h', metaJson],
+	['firms:global:lkg:cells:v2:24h', cellsJson],
+	['firms:global:snapshot:v2:24h', snapshotJson],
+	['firms:global:lkg:v2:24h', snapshotJson],
+];
+
+for (const [key, body] of puts) {
+	const res = await fetch(`${kvBase}/${key}`, { method: 'PUT', body });
+	if (!res.ok) {
+		console.error(`KV PUT failed for ${key}:`, res.status, await res.text());
+		process.exit(1);
+	}
 }
-
-// Clear lock key if present
-const lockUrl = 'http://127.0.0.1:8787/cdn-cgi/local/explorer/api/storage/kv/namespaces/7f6c89c7faa84c288f31941bef51b14c/values/firms:global:lock:v2:24h';
-await fetch(lockUrl, { method: 'DELETE' });
-
-// Also write LKG backup
-const lkgUrl = 'http://127.0.0.1:8787/cdn-cgi/local/explorer/api/storage/kv/namespaces/7f6c89c7faa84c288f31941bef51b14c/values/firms:global:lkg:v2:24h';
-await fetch(lkgUrl, { method: 'PUT', body: jsonStr });
 
 console.log(`Successfully seeded ${cells.length} cells (${totalDetections} detections) into local KV.`);

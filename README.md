@@ -589,11 +589,12 @@ POST /api/analyze
 
 ### Automated CI/CD Pipeline (GitHub Actions)
 
-AegisMap uses an automated, coordinated deployment workflow (`.github/workflows/deploy.yml`) on Node 22:
+AegisMap uses an automated, coordinated deployment workflow (`.github/workflows/deploy.yml`) and a scheduled off-Worker FIRMS ingestion workflow (`.github/workflows/firms-ingest.yml`) on Node 22:
 
-1. **Backend First**: On merge to `main`, runs backend typecheck and Vitest tests, then executes `npx wrangler deploy`.
-2. **Release Contract & Smoke Gate**: Verifies the live Worker reports `firms-global-v2` capability on `GET /` and executes a live smoke check verifying `GET /api/v2/disasters?window=24h` returns HTTP 200.
-3. **Frontend Build & Deploy**: Builds the frontend bundle with Vite and publishes directly to GitHub Pages.
+1. **Backend First**: On merge to `main`, validates required Cloudflare secrets, runs backend typecheck and Vitest tests, and executes `npx wrangler deploy`.
+2. **Release Contract & Smoke Gate**: Verifies the live Worker reports `firms-global-v2` capability on `GET /` and executes live smoke checks verifying both `GET /api/v2/disasters?window=24h` and `GET /api/v2/disasters?window=7d` return HTTP 200 with `version: 2`. If the FIRMS snapshot is not yet seeded (`unavailable`), it automatically dispatches `firms-ingest.yml`.
+3. **Off-Worker Worldwide FIRMS Ingestion (`.github/workflows/firms-ingest.yml`)**: Runs every 3 hours (`17 */3 * * *`) and on `workflow_dispatch`. Executes `node backend/scripts/ingest-firms.mjs` to download worldwide VIIRS CSVs (`VIIRS_SNPP_NRT`, `VIIRS_NOAA20_NRT`, `VIIRS_NOAA21_NRT`), aggregate detections into `0.5° × 0.5°` spatial cells for `24h` and `7d`, verify accounting invariants, and write split `meta` + raw `cells` keys to Cloudflare KV. Running ingestion off-Worker avoids Cloudflare Workers Free tier CPU (10 ms), memory (128 MB), and `waitUntil` (30 s) limits; the Worker splices pre-serialized `cells` JSON directly and caches the response in the Cloudflare Edge Cache API (`caches.default`, 5 min).
+4. **Frontend Build & Deploy**: Builds the frontend bundle with Vite and publishes directly to GitHub Pages.
 
 #### Required GitHub Repository Secrets
 
@@ -601,16 +602,19 @@ Configure the following under **GitHub Repo → Settings → Secrets and variabl
 
 | Secret | Description | Where It's Used |
 |--------|-------------|-----------------|
-| `CLOUDFLARE_API_TOKEN` | Cloudflare API token with `Workers:Edit` permissions | `deploy-backend` job |
-| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare Account ID | `deploy-backend` job |
+| `CLOUDFLARE_API_TOKEN` | Cloudflare API token with `Workers Scripts: Edit` + `Workers KV Storage: Edit` permissions | `deploy-backend` & `firms-ingest` jobs |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare Account ID | `deploy-backend` & `firms-ingest` jobs |
+| `FIRMS_MAP_KEY` | NASA FIRMS MAP Key for worldwide VIIRS hotspot ingestion | `firms-ingest` workflow |
 | `VITE_API_BASE_URL` | Live Worker base URL (e.g., `https://aegis-map-backend.smah0085.workers.dev`) | Contract gate & Frontend build |
 | `VITE_MAPBOX_TOKEN` | Public Mapbox GL token for map rendering | Frontend build |
+
+> ⚠️ **Do not set `VITE_FIRMS_API_KEY`**: Any `VITE_*` secret is baked into the public client JavaScript bundle. Keep `FIRMS_MAP_KEY` strictly in GitHub Actions secrets (for `firms-ingest.yml`) and Cloudflare Worker secrets (for `/api/fire-hotspots`).
 
 #### Cloudflare Worker Secrets (Managed via CLI)
 
 | Secret | Description | How to Configure |
 |--------|-------------|------------------|
-| `FIRMS_MAP_KEY` | NASA FIRMS MAP Key for VIIRS hotspot ingestion | `cd backend && npx wrangler secret put FIRMS_MAP_KEY` |
+| `FIRMS_MAP_KEY` | NASA FIRMS MAP Key for regional `/api/fire-hotspots` queries | `cd backend && npx wrangler secret put FIRMS_MAP_KEY` |
 
 > ⚠️ **Security**: Never commit tokens or secrets to git. The automated deploy job uses `wrangler deploy` which uploads Worker code without overwriting existing Cloudflare Worker secrets.
 

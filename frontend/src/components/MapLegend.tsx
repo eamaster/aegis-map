@@ -295,7 +295,9 @@ export default function MapLegend({
                                 lineHeight: '1.3',
                             }}
                         >
-                            Legacy data: time window not applied
+                            {observationWindow === '7d'
+                                ? 'Legacy fallback (7d): earthquakes limited to ~24h feed; satellite hotspots unavailable'
+                                : 'Legacy fallback (24h): satellite hotspots unavailable'}
                         </div>
                     )}
 
@@ -336,17 +338,13 @@ export default function MapLegend({
                                     padding: '2px',
                                     borderRadius: '6px',
                                     border: `1px solid ${ds.surface.border}`,
-                                    opacity: isV2 ? 1 : 0.45,
-                                    pointerEvents: isV2 ? 'auto' : 'none',
                                 }}
-                                aria-disabled={!isV2}
                             >
                                 {OBSERVATION_WINDOWS.map((win) => (
                                     <button
                                         key={win}
                                         type="button"
-                                        disabled={!isV2}
-                                        onClick={() => isV2 && onObservationWindowChange?.(win)}
+                                        onClick={() => onObservationWindowChange?.(win)}
                                         style={{
                                             padding: '2px 8px',
                                             fontSize: '0.625rem',
@@ -355,7 +353,7 @@ export default function MapLegend({
                                             background: observationWindow === win ? ds.colors.accent.blue : 'transparent',
                                             color: observationWindow === win ? '#ffffff' : ds.text.secondary,
                                             border: 'none',
-                                            cursor: isV2 ? 'pointer' : 'not-allowed',
+                                            cursor: 'pointer',
                                             transition: 'all 0.15s ease',
                                         }}
                                     >

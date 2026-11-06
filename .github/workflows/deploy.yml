@@ -4,15 +4,16 @@ on:
   push:
     branches: [ main, master ]
 
-# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
+# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages and dispatching workflows
 permissions:
   contents: read
   pages: write
   id-token: write
+  actions: write
 
 concurrency:
   group: "deploy"
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy-backend:
@@ -39,10 +40,19 @@ jobs:
         run: cd backend && npm test
 
       - name: Deploy Worker to Cloudflare
-        run: cd backend && npx wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [ -z "${CLOUDFLARE_API_TOKEN:-}" ] && missing+=("CLOUDFLARE_API_TOKEN")
+          [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ] && missing+=("CLOUDFLARE_ACCOUNT_ID")
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::warning::Missing GitHub Actions secrets for automated Worker deploy (${missing[*]}). Configure them under Settings -> Secrets and variables -> Actions. Skipping wrangler deploy in CI; build-frontend will verify the live Worker contract and smoke checks."
+            exit 0
+          fi
+          cd backend && npx wrangler deploy
 
   build-frontend:
     name: Build Frontend
@@ -69,10 +79,11 @@ jobs:
       - name: Verify production backend API contract & smoke check
         env:
           VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           if [ -z "${VITE_API_BASE_URL:-}" ]; then
-            echo "VITE_API_BASE_URL secret is required"
+            echo "::error::VITE_API_BASE_URL secret is required"
             exit 1
           fi
           BASE="${VITE_API_BASE_URL%/}"
@@ -92,14 +103,38 @@ jobs:
             console.log("Backend contract gate passed:", v, caps.join(", "));
           ' "$BODY"
 
-          echo "Running smoke check: GET ${BASE}/api/v2/disasters?window=24h"
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "${BASE}/api/v2/disasters?window=24h")
-          echo "Status: $STATUS"
-          if [ "$STATUS" != "200" ]; then
-            echo "Smoke check failed: expected 200, got $STATUS"
-            exit 1
+          NEEDS_INGEST=0
+          for WIN in 24h 7d; do
+            echo "Running smoke check: GET ${BASE}/api/v2/disasters?window=${WIN}"
+            TMP_BODY=$(mktemp)
+            STATUS=$(curl -s -o "$TMP_BODY" -w "%{http_code}" --max-time 30 "${BASE}/api/v2/disasters?window=${WIN}")
+            echo "Status (${WIN}): $STATUS"
+            if [ "$STATUS" != "200" ]; then
+              echo "::error::Smoke check failed for window=${WIN}: expected 200, got $STATUS"
+              rm -f "$TMP_BODY"
+              exit 1
+            fi
+            FIRMS_STATUS=$(node -e '
+              const fs = require("node:fs");
+              const data = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+              if (data.version !== 2 || data.window !== process.argv[2] || !Array.isArray(data.fireCells)) {
+                console.error("Invalid v2 payload shape for window", process.argv[2]);
+                process.exit(1);
+              }
+              process.stdout.write(String(data.sources?.firms?.status || "unknown"));
+            ' "$TMP_BODY" "$WIN")
+            rm -f "$TMP_BODY"
+            echo "Verified v2 response for window=${WIN} (firms.status=${FIRMS_STATUS})"
+            if [ "$FIRMS_STATUS" = "unavailable" ]; then
+              NEEDS_INGEST=1
+            fi
+          done
+          echo "Smoke checks passed!"
+
+          if [ "$NEEDS_INGEST" = "1" ]; then
+            echo "No FIRMS snapshot present for at least one window; triggering firms-ingest.yml..."
+            gh workflow run firms-ingest.yml --repo "${GITHUB_REPOSITORY}" || echo "::warning::Could not trigger firms-ingest.yml automatically"
           fi
-          echo "Smoke check passed!"
 
       - name: Build frontend
         env:

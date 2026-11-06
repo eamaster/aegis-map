@@ -6,7 +6,31 @@ function readState(value: string | undefined): DisasterSourceState | 'unknown' {
     return SOURCE_STATES.includes(value as DisasterSourceState) ? (value as DisasterSourceState) : 'unknown';
 }
 
-/** Parses X-Disaster-Sources ("eonet=ok;usgs=failed"), X-FIRMS-Status, and X-Disaster-Partial. Returns null when absent. */
+/** Return sensor product names whose status is not 'ok'. */
+export function getLaggingSensors(
+    sensors: DisasterSourceStatus['firmsSensors'],
+): string[] {
+    if (!sensors) return [];
+    return Object.entries(sensors)
+        .filter(([, report]) => report && report.status !== 'ok')
+        .map(([sensor]) => sensor);
+}
+
+/** Format snapshot age relative to `nowMs` (e.g. "7h old", "45m old"), or null if invalid/missing. */
+export function formatSnapshotAge(generatedAt: string | undefined, nowMs: number = Date.now()): string | null {
+    if (!generatedAt) return null;
+    const parsedMs = Date.parse(generatedAt);
+    if (Number.isNaN(parsedMs)) return null;
+    const diffMs = Math.max(0, nowMs - parsedMs);
+    const diffMins = Math.round(diffMs / 60_000);
+    if (diffMins < 60) return `${Math.max(1, diffMins)}m old`;
+    const diffHours = Math.round(diffMins / 60);
+    if (diffHours < 48) return `${diffHours}h old`;
+    const diffDays = Math.round(diffHours / 24);
+    return `${diffDays}d old`;
+}
+
+/** Parses X-Disaster-Sources ("eonet=ok;usgs=failed"), X-FIRMS-Status, X-FIRMS-Generated-At, and X-Disaster-Partial. Returns null when absent. */
 export function parseDisasterSourceHeaders(headers: Headers): DisasterSourceStatus | null {
     const raw = headers.get('X-Disaster-Sources');
     const firmsRaw = headers.get('X-FIRMS-Status');
@@ -21,12 +45,19 @@ export function parseDisasterSourceHeaders(headers: Headers): DisasterSourceStat
     const eonet = readState(entries.get('eonet'));
     const usgs = readState(entries.get('usgs'));
     const firms = firmsRaw ? (firmsRaw as DisasterSourceStatus['firms']) : undefined;
+    const firmsGeneratedAt = headers.get('X-FIRMS-Generated-At') ?? undefined;
     const partial =
         headers.get('X-Disaster-Partial') === 'true' ||
         eonet !== 'ok' ||
         usgs !== 'ok' ||
         (firms !== undefined && firms !== 'ok' && firms !== 'stale');
-    return { eonet, usgs, firms, partial };
+    return {
+        eonet,
+        usgs,
+        firms,
+        ...(firmsGeneratedAt ? { firmsGeneratedAt } : {}),
+        partial,
+    };
 }
 
 /** Human-readable summary of degraded sources, or null when every source is ok. */
@@ -37,15 +68,39 @@ export function describeDisasterSources(status: DisasterSourceStatus | null): st
     if (status.usgs !== 'ok') down.push('USGS (earthquakes)');
     if (status.firms === 'warming') down.push('NASA FIRMS (warming up)');
     else if (status.firms === 'unavailable') down.push('NASA FIRMS (satellite thermal detections)');
+    else if (status.firms === 'partial') {
+        const lagging = getLaggingSensors(status.firmsSensors);
+        down.push(
+            lagging.length > 0
+                ? `NASA FIRMS (${lagging.join(', ')} lagging)`
+                : 'NASA FIRMS (partial sensor coverage)',
+        );
+    }
     if (down.length === 0) return 'Some disaster sources are incomplete.';
     return `Unavailable: ${down.join(', ')}. Counts are incomplete.`;
 }
 
-/** Notice displayed when satellite thermal hotspots are warming up or down. */
-export function getFirmsStatusNotice(status: DisasterSourceStatus | null, isV2: boolean = true): string | null {
+/** Notice displayed when satellite thermal hotspots are degraded, partial, stale, or down. */
+export function getFirmsStatusNotice(
+    status: DisasterSourceStatus | null,
+    isV2: boolean = true,
+    nowMs: number = Date.now(),
+): string | null {
     if (!isV2) return 'Satellite hotspots: unavailable (legacy mode)';
     if (status?.firms === 'warming' || status?.firms === 'unavailable') {
         return 'Satellite hotspots: unavailable (warming up / source down)';
+    }
+    if (status?.firms === 'partial') {
+        const lagging = getLaggingSensors(status.firmsSensors);
+        return lagging.length > 0
+            ? `Satellite hotspots: partial coverage (${lagging.join(', ')} lagging)`
+            : 'Satellite hotspots: partial sensor coverage';
+    }
+    if (status?.firms === 'stale') {
+        const age = formatSnapshotAge(status.firmsGeneratedAt, nowMs);
+        return age
+            ? `Satellite hotspots: stale snapshot (${age})`
+            : 'Satellite hotspots: stale snapshot';
     }
     return null;
 }
@@ -55,12 +110,23 @@ export function formatFireCellsSubtitle(
     cellCount: number | undefined,
     status: DisasterSourceStatus | null,
     isV2: boolean = true,
+    nowMs: number = Date.now(),
 ): string {
     if (!isV2) return 'FIRMS VIIRS (unavailable)';
     if (status?.firms === 'warming') return 'FIRMS VIIRS (warming up...)';
     if (status?.firms === 'unavailable') return 'FIRMS VIIRS (source down)';
-    if (status?.firms === 'ok' || status?.firms === 'stale') {
+    if (status?.firms === 'ok') {
         return `FIRMS VIIRS (${cellCount ?? 0} cells)`;
+    }
+    if (status?.firms === 'partial') {
+        const lagging = getLaggingSensors(status.firmsSensors);
+        const detail = lagging.length > 0 ? `partial · ${lagging.join(', ')} lagging` : 'partial';
+        return `FIRMS VIIRS (${cellCount ?? 0} cells, ${detail})`;
+    }
+    if (status?.firms === 'stale') {
+        const age = formatSnapshotAge(status.firmsGeneratedAt, nowMs);
+        const detail = age ? `stale · ${age}` : 'stale';
+        return `FIRMS VIIRS (${cellCount ?? 0} cells, ${detail})`;
     }
     return 'FIRMS VIIRS (unavailable)';
 }
@@ -88,7 +154,15 @@ export function displayCategoryCount(
         if (!isV2) return 'unavailable';
         if (status?.firms === 'warming') return 'warming up';
         if (status?.firms === 'unavailable') return 'unavailable';
-        if (loadFailed || (status?.firms && status.firms !== 'ok' && status.firms !== 'stale')) return 'unavailable';
+        if (
+            loadFailed ||
+            (status?.firms &&
+                status.firms !== 'ok' &&
+                status.firms !== 'stale' &&
+                status.firms !== 'partial')
+        ) {
+            return 'unavailable';
+        }
         return count.toLocaleString();
     }
     const state = status ? (type === 'earthquake' ? status.usgs : status.eonet) : 'unknown';
