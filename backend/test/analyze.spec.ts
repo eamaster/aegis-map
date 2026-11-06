@@ -767,7 +767,7 @@ describe('health', () => {
 		const response = await SELF.fetch('http://example.com/');
 		expect(response.status).toBe(200);
 		const body = (await response.json()) as { version: string; capabilities: string[] };
-		expect(body.version).toBe('1.3.0');
+		expect(body.version).toBe('1.4.0');
 		expect(body.capabilities).toEqual(['workers-ai-analyze-v1', 'provider-status-v1', 'firms-global-v2']);
 	});
 });

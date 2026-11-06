@@ -1,11 +1,15 @@
 import {
 	AREA_UNIT_TO_ACRES,
 	DEFAULT_DISASTER_SEVERITY,
+	DEFAULT_OBSERVATION_WINDOW,
+	DEFAULT_VOLCANO_MODE,
 	EARTHQUAKE_SEVERITY_MIN_MAGNITUDE,
 	ObservationWindow,
+	OBSERVATION_WINDOWS,
+	VolcanoMode,
 	WILDFIRE_SEVERITY_MIN_ACRES,
 } from './config';
-import { calculateWindowRange, WindowRange } from './firmsGlobal';
+import { calculateWindowRange, isInWindowRange, WindowRange } from './firmsGlobal';
 
 /**
  * Disaster Data Adapters (NASA EONET v3 + USGS Earthquakes)
@@ -314,7 +318,7 @@ export const USGS_URL_WEEK = 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/
 export const USGS_URL = USGS_URL_DAY;
 
 export function usgsUrlForWindow(window: ObservationWindow): string {
-	return window === '7d' ? USGS_URL_WEEK : USGS_URL_DAY;
+	return window === OBSERVATION_WINDOWS[1] ? USGS_URL_WEEK : USGS_URL_DAY;
 }
 
 export function parseEonetPayload(payload: unknown): NormalizeResult {
@@ -418,7 +422,7 @@ export function formatDisasterSourcesHeader(sources: DisasterSources): string {
 
 export interface DisastersV2QueryOptions {
 	window?: ObservationWindow;
-	volcanoMode?: 'context' | 'strict';
+	volcanoMode?: VolcanoMode;
 	now?: Date;
 	fetchImpl?: FetchLike;
 }
@@ -440,8 +444,8 @@ export interface DisastersV2CategorizedResult {
 export async function fetchDisastersV2Categorized(
 	options: DisastersV2QueryOptions = {},
 ): Promise<DisastersV2CategorizedResult> {
-	const window = options.window ?? '24h';
-	const volcanoMode = options.volcanoMode ?? 'context';
+	const window = options.window ?? DEFAULT_OBSERVATION_WINDOW;
+	const volcanoMode = options.volcanoMode ?? DEFAULT_VOLCANO_MODE;
 	const now = options.now ?? new Date();
 	const doFetch: FetchLike = options.fetchImpl ?? ((input, init) => fetch(input, init));
 
@@ -468,11 +472,11 @@ export async function fetchDisastersV2Categorized(
 		seenEonetIds.add(rec.id);
 
 		if (rec.type === 'fire') {
-			if (rec.date >= windowRange.startInclusive && rec.date < windowRange.endExclusive) {
+			if (isInWindowRange(rec.date, windowRange)) {
 				wildfires.push(rec);
 			}
 		} else if (rec.type === 'volcano') {
-			const isInWindow = rec.date >= windowRange.startInclusive && rec.date < windowRange.endExclusive;
+			const isInWindow = isInWindowRange(rec.date, windowRange);
 			if (volcanoMode === 'strict') {
 				if (isInWindow) volcanoes.push(rec);
 			} else {
@@ -489,7 +493,7 @@ export async function fetchDisastersV2Categorized(
 		if (seenUsgsIds.has(rec.id)) continue;
 		seenUsgsIds.add(rec.id);
 
-		if (rec.date >= windowRange.startInclusive && rec.date < windowRange.endExclusive) {
+		if (isInWindowRange(rec.date, windowRange)) {
 			earthquakes.push(rec);
 		}
 	}

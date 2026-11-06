@@ -9,6 +9,7 @@ import 'mapbox-gl/dist/mapbox-gl.css';
 import { debugLog } from '../utils/debug';
 import toast from 'react-hot-toast';
 import type { Disaster, DisasterSourceStatus, FireDetectionCell, ObservationWindow, VolcanoMode } from '../types';
+import { DEFAULT_OBSERVATION_WINDOW, DEFAULT_VOLCANO_MODE } from '../config/disasters';
 import { describeDisasterSources } from '../utils/disasterSources';
 import { cellToDisasterItem, fetchDisastersData } from '../utils/disastersClient';
 import MapLegend from './MapLegend';
@@ -84,9 +85,9 @@ export default function MapBoard({
     onDisasterSelect,
     activeFilters,
     onFilterToggle,
-    observationWindow = '24h',
+    observationWindow = DEFAULT_OBSERVATION_WINDOW,
     onObservationWindowChange,
-    volcanoMode = 'context',
+    volcanoMode = DEFAULT_VOLCANO_MODE,
     onVolcanoModeChange,
 }: MapBoardProps) {
     const mapContainerRef = useRef<HTMLDivElement>(null);
@@ -95,6 +96,7 @@ export default function MapBoard({
     const [disasters, setDisasters] = useState<Disaster[]>([]);
     const [fireCells, setFireCells] = useState<FireDetectionCell[]>([]);
     const [detectionCountTotal, setDetectionCountTotal] = useState<number>(0);
+    const [isV2, setIsV2] = useState<boolean>(true);
     const [loading, setLoading] = useState(Boolean(accessToken));
     const [mapError, setMapError] = useState<string>(
         !accessToken ? 'Mapbox access token is missing! Check .env file.' : ''
@@ -464,6 +466,7 @@ export default function MapBoard({
             debugLog('backend', `Fetching disasters (${observationWindow}, ${volcanoMode})`, 'info');
 
             const result = await fetchDisastersData({ window: observationWindow, volcanoMode });
+            setIsV2(result.isV2);
             setSourceStatus(result.sourceStatus);
             setLoadFailed(false);
 
@@ -855,6 +858,7 @@ export default function MapBoard({
                     onObservationWindowChange={onObservationWindowChange}
                     volcanoMode={volcanoMode}
                     onVolcanoModeChange={onVolcanoModeChange}
+                    isV2={isV2}
                 />
             )}
 

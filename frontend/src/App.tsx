@@ -7,6 +7,7 @@ import Sidebar from './components/Sidebar';
 import DebugPanel from './components/DebugPanel';
 import ThemeToggle from './components/ThemeToggle';
 import type { Disaster, ObservationWindow, VolcanoMode } from './types';
+import { DEFAULT_OBSERVATION_WINDOW, DEFAULT_VOLCANO_MODE } from './config/disasters';
 import { useDesignSystem } from './hooks/useDesignSystem';
 
 // Lazy load rarely-used components
@@ -17,8 +18,8 @@ function App() {
   const [selectedDisaster, setSelectedDisaster] = useState<Disaster | null>(null);
   const [showTutorial, setShowTutorial] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [observationWindow, setObservationWindow] = useState<ObservationWindow>('24h');
-  const [volcanoMode, setVolcanoMode] = useState<VolcanoMode>('context');
+  const [observationWindow, setObservationWindow] = useState<ObservationWindow>(DEFAULT_OBSERVATION_WINDOW);
+  const [volcanoMode, setVolcanoMode] = useState<VolcanoMode>(DEFAULT_VOLCANO_MODE);
 
   // Filter state - all disaster and detection types visible by default
   const [activeFilters, setActiveFilters] = useState<Set<string>>(

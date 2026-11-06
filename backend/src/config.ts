@@ -5,7 +5,7 @@
  */
 
 /** Public API / health-check version (independent of AI provider). */
-export const APP_VERSION = '1.3.0';
+export const APP_VERSION = '1.4.0';
 
 /**
  * Capabilities reported by the health route. The Pages release gate
@@ -200,13 +200,30 @@ export function isGlobalFirmsProduct(value: unknown): value is GlobalFirmsProduc
 	return typeof value === 'string' && (GLOBAL_FIRMS_PRODUCTS as readonly string[]).includes(value);
 }
 
+/** Localized /api/fire-hotspots primary sensor. */
+export const LOCAL_FIRMS_SOURCE: GlobalFirmsProduct = 'VIIRS_SNPP_NRT';
+
 /** Supported rolling observation windows. */
 export const OBSERVATION_WINDOWS = ['24h', '7d'] as const;
 export type ObservationWindow = (typeof OBSERVATION_WINDOWS)[number];
+export const DEFAULT_OBSERVATION_WINDOW: ObservationWindow = '24h';
 
 export function isObservationWindow(value: unknown): value is ObservationWindow {
 	return typeof value === 'string' && (OBSERVATION_WINDOWS as readonly string[]).includes(value);
 }
+
+/** Supported volcano context modes. */
+export const VOLCANO_MODES = ['context', 'strict'] as const;
+export type VolcanoMode = (typeof VOLCANO_MODES)[number];
+export const DEFAULT_VOLCANO_MODE: VolcanoMode = 'context';
+
+export function isVolcanoMode(value: unknown): value is VolcanoMode {
+	return typeof value === 'string' && (VOLCANO_MODES as readonly string[]).includes(value);
+}
+
+/** Derived route validation error messages. */
+export const INVALID_WINDOW_ERROR = `Invalid window parameter. Supported: ${OBSERVATION_WINDOWS.join(', ')}`;
+export const INVALID_VOLCANO_MODE_ERROR = `Invalid volcanoMode parameter. Supported: ${VOLCANO_MODES.join(', ')}`;
 
 /** Deterministic spatial grid cell size in degrees (~55 km at equator). */
 export const FIRMS_GRID_SIZE_DEG = 0.5;
@@ -217,9 +234,50 @@ export const FIRMS_INTENSITY_THRESHOLDS = {
 	medium: { minDetections: 5, minFrp: 20 },
 } as const;
 
-/** Cache keys and TTLs for global FIRMS snapshots. */
+/** Cache keys and TTLs for legacy and v2 disaster feeds. */
+export const DISASTERS_CACHE_KEY = 'disasters:v2';
+export const DISASTERS_V2_CACHE_PREFIX = 'disasters:v2';
+export const DISASTERS_CACHE_TTL_SECONDS = 600;
+/** Partial results are cached briefly so a recovered source is picked up soon. */
+export const DISASTERS_PARTIAL_CACHE_TTL_SECONDS = 60;
+/** Edge Cache API TTL for assembled GET /api/v2/disasters responses. */
+export const DISASTERS_V2_EDGE_CACHE_TTL_SECONDS = 300;
+
+export function buildDisastersV2CacheKey(
+	window: ObservationWindow,
+	volcanoMode: VolcanoMode,
+	prefix = DISASTERS_V2_CACHE_PREFIX,
+): string {
+	return `${prefix}:${window}:${volcanoMode}`;
+}
+
+/**
+ * Cache keys, staleness thresholds, and TTLs for global FIRMS snapshots.
+ *
+ * Worldwide FIRMS ingestion runs off-Worker in a scheduled GitHub Actions job
+ * (`.github/workflows/firms-ingest.yml`, every 3h) via `backend/scripts/ingest-firms.mjs`
+ * to stay well within Cloudflare Workers Free CPU (10 ms) and memory (128 MB) limits:
+ * - Public GET /api/v2/disasters makes 0 upstream FIRMS calls and never parses the
+ *   multi-MB cells array: it parses only the small `meta` key and splices the raw
+ *   pre-filtered `cells` JSON array string directly into the response body.
+ * - Scheduled ingestion: every 3 h ("17 *\/3 * * *"), 8 runs/day × (3 calls for 24h +
+ *   6 calls for 7d) = 72 NASA FIRMS calls/day (limit: 5,000 calls / 10 min) and
+ *   16 bulk KV writes/day (4 keys per window × 2 windows × 8 runs = 64 key writes/day,
+ *   well within the 1,000 writes/day KV free tier).
+ * - Snapshots older than 2× cadence (6 hours) or served from LKG are reported as `stale`.
+ */
+export const FIRMS_GLOBAL_META_PREFIX = 'firms:global:meta:v2';
+export const FIRMS_GLOBAL_CELLS_PREFIX = 'firms:global:cells:v2';
+export const FIRMS_GLOBAL_LKG_META_PREFIX = 'firms:global:lkg:meta:v2';
+export const FIRMS_GLOBAL_LKG_CELLS_PREFIX = 'firms:global:lkg:cells:v2';
 export const FIRMS_GLOBAL_CACHE_PREFIX = 'firms:global:snapshot:v2';
 export const FIRMS_GLOBAL_LKG_PREFIX = 'firms:global:lkg:v2';
-export const FIRMS_GLOBAL_CACHE_TTL_SECONDS = 14400; // 4 hours
+export const FIRMS_GLOBAL_CACHE_TTL_SECONDS = 21600; // 6 hours (2× 3h ingestion cadence)
 export const FIRMS_GLOBAL_LKG_TTL_SECONDS = 604800; // 7 days
+export const FIRMS_INGEST_CADENCE_HOURS = 3;
+/** Snapshots older than 2× ingestion cadence (6 hours) are marked stale. */
+export const FIRMS_GLOBAL_STALE_AFTER_MS = FIRMS_INGEST_CADENCE_HOURS * 2 * 60 * 60 * 1000;
+export const CRON_SCHEDULE_FIRMS = '17 */3 * * *';
+export const FIRMS_GLOBAL_FETCH_TIMEOUT_MS = 240_000; // 240s for worldwide downloads on slow/congested networks
+
 

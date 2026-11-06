@@ -1,9 +1,25 @@
-import { describe, it, expect } from 'vitest';
+import { beforeEach, describe, it, expect } from 'vitest';
 import { SELF } from 'cloudflare:test';
+import {
+	DISASTERS_CACHE_TTL_SECONDS,
+	FIRMS_GLOBAL_STALE_AFTER_MS,
+	GLOBAL_FIRMS_PRODUCTS,
+	INVALID_VOLCANO_MODE_ERROR,
+	INVALID_WINDOW_ERROR,
+	OBSERVATION_WINDOWS,
+	VOLCANO_MODES,
+} from '../src/config';
 import { EONET_QUERIES, USGS_URL } from '../src/disasters';
 import { buildFirmsBboxes, buildFirmsCacheKey, planFirmsWindows } from '../src/firms';
+import {
+	buildFallbackFirmsReport,
+	calculateWindowRange,
+	FirmsGlobalSnapshot,
+	isInWindowRange,
+	serializeGlobalFirmsSnapshotSplit,
+} from '../src/firmsGlobal';
 import { CachedTleRecord, MONITORED_NORAD_IDS, TLE_CACHE_KEY, TLE_LKG_CACHE_KEY, writeTleCache } from '../src/satellites';
-import { refreshFirmsScheduled, refreshTlesScheduled } from '../src/index';
+import { buildDisastersV2EdgeCacheKey, refreshTlesScheduled } from '../src/index';
 import { callWorker, csvResponse, FIRMS_HEADER, makeTle, memoryKv, withFetch } from './helpers';
 
 const ORIGIN = { Origin: 'https://hesam.me' };
@@ -373,6 +389,14 @@ describe('GET /api/disasters', () => {
 });
 
 describe('GET /api/v2/disasters', () => {
+	beforeEach(async () => {
+		for (const w of OBSERVATION_WINDOWS) {
+			for (const m of VOLCANO_MODES) {
+				await caches.default.delete(buildDisastersV2EdgeCacheKey(w, m));
+			}
+		}
+	});
+
 	const json = (data: unknown, status = 200) =>
 		new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
 
@@ -404,58 +428,114 @@ describe('GET /api/v2/disasters', () => {
 		],
 	};
 
-	const sampleSnapshot = {
-		version: 2,
-		window: '24h',
-		windowRange: { startInclusive: '2026-10-12T00:00:00Z', endExclusive: '2026-10-13T00:00:00Z' },
-		generatedAt: '2026-10-13T01:00:00Z',
-		sensors: {
-			VIIRS_SNPP_NRT: { status: 'ok', rawRows: 1, acceptedRows: 1 },
-			VIIRS_NOAA20_NRT: { status: 'ok', rawRows: 1, acceptedRows: 1 },
-			VIIRS_NOAA21_NRT: { status: 'ok', rawRows: 1, acceptedRows: 1 },
-		},
-		accounting: { rawRows: 3, malformedRows: 0, outOfWindowRows: 0, duplicateRows: 0, acceptedDetections: 3 },
-		totalDetections: 3,
-		cells: [
-			{
-				cellId: 'cell:10.25:20.25',
-				lat: 10.25,
-				lng: 20.25,
-				bounds: [20.0, 10.0, 20.5, 10.5],
-				detectionCount: 3,
-				maxFrp: 30,
-				avgFrp: 20,
-				maxBrightTi4: 340,
-				latestAcqTime: '2026-10-13T00:30:00Z',
-				confidenceCounts: { high: 3, nominal: 0, low: 0, unknown: 0 },
-				dayNightCounts: { day: 3, night: 0, unknown: 0 },
-				satelliteCounts: { N20: 3 },
-				intensity: 'medium',
-			},
-		],
-	};
+	const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
 
-	it('rejects invalid window and volcanoMode parameters with 400', async () => {
-		const badWindow = await SELF.fetch('http://example.com/api/v2/disasters?window=30d');
-		expect(badWindow.status).toBe(400);
-
-		const badMode = await SELF.fetch('http://example.com/api/v2/disasters?volcanoMode=unknown');
-		expect(badMode.status).toBe(400);
+	const makeCell = (cellId: string, latestAcqTime: string, detectionCount: number) => ({
+		cellId,
+		lat: 10.25,
+		lng: 20.25,
+		bounds: [20.0, 10.0, 20.5, 10.5] as [number, number, number, number],
+		detectionCount,
+		maxFrp: 30,
+		avgFrp: 20,
+		maxBrightTi4: 340,
+		latestAcqTime,
+		confidenceCounts: { high: detectionCount, nominal: 0, low: 0, unknown: 0 },
+		dayNightCounts: { day: detectionCount, night: 0, unknown: 0 },
+		satelliteCounts: { N20: detectionCount },
+		intensity: 'medium' as const,
 	});
 
-	it('serves v2 response with pre-cached FIRMS cells and categorized disasters', async () => {
-		const kv = memoryKv({
-			initial: {
-				'firms:global:snapshot:v2:24h': JSON.stringify(sampleSnapshot),
+	/** Snapshot generated `ageHours` ago, ingested against its own 24h window. */
+	const makeSnapshot = (
+		ageHours: number,
+		cells: ReturnType<typeof makeCell>[],
+		sensorOverrides?: Partial<FirmsGlobalSnapshot['sensors']>,
+	): FirmsGlobalSnapshot => {
+		const total = cells.reduce((n, c) => n + c.detectionCount, 0);
+		return {
+			version: 2,
+			window: '24h',
+			windowRange: calculateWindowRange('24h', new Date(Date.parse(hoursAgo(ageHours)))),
+			generatedAt: hoursAgo(ageHours),
+			sensors: {
+				VIIRS_SNPP_NRT: { status: 'ok', rawRows: 1, acceptedRows: 1 },
+				VIIRS_NOAA20_NRT: { status: 'ok', rawRows: 1, acceptedRows: 1 },
+				VIIRS_NOAA21_NRT: { status: 'ok', rawRows: 1, acceptedRows: 1 },
+				...sensorOverrides,
 			},
+			accounting: { rawRows: total, malformedRows: 0, outOfWindowRows: 0, duplicateRows: 0, acceptedDetections: total },
+			totalDetections: total,
+			cells,
+		};
+	};
+
+	const splitKvInitial = (snapshot: FirmsGlobalSnapshot, useLkgOnly = false): Record<string, string> => {
+		const { metaJson, cellsJson } = serializeGlobalFirmsSnapshotSplit(snapshot);
+		if (useLkgOnly) {
+			return {
+				[`firms:global:lkg:meta:v2:${snapshot.window}`]: metaJson,
+				[`firms:global:lkg:cells:v2:${snapshot.window}`]: cellsJson,
+			};
+		}
+		return {
+			[`firms:global:meta:v2:${snapshot.window}`]: metaJson,
+			[`firms:global:cells:v2:${snapshot.window}`]: cellsJson,
+		};
+	};
+
+	const sampleSnapshot = makeSnapshot(1, [makeCell('cell:10.25:20.25', hoursAgo(3), 3)]);
+
+	it('rejects invalid window and volcanoMode parameters with 400 and derived messages', async () => {
+		for (const w of OBSERVATION_WINDOWS) {
+			const { result: res } = await withFetch(
+				(url) => (isEonet(url) ? json(mockEonet) : json(mockUsgs)),
+				() => callWorker(`/api/v2/disasters?window=${w}`, { AEGIS_CACHE: memoryKv().kv, FIRMS_MAP_KEY: '' }),
+			);
+			expect(res.status).toBe(200);
+		}
+		const badWindow = await SELF.fetch('http://example.com/api/v2/disasters?window=30d');
+		expect(badWindow.status).toBe(400);
+		expect(await badWindow.json()).toEqual({ error: INVALID_WINDOW_ERROR });
+
+		for (const m of VOLCANO_MODES) {
+			const { result: res } = await withFetch(
+				(url) => (isEonet(url) ? json(mockEonet) : json(mockUsgs)),
+				() => callWorker(`/api/v2/disasters?volcanoMode=${m}`, { AEGIS_CACHE: memoryKv().kv, FIRMS_MAP_KEY: '' }),
+			);
+			expect(res.status).toBe(200);
+		}
+		const badMode = await SELF.fetch('http://example.com/api/v2/disasters?volcanoMode=unknown');
+		expect(badMode.status).toBe(400);
+		expect(await badMode.json()).toEqual({ error: INVALID_VOLCANO_MODE_ERROR });
+	});
+
+	it('includes every configured sensor in fallback FIRMS reports', async () => {
+		const unavailableReport = buildFallbackFirmsReport('unavailable');
+		expect(Object.keys(unavailableReport.sensors).sort()).toEqual([...GLOBAL_FIRMS_PRODUCTS].sort());
+		expect(unavailableReport.status).toBe('unavailable');
+
+		const kv = memoryKv();
+		const { result: res } = await withFetch(
+			(url) => (isEonet(url) ? json(mockEonet) : json(mockUsgs)),
+			() => callWorker('/api/v2/disasters?window=24h', { AEGIS_CACHE: kv.kv, FIRMS_MAP_KEY: '' }),
+		);
+		const body = (await res.json()) as any;
+		expect(Object.keys(body.sources.firms.sensors).sort()).toEqual([...GLOBAL_FIRMS_PRODUCTS].sort());
+	});
+
+	it('serves v2 response with split meta/cells from KV and caches assembled response in Edge Cache API', async () => {
+		const kv = memoryKv({
+			initial: splitKvInitial(sampleSnapshot),
 		});
 
 		const { result: res } = await withFetch(
 			(url) => (isEonet(url) ? json(mockEonet) : json(mockUsgs)),
-			() => callWorker('/api/v2/disasters?window=24h&volcanoMode=context', { AEGIS_CACHE: kv.kv }),
+			() => callWorker('/api/v2/disasters?window=24h&volcanoMode=context', { AEGIS_CACHE: kv.kv }, ORIGIN),
 		);
 
 		expect(res.status).toBe(200);
+		expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://hesam.me');
 		expect(res.headers.get('X-Disaster-Sources')).toBe('eonet=ok;usgs=ok');
 		expect(res.headers.get('X-FIRMS-Status')).toBe('ok');
 
@@ -467,14 +547,32 @@ describe('GET /api/v2/disasters', () => {
 		expect(body.summary.fireCells).toBe(1);
 		expect(body.summary.earthquakes).toBe(1);
 		expect(body.summary.volcanoes).toBe(1);
+		expect(body.sources.firms.windowRange).toEqual(sampleSnapshot.windowRange);
 
 		// EONET wildfire is categorized
 		expect(body.wildfires[0].id).toBe('EONET_W1');
-		// FIRMS cell is present
+		// FIRMS cell is spliced intact
 		expect(body.fireCells[0].cellId).toBe('cell:10.25:20.25');
+		expect(isInWindowRange(body.fireCells[0].latestAcqTime, body.windowRange)).toBe(true);
 		// Context volcano has historical flag set
 		expect(body.volcanoes[0].id).toBe('EONET_V1');
 		expect(body.volcanoes[0].isHistoricalContext).toBe(true);
+
+		// Subsequent request is served from caches.default without reading KV or upstream
+		kv.gets.length = 0;
+		const { result: cachedRes, calls } = await withFetch(
+			() => {
+				throw new Error('should be served from Edge Cache API');
+			},
+			() => callWorker('/api/v2/disasters?window=24h&volcanoMode=context', { AEGIS_CACHE: kv.kv }, ORIGIN),
+		);
+		expect(cachedRes.status).toBe(200);
+		expect(cachedRes.headers.get('Access-Control-Allow-Origin')).toBe('https://hesam.me');
+		expect(cachedRes.headers.get('X-FIRMS-Status')).toBe('ok');
+		expect(calls).toEqual([]);
+		expect(kv.gets).toEqual([]);
+		const cachedBody = (await cachedRes.json()) as any;
+		expect(cachedBody.fireCells[0].cellId).toBe('cell:10.25:20.25');
 	});
 
 	it('filters out historical volcanoes in strict mode', async () => {
@@ -486,54 +584,93 @@ describe('GET /api/v2/disasters', () => {
 
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as any;
-		// Historical volcano is excluded in strict mode
 		expect(body.volcanoes).toHaveLength(0);
 		expect(body.summary.volcanoes).toBe(0);
 	});
 
-	it('returns firms.status=unavailable when no snapshot is in KV without calling FIRMS upstream', async () => {
-		const kv = memoryKv(); // Empty KV
-		const { result: res, calls } = await withFetch(
+	it('reports firms.status=partial when a sensor has status=no_data and serves available cells', async () => {
+		const partialSnapshot = makeSnapshot(1, [makeCell('cell:10.25:20.25', hoursAgo(2), 5)], {
+			VIIRS_SNPP_NRT: { status: 'no_data', rawRows: 0, acceptedRows: 0, errorReason: 'Empty response' },
+		});
+		const kv = memoryKv({ initial: splitKvInitial(partialSnapshot) });
+
+		const { result: res } = await withFetch(
 			(url) => (isEonet(url) ? json(mockEonet) : json(mockUsgs)),
-			() => callWorker('/api/v2/disasters', { AEGIS_CACHE: kv.kv }),
+			() => callWorker('/api/v2/disasters?window=24h', { AEGIS_CACHE: kv.kv }),
 		);
 
 		expect(res.status).toBe(200);
+		expect(res.headers.get('X-FIRMS-Status')).toBe('partial');
 		const body = (await res.json()) as any;
-		expect(body.sources.firms.status).toBe('unavailable');
-		expect(body.fireCells).toEqual([]);
-
-		// No FIRMS calls made!
-		expect(calls.some((c) => c.includes('firms.modaps.eosdis.nasa.gov'))).toBe(false);
-	});
-});
-
-describe('Scheduled cron - refreshFirmsScheduled', () => {
-	it('skips gracefully when FIRMS_MAP_KEY is missing or unconfigured', async () => {
-		const kv = memoryKv();
-		await refreshFirmsScheduled({ AEGIS_CACHE: kv.kv, FIRMS_MAP_KEY: 'YOUR_FIRMS_MAP_KEY_HERE' });
-		expect(kv.puts).toEqual([]);
+		expect(body.sources.firms.status).toBe('partial');
+		expect(body.sources.firms.sensors.VIIRS_SNPP_NRT.status).toBe('no_data');
+		expect(body.fireCells).toHaveLength(1);
+		expect(body.summary.fireDetections).toBe(5);
 	});
 
-	it('runs worldwide ingestion and persists snapshots to KV', async () => {
-		const kv = memoryKv();
-		const fetchImpl = async () =>
-			csvResponse(
-				[
-					FIRMS_HEADER,
-					'-1.2,36.8,330.0,0.4,0.4,2026-10-13,0600,N20,VIIRS,high,2.0NRT,290.0,25.0,D',
-				].join('\n'),
-			);
+	it('reports firms.status=stale when snapshot generatedAt is older than 2x cadence or served from LKG', async () => {
+		const staleHours = FIRMS_GLOBAL_STALE_AFTER_MS / 3_600_000 + 1;
+		const oldSnapshot = makeSnapshot(staleHours, [makeCell('cell:10.25:20.25', hoursAgo(3), 4)]);
+		const kvOld = memoryKv({ initial: splitKvInitial(oldSnapshot) });
 
-		await refreshFirmsScheduled(
-			{ AEGIS_CACHE: kv.kv, FIRMS_MAP_KEY: 'test-cron-key' },
-			{ now: new Date('2026-10-13T12:00:00Z'), windows: ['24h'], fetchImpl },
+		const { result: resOld } = await withFetch(
+			(url) => (isEonet(url) ? json(mockEonet) : json(mockUsgs)),
+			() => callWorker('/api/v2/disasters?window=24h', { AEGIS_CACHE: kvOld.kv }),
+		);
+		expect(resOld.status).toBe(200);
+		expect(resOld.headers.get('X-FIRMS-Status')).toBe('stale');
+		expect(((await resOld.json()) as any).sources.firms.status).toBe('stale');
+
+		await caches.default.delete(buildDisastersV2EdgeCacheKey('24h', 'context'));
+
+		const kvLkg = memoryKv({ initial: splitKvInitial(sampleSnapshot, true) });
+		const { result: resLkg } = await withFetch(
+			(url) => (isEonet(url) ? json(mockEonet) : json(mockUsgs)),
+			() => callWorker('/api/v2/disasters?window=24h', { AEGIS_CACHE: kvLkg.kv }),
+		);
+		expect(resLkg.status).toBe(200);
+		expect(resLkg.headers.get('X-FIRMS-Status')).toBe('stale');
+		const bodyLkg = (await resLkg.json()) as any;
+		expect(bodyLkg.sources.firms.status).toBe('stale');
+		expect(bodyLkg.sources.firms.isLkgFallback).toBe(true);
+		expect(bodyLkg.fireCells).toHaveLength(1);
+	});
+
+	it('returns firms.status=unavailable without triggering on-demand warm-up when snapshot is missing, and serves cells immediately once seeded', async () => {
+		const kv = memoryKv();
+		const { result: missingRes, calls: firstCalls } = await withFetch(
+			(url) => (isEonet(url) ? json(mockEonet) : json(mockUsgs)),
+			() => callWorker('/api/v2/disasters?window=24h', { AEGIS_CACHE: kv.kv, FIRMS_MAP_KEY: 'configured-key' }),
 		);
 
-		// Snapshot and LKG put to KV
-		const putKeys = kv.puts.map((p) => p.key);
-		expect(putKeys).toContain('firms:global:snapshot:v2:24h');
-		expect(putKeys).toContain('firms:global:lkg:v2:24h');
+		expect(missingRes.status).toBe(200);
+		expect(missingRes.headers.get('X-FIRMS-Status')).toBe('unavailable');
+		const missingBody = (await missingRes.json()) as any;
+		expect(missingBody.sources.firms.status).toBe('unavailable');
+		expect(missingBody.fireCells).toEqual([]);
+		// No upstream FIRMS calls or lock writes on GET
+		expect(firstCalls.some((c) => c.includes('firms.modaps.eosdis.nasa.gov'))).toBe(false);
+		expect(kv.puts.every((p) => !p.key.includes('firms:global'))).toBe(true);
+
+		// Only EONET/USGS are cached under the disasters key, at the full TTL when both are ok.
+		const disastersPut = kv.puts.find((p) => p.key === 'disasters:v2:24h:context');
+		expect(disastersPut?.options?.expirationTtl).toBe(DISASTERS_CACHE_TTL_SECONDS);
+		expect(JSON.parse(disastersPut!.value)).not.toHaveProperty('fireCells');
+
+		// Ingestion job seeds split meta + cells into KV; the very next request serves them immediately.
+		for (const [k, v] of Object.entries(splitKvInitial(sampleSnapshot))) {
+			kv.store.set(k, v);
+		}
+		const { result: ready, calls: secondCalls } = await withFetch(
+			() => {
+				throw new Error('disasters must be served from KV cache');
+			},
+			() => callWorker('/api/v2/disasters?window=24h', { AEGIS_CACHE: kv.kv, FIRMS_MAP_KEY: 'configured-key' }),
+		);
+		expect(secondCalls).toEqual([]);
+		expect(ready.headers.get('X-FIRMS-Status')).toBe('ok');
+		const readyBody = (await ready.json()) as any;
+		expect(readyBody.sources.firms.status).toBe('ok');
+		expect(readyBody.fireCells).toHaveLength(1);
 	});
 });
-

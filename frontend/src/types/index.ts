@@ -2,8 +2,8 @@
  * Type definitions for AegisMap
  */
 
-export type ObservationWindow = '24h' | '7d';
-export type VolcanoMode = 'context' | 'strict';
+import type { ObservationWindow, VolcanoMode } from '../config/disasters';
+export type { ObservationWindow, VolcanoMode };
 
 export type DetectionIntensity = 'low' | 'medium' | 'high';
 
@@ -46,13 +46,18 @@ export interface Disaster {
     isHistoricalContext?: boolean; // For open volcanoes outside strict window
 }
 
+/** Rolling UTC interval [startInclusive, endExclusive). */
+export interface WindowRange {
+    startInclusive: string;
+    endExclusive: string;
+}
+
+export type FirmsSensorStatus = 'ok' | 'no_data' | 'failed' | 'timeout' | 'malformed' | 'warming';
+
 export interface DisastersV2Response {
     version: 2;
     window: ObservationWindow;
-    windowRange: {
-        startInclusive: string;
-        endExclusive: string;
-    };
+    windowRange: WindowRange;
     summary: {
         namedFires: number;
         fireDetections: number;
@@ -68,10 +73,12 @@ export interface DisastersV2Response {
         eonet: { status: DisasterSourceState; count: number; rejected: number };
         usgs: { status: DisasterSourceState; count: number; rejected: number };
         firms: {
-            status: 'ok' | 'stale' | 'partial' | 'unavailable';
+            status: 'ok' | 'stale' | 'partial' | 'unavailable' | 'warming';
             generatedAt: string;
             isLkgFallback?: boolean;
-            sensors: Record<string, { status: string; rawRows: number; acceptedRows: number }>;
+            /** Window the FIRMS snapshot was ingested against (may lag windowRange). */
+            windowRange?: WindowRange;
+            sensors: Record<string, { status: FirmsSensorStatus | string; rawRows: number; acceptedRows: number }>;
             accounting: {
                 rawRows: number;
                 malformedRows: number;
@@ -86,11 +93,13 @@ export interface DisastersV2Response {
 
 export type DisasterSourceState = 'ok' | 'failed' | 'malformed';
 
-/** Parsed from the X-Disaster-Sources response header ("eonet=ok;usgs=failed"). */
+/** Parsed from the X-Disaster-Sources response header ("eonet=ok;usgs=failed") and v2 FIRMS metadata. */
 export interface DisasterSourceStatus {
     eonet: DisasterSourceState | 'unknown';
     usgs: DisasterSourceState | 'unknown';
-    firms?: 'ok' | 'stale' | 'partial' | 'unavailable' | 'unknown';
+    firms?: 'ok' | 'stale' | 'partial' | 'unavailable' | 'warming' | 'unknown';
+    firmsGeneratedAt?: string;
+    firmsSensors?: Record<string, { status: FirmsSensorStatus | string; rawRows: number; acceptedRows: number }>;
     partial: boolean;
 }
 
