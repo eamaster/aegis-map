@@ -540,10 +540,10 @@ export default function MapBoard({
         }
 
         try {
-            // Create map instance with Standard Satellite style
+            // Create map instance with Satellite Streets v12 style (avoids Mapbox v3 standard-satellite place-A featureset selector warning)
             map.current = new mapboxgl.Map({
                 container: mapContainerRef.current,
-                style: 'mapbox://styles/mapbox/standard-satellite',
+                style: 'mapbox://styles/mapbox/satellite-streets-v12',
                 center: [0, 20], // ✅ Global center (Africa/Europe visible)
                 zoom: 1.3, // ✅ Full globe view showing all continents
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -596,7 +596,7 @@ export default function MapBoard({
 
             // Add disaster layers when map finishes loading
             map.current.on('load', () => {
-                console.log('✅ Map finished loading');
+                debugLog('map', 'Map finished loading', 'success');
                 setIsMapLoaded(true);
             });
             map.current.on('style.load', () => {

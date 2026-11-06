@@ -291,18 +291,24 @@ describe('legacy fallback window filtering and one-time warning', () => {
         resetV2FallbackWarning();
     });
 
-    it('filters legacy records to 24h and 7d windows instead of returning all 60-day fires', () => {
-        const res24h = filterLegacyDisastersByWindow(sampleLegacyRecords, '24h', 'context', now);
-        expect(res24h.wildfires.map((d) => d.id)).toEqual(['fire_recent']);
-        expect(res24h.earthquakes.map((d) => d.id)).toEqual(['quake_recent']);
-        expect(res24h.volcanoes).toHaveLength(1);
-        expect(res24h.volcanoes[0].isHistoricalContext).toBe(true);
-        expect(res24h.legacyNotice).toContain('Legacy fallback (24h)');
+    it('retains open EONET wildfires and volcanoes in context mode and filters strictly by window in strict mode', () => {
+        const res24hContext = filterLegacyDisastersByWindow(sampleLegacyRecords, '24h', 'context', now);
+        expect(res24hContext.wildfires.map((d) => d.id)).toEqual(['fire_recent', 'fire_3d', 'fire_30d']);
+        expect(res24hContext.wildfires[0].isHistoricalContext).toBeUndefined();
+        expect(res24hContext.wildfires[1].isHistoricalContext).toBe(true);
+        expect(res24hContext.earthquakes.map((d) => d.id)).toEqual(['quake_recent']);
+        expect(res24hContext.volcanoes).toHaveLength(1);
+        expect(res24hContext.volcanoes[0].isHistoricalContext).toBe(true);
+        expect(res24hContext.legacyNotice).toContain('Legacy fallback (24h)');
 
-        const res7d = filterLegacyDisastersByWindow(sampleLegacyRecords, '7d', 'strict', now);
-        expect(res7d.wildfires.map((d) => d.id)).toEqual(['fire_recent', 'fire_3d']);
-        expect(res7d.volcanoes).toHaveLength(0);
-        expect(res7d.legacyNotice).toContain('earthquakes limited to ~24h feed');
+        const res24hStrict = filterLegacyDisastersByWindow(sampleLegacyRecords, '24h', 'strict', now);
+        expect(res24hStrict.wildfires.map((d) => d.id)).toEqual(['fire_recent']);
+        expect(res24hStrict.volcanoes).toHaveLength(0);
+
+        const res7dStrict = filterLegacyDisastersByWindow(sampleLegacyRecords, '7d', 'strict', now);
+        expect(res7dStrict.wildfires.map((d) => d.id)).toEqual(['fire_recent', 'fire_3d']);
+        expect(res7dStrict.volcanoes).toHaveLength(0);
+        expect(res7dStrict.legacyNotice).toContain('earthquakes limited to ~24h feed');
     });
 
     it('logs v2 failure status once via console.warn and applies window filter on fallback', async () => {
@@ -321,13 +327,13 @@ describe('legacy fallback window filtering and one-time warning', () => {
             });
         });
 
-        const first = await fetchDisastersData({ window: '24h', volcanoMode: 'context' });
+        const first = await fetchDisastersData({ window: '24h', volcanoMode: 'strict' });
         expect(first.isV2).toBe(false);
         expect(first.wildfires.map((d) => d.id)).toEqual(['fire_recent']);
         expect(warnSpy).toHaveBeenCalledTimes(1);
         expect(warnSpy.mock.calls[0][0]).toContain('HTTP 404');
 
-        const second = await fetchDisastersData({ window: '7d', volcanoMode: 'context' });
+        const second = await fetchDisastersData({ window: '7d', volcanoMode: 'strict' });
         expect(second.isV2).toBe(false);
         expect(second.wildfires.map((d) => d.id)).toEqual(['fire_recent', 'fire_3d']);
         // Logged only once across repeated fallback calls

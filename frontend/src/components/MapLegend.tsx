@@ -259,7 +259,7 @@ export default function MapLegend({
                                 color: ds.text.secondary,
                             }}
                         >
-                            Reported Events
+                            Active Events
                         </span>
                         {sourceNotice && (
                             <span
@@ -296,13 +296,13 @@ export default function MapLegend({
                             }}
                         >
                             {observationWindow === '7d'
-                                ? 'Legacy fallback (7d): earthquakes limited to ~24h feed; satellite hotspots unavailable'
-                                : 'Legacy fallback (24h): satellite hotspots unavailable'}
+                                ? 'Legacy (7d): quakes ~24h only; hotspots off'
+                                : 'Legacy (24h): satellite hotspots off'}
                         </div>
                     )}
 
-                    {/* FIRMS Warm-up / Unavailable Status Notice */}
-                    {isV2 && getFirmsStatusNotice(sourceStatus, isV2) && (
+                    {/* FIRMS Warm-up / Unavailable Status Notice (stale/partial are already shown in the row subtitle) */}
+                    {isV2 && (sourceStatus?.firms === 'warming' || sourceStatus?.firms === 'unavailable') && (
                         <div
                             data-testid="firms-status-notice"
                             style={{
@@ -363,10 +363,10 @@ export default function MapLegend({
                             </div>
                         </div>
 
-                        {/* Volcano Context Mode Toggle */}
+                        {/* EONET Open-Incident Scope Toggle */}
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                             <span style={{ fontSize: '0.625rem', color: ds.text.tertiary, fontWeight: '600' }}>
-                                Volcano Mode
+                                Scope
                             </span>
                             <button
                                 type="button"
@@ -381,9 +381,9 @@ export default function MapLegend({
                                     color: volcanoMode === 'context' ? ds.colors.accent.blueLight : ds.text.secondary,
                                     cursor: 'pointer',
                                 }}
-                                title="Toggle between active volcanic context and strict time-window filtering"
+                                title="Toggle between all active open EONET incidents and strict time-window filtering"
                             >
-                                {volcanoMode === 'context' ? 'Active Context' : 'Strict Window'}
+                                {volcanoMode === 'context' ? 'Active' : 'Strict'}
                             </button>
                         </div>
                     </div>
@@ -459,10 +459,10 @@ export default function MapLegend({
                                                 whiteSpace: 'nowrap',
                                             }}
                                         >
-                                            Confirmed Wildfires
+                                            Wildfires
                                         </span>
                                         <span style={{ fontSize: '0.55rem', color: ds.text.tertiary }}>
-                                            {isV2 ? 'NASA EONET Agency' : 'NASA EONET Agency (Past 60 days)'}
+                                            {volcanoMode === 'context' ? 'NASA EONET · Open' : `NASA EONET · ${observationWindow}`}
                                         </span>
                                     </div>
                                 </div>
@@ -749,8 +749,7 @@ export default function MapLegend({
                         data-testid="legend-scope"
                         style={{ fontSize: '0.6rem', lineHeight: 1.4, color: ds.text.tertiary, marginTop: '8px' }}
                     >
-                        Wildfires: {DISASTER_SCOPE.fire}. Volcanoes: {DISASTER_SCOPE.volcano}. Earthquakes:{' '}
-                        {DISASTER_SCOPE.earthquake}.
+                        {DISASTER_SCOPE.fire} · {DISASTER_SCOPE.volcano} · {DISASTER_SCOPE.earthquake}
                     </p>
                 </div>
 

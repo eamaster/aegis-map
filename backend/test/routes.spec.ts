@@ -409,6 +409,18 @@ describe('GET /api/v2/disasters', () => {
 				geometry: [{ date: new Date().toISOString(), type: 'Point', coordinates: [-120.0, 38.0] }],
 			},
 			{
+				id: 'EONET_W_OPEN_OLD',
+				title: 'Ongoing Wildfire Reported 10 Days Ago',
+				categories: [{ id: 'wildfires' }],
+				geometry: [
+					{
+						date: new Date(Date.now() - 10 * 86_400_000).toISOString(),
+						type: 'Point',
+						coordinates: [-121.0, 39.0],
+					},
+				],
+			},
+			{
 				id: 'EONET_V1',
 				title: 'Historical Volcano Eruption',
 				categories: [{ id: 'volcanoes' }],
@@ -542,15 +554,17 @@ describe('GET /api/v2/disasters', () => {
 		const body = (await res.json()) as any;
 		expect(body.version).toBe(2);
 		expect(body.window).toBe('24h');
-		expect(body.summary.namedFires).toBe(1);
+		expect(body.summary.namedFires).toBe(2);
 		expect(body.summary.fireDetections).toBe(3);
 		expect(body.summary.fireCells).toBe(1);
 		expect(body.summary.earthquakes).toBe(1);
 		expect(body.summary.volcanoes).toBe(1);
 		expect(body.sources.firms.windowRange).toEqual(sampleSnapshot.windowRange);
 
-		// EONET wildfire is categorized
-		expect(body.wildfires[0].id).toBe('EONET_W1');
+		// EONET wildfires include both in-window and ongoing open wildfires in context mode
+		expect(body.wildfires.map((w: any) => w.id)).toEqual(['EONET_W1', 'EONET_W_OPEN_OLD']);
+		expect(body.wildfires[0].isHistoricalContext).toBeUndefined();
+		expect(body.wildfires[1].isHistoricalContext).toBe(true);
 		// FIRMS cell is spliced intact
 		expect(body.fireCells[0].cellId).toBe('cell:10.25:20.25');
 		expect(isInWindowRange(body.fireCells[0].latestAcqTime, body.windowRange)).toBe(true);
@@ -575,7 +589,7 @@ describe('GET /api/v2/disasters', () => {
 		expect(cachedBody.fireCells[0].cellId).toBe('cell:10.25:20.25');
 	});
 
-	it('filters out historical volcanoes in strict mode', async () => {
+	it('filters out historical open wildfires and volcanoes in strict mode', async () => {
 		const kv = memoryKv();
 		const { result: res } = await withFetch(
 			(url) => (isEonet(url) ? json(mockEonet) : json(mockUsgs)),
@@ -584,6 +598,8 @@ describe('GET /api/v2/disasters', () => {
 
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as any;
+		expect(body.wildfires.map((w: any) => w.id)).toEqual(['EONET_W1']);
+		expect(body.summary.namedFires).toBe(1);
 		expect(body.volcanoes).toHaveLength(0);
 		expect(body.summary.volcanoes).toBe(0);
 	});

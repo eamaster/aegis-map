@@ -430,7 +430,7 @@ export interface DisastersV2QueryOptions {
 export interface DisastersV2CategorizedResult {
 	window: ObservationWindow;
 	windowRange: WindowRange;
-	wildfires: DisasterRecord[];
+	wildfires: (DisasterRecord & { isHistoricalContext?: boolean })[];
 	earthquakes: DisasterRecord[];
 	volcanoes: (DisasterRecord & { isHistoricalContext?: boolean })[];
 	sources: DisasterSources;
@@ -439,7 +439,14 @@ export interface DisastersV2CategorizedResult {
 
 /**
  * Fetch and categorize v2 disaster records (wildfires, earthquakes, volcanoes)
- * strictly partitioned and filtered against the observation window.
+ * partitioned against the observation window.
+ *
+ * Both EONET categories (`wildfires` with `status=open&days=60` and `volcanoes`
+ * with `status=open`) represent ongoing open agency incidents dated by their
+ * initial report geometry rather than daily observations. In `context` mode
+ * (default), all open EONET incidents are returned with `isHistoricalContext: true`
+ * when their initial report date precedes `windowRange`; in `strict` mode, only
+ * events whose report timestamp falls within `windowRange` are returned.
  */
 export async function fetchDisastersV2Categorized(
 	options: DisastersV2QueryOptions = {},
@@ -462,7 +469,7 @@ export async function fetchDisastersV2Categorized(
 		throw new DisasterUpstreamError(sources);
 	}
 
-	const wildfires: DisasterRecord[] = [];
+	const wildfires: (DisasterRecord & { isHistoricalContext?: boolean })[] = [];
 	const earthquakes: DisasterRecord[] = [];
 	const volcanoes: (DisasterRecord & { isHistoricalContext?: boolean })[] = [];
 
@@ -471,20 +478,14 @@ export async function fetchDisastersV2Categorized(
 		if (seenEonetIds.has(rec.id)) continue;
 		seenEonetIds.add(rec.id);
 
+		const isInWindow = isInWindowRange(rec.date, windowRange);
+		if (volcanoMode === 'strict' && !isInWindow) continue;
+
+		const item = isInWindow ? rec : { ...rec, isHistoricalContext: true };
 		if (rec.type === 'fire') {
-			if (isInWindowRange(rec.date, windowRange)) {
-				wildfires.push(rec);
-			}
+			wildfires.push(item);
 		} else if (rec.type === 'volcano') {
-			const isInWindow = isInWindowRange(rec.date, windowRange);
-			if (volcanoMode === 'strict') {
-				if (isInWindow) volcanoes.push(rec);
-			} else {
-				volcanoes.push({
-					...rec,
-					...(isInWindow ? {} : { isHistoricalContext: true }),
-				});
-			}
+			volcanoes.push(item);
 		}
 	}
 

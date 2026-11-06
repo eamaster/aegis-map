@@ -63,19 +63,21 @@ export function filterLegacyDisastersByWindow(
         return !Number.isNaN(ms) && ms >= startMs && ms < endMs;
     };
 
-    const wildfires = records.filter((d) => d.type === 'fire' && isInWindow(d.date));
-    const earthquakes = records.filter((d) => d.type === 'earthquake' && isInWindow(d.date));
+    const wildfires: Disaster[] = [];
     const volcanoes: Disaster[] = [];
+    const earthquakes: Disaster[] = [];
 
     for (const d of records) {
-        if (d.type !== 'volcano') continue;
         const inWin = isInWindow(d.date);
-        if (volcanoMode === 'strict') {
-            if (inWin) {
-                volcanoes.push({ ...d, isHistoricalContext: false });
-            }
-        } else {
-            volcanoes.push({ ...d, isHistoricalContext: !inWin });
+        if (d.type === 'earthquake') {
+            if (inWin) earthquakes.push(d);
+            continue;
+        }
+        if (d.type === 'fire' || d.type === 'volcano') {
+            if (volcanoMode === 'strict' && !inWin) continue;
+            const item: Disaster = inWin ? d : { ...d, isHistoricalContext: true };
+            if (d.type === 'fire') wildfires.push(item);
+            else volcanoes.push(item);
         }
     }
 

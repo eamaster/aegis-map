@@ -133,10 +133,10 @@ export function formatFireCellsSubtitle(
 
 /** Query scope per category, as served by the Worker (backend EONET_QUERIES, USGS_URL, and FIRMS). */
 export const DISASTER_SCOPE = {
-    fire: 'confirmed agency-reported wildfires (NASA EONET v3)',
-    fire_detection: 'satellite thermal anomaly cells (NASA FIRMS VIIRS 375m)',
-    volcano: 'active volcanic alert events (NASA EONET)',
-    earthquake: 'USGS M2.5+ earthquake events',
+    fire: 'EONET open wildfires (60 days)',
+    fire_detection: 'FIRMS VIIRS 375m thermal cells',
+    volcano: 'open NASA EONET volcanic alerts',
+    earthquake: 'USGS M2.5+ quakes',
 } as const;
 
 /**
