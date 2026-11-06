@@ -50,7 +50,7 @@ export function parseDisasterSourceHeaders(headers: Headers): DisasterSourceStat
         headers.get('X-Disaster-Partial') === 'true' ||
         eonet !== 'ok' ||
         usgs !== 'ok' ||
-        (firms !== undefined && firms !== 'ok' && firms !== 'stale');
+        (firms !== undefined && firms !== 'ok' && firms !== 'stale' && firms !== 'partial');
     return {
         eonet,
         usgs,
@@ -60,23 +60,20 @@ export function parseDisasterSourceHeaders(headers: Headers): DisasterSourceStat
     };
 }
 
-/** Human-readable summary of degraded sources, or null when every source is ok. */
+/**
+ * Human-readable summary of unavailable sources, or null when all primary providers
+ * (EONET, USGS, FIRMS) are serving data. Note: FIRMS 'partial' (e.g. one VIIRS satellite
+ * lagging while NOAA-20/21 are active) is surfaced inline on the Satellite Hotspots row
+ * subtitle rather than as a provider outage banner/toast.
+ */
 export function describeDisasterSources(status: DisasterSourceStatus | null): string | null {
-    if (!status || !status.partial) return null;
+    if (!status) return null;
     const down: string[] = [];
     if (status.eonet !== 'ok') down.push('NASA EONET (wildfires, volcanoes)');
     if (status.usgs !== 'ok') down.push('USGS (earthquakes)');
     if (status.firms === 'warming') down.push('NASA FIRMS (warming up)');
     else if (status.firms === 'unavailable') down.push('NASA FIRMS (satellite thermal detections)');
-    else if (status.firms === 'partial') {
-        const lagging = getLaggingSensors(status.firmsSensors);
-        down.push(
-            lagging.length > 0
-                ? `NASA FIRMS (${lagging.join(', ')} lagging)`
-                : 'NASA FIRMS (partial sensor coverage)',
-        );
-    }
-    if (down.length === 0) return 'Some disaster sources are incomplete.';
+    if (down.length === 0) return null;
     return `Unavailable: ${down.join(', ')}. Counts are incomplete.`;
 }
 

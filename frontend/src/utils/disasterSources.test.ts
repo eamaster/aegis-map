@@ -166,7 +166,8 @@ describe('getFirmsStatusNotice', () => {
         expect(getFirmsStatusNotice(partialWithSensors, true)).toBe(
             'Satellite hotspots: partial coverage (VIIRS_SNPP_NRT lagging)',
         );
-        expect(describeDisasterSources(partialWithSensors)).toContain('VIIRS_SNPP_NRT lagging');
+        // Partial sensor lag is shown in the Satellite Hotspots subtitle, not as a provider outage
+        expect(describeDisasterSources(partialWithSensors)).toBeNull();
     });
 
     it('distinguishes stale snapshot and displays snapshot age', () => {

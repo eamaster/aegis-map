@@ -555,10 +555,15 @@ export async function ingestGlobalFirms(
 			const result = aggregator.ingestCsv(text);
 			sensors[plan.product].rawRows += result.rawRows;
 			sensors[plan.product].acceptedRows += result.acceptedRows;
-			if (!result.ok) {
+			if (result.ok) {
+				if (sensors[plan.product].status === 'no_data') {
+					sensors[plan.product].status = 'ok';
+					delete sensors[plan.product].errorReason;
+				}
+			} else {
 				if (result.status === 'no_data') {
 					console.warn(`FIRMS World ${plan.description}: no_data (${result.error})`);
-					if (sensors[plan.product].status === 'ok') {
+					if (sensors[plan.product].status === 'ok' && sensors[plan.product].rawRows === 0) {
 						sensors[plan.product].status = 'no_data';
 						sensors[plan.product].errorReason = result.error;
 					}

@@ -389,4 +389,29 @@ describe('firmsGlobal - Ingestion workflow with mocked fetch', () => {
 		expect(snapshot.totalDetections).toBe(2);
 		expect(computeSnapshotStatus(snapshot, { now })).toBe('partial');
 	});
+
+	it('keeps sensor status ok in 7d window when earlier batch has data even if latest batch is empty', async () => {
+		const now = new Date('2026-10-13T12:00:00Z');
+		const mockRow = (sat: string, date: string) =>
+			[
+				SAMPLE_HEADER,
+				`-1.2,36.8,330.0,0.4,0.4,${date},0600,${sat},VIIRS,high,2.0NRT,290.0,25.0,D`,
+			].join('\n');
+
+		const fetchImpl = async (url: string) => {
+			if (url.includes('VIIRS_SNPP_NRT')) {
+				// Prior 3-day batch (2026-10-07) has data; recent 4-day batch (2026-10-10) is empty
+				if (url.includes('/3/2026-10-07')) return csvResponse(mockRow('NPP', '2026-10-08'));
+				return csvResponse(SAMPLE_HEADER);
+			}
+			if (url.includes('VIIRS_NOAA20_NRT')) return csvResponse(mockRow('N20', '2026-10-12'));
+			if (url.includes('VIIRS_NOAA21_NRT')) return csvResponse(mockRow('N21', '2026-10-12'));
+			return new Response('Not found', { status: 404 });
+		};
+
+		const snapshot = await ingestGlobalFirms('test-key', '7d', { now, fetchImpl });
+		expect(snapshot.sensors.VIIRS_SNPP_NRT.status).toBe('ok');
+		expect(snapshot.sensors.VIIRS_SNPP_NRT.rawRows).toBe(1);
+		expect(computeSnapshotStatus(snapshot, { now })).toBe('ok');
+	});
 });
