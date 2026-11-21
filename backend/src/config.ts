@@ -66,22 +66,45 @@ export const ANALYSIS_LOCATION_DECIMALS = 1;
 /** Max elevation below this is described to the model as oblique geometry. Must be a bucket edge. */
 export const ANALYSIS_LOW_ELEVATION_BELOW_DEG = 25;
 
-/** Supported Workers AI text-generation model IDs for this project. */
-export const SUPPORTED_AI_MODELS = [
-	'@cf/meta/llama-3.1-8b-instruct-fp8',
-	'@cf/meta/llama-3.3-70b-instruct-fp8-fast',
-] as const;
+/**
+ * Default production model. This is the only place its identifier is spelled out.
+ * Replaced @cf/meta/llama-3.1-8b-instruct-fp8, which Cloudflare retired on
+ * 2026-11-20 (upstream HTTP 410 / error code 5028).
+ */
+export const DEFAULT_AI_MODEL = '@cf/google/gemma-4-26b-a4b-it' as const;
+
+/**
+ * Supported Workers AI text-generation model IDs for this project (also the
+ * server-side AI_MODEL override allowlist). Do not add a model without checking
+ * Cloudflare's deprecation list and its request/response contract.
+ */
+export const SUPPORTED_AI_MODELS = [DEFAULT_AI_MODEL, '@cf/meta/llama-3.3-70b-instruct-fp8-fast'] as const;
 
 export type SupportedAiModel = (typeof SUPPORTED_AI_MODELS)[number];
 
-/** Provisional / default production model (free-plan efficient). */
-export const DEFAULT_AI_MODEL: SupportedAiModel = '@cf/meta/llama-3.1-8b-instruct-fp8';
-
 export const AI_GENERATION = {
-	/** Short two-sentence guidance; do not copy Gemini thinking-token budgets. */
-	max_tokens: 160,
+	/** Visible-answer token budget for the short two-sentence guidance. */
+	maxOutputTokens: 160,
 	temperature: 0.3,
 } as const;
+
+/**
+ * Per-model request options. The two supported models take different token-limit
+ * parameters, so the shared budget above is mapped per model (verified against the
+ * Cloudflare model cards and live native-binding results on 2026-11-20):
+ * - Gemma 4 prefers max_completion_tokens (max_tokens is deprecated). It reasons by
+ *   default and reasoning tokens count against the limit: with a 160-token budget
+ *   reasoning alone used all of it (finish_reason "length", empty content). The
+ *   guidance task needs no chain of thought, so thinking is disabled.
+ * - Llama 3.3 takes max_tokens and has no reasoning mode.
+ */
+export const AI_MODEL_REQUEST_OPTIONS: Record<
+	SupportedAiModel,
+	{ tokenLimitParam: 'max_tokens' | 'max_completion_tokens'; disableThinking: boolean }
+> = {
+	[DEFAULT_AI_MODEL]: { tokenLimitParam: 'max_completion_tokens', disableThinking: true },
+	'@cf/meta/llama-3.3-70b-instruct-fp8-fast': { tokenLimitParam: 'max_tokens', disableThinking: false },
+};
 
 /** Analysis result cache TTL (seconds). */
 export const ANALYSIS_CACHE_TTL_SECONDS = 7200;

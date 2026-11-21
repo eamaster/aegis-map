@@ -7,6 +7,8 @@
  */
 
 import {
+	AI_GENERATION,
+	AI_MODEL_REQUEST_OPTIONS,
 	ANALYSIS_CACHE_TTL_SECONDS,
 	ANALYSIS_CACHE_VERSION,
 	ANALYSIS_CLOUD_BUCKET_EDGES_PCT,
@@ -15,7 +17,6 @@ import {
 	ANALYSIS_LOW_ELEVATION_BELOW_DEG,
 	ANALYSIS_PASS_TIME_BUCKET_MINUTES,
 	ANALYZE_LIMITS,
-	AI_GENERATION,
 	type DisasterType,
 	isDisasterType,
 	resolveAiModel,
@@ -535,24 +536,72 @@ export async function buildAnalysisCacheKey(n: NormalizedAnalyze): Promise<strin
 	return `analyze:${ANALYSIS_CACHE_VERSION}:${hash}`;
 }
 
-function extractWorkersAiText(result: unknown): string | null {
-	if (typeof result === 'string' && result.trim()) {
-		return result.trim();
+/**
+ * Read the final assistant text from a native-binding result. Never returns
+ * reasoning (`reasoning_content` / `reasoning`) or raw provider payloads.
+ *
+ * Supported shapes:
+ * - OpenAI-style chat completion (Gemma 4, and also returned by Llama 3.3):
+ *   `choices[0].message.content`. Any finish_reason other than "stop" (e.g. "length"
+ *   when reasoning or the token budget exhausted output) is rejected, as is empty,
+ *   whitespace-only, null, refusal-only, or reasoning-only output.
+ * - Legacy `{ response: string }` or a bare string (Llama-family text models).
+ */
+export function extractWorkersAiText(result: unknown): string | null {
+	const nonEmpty = (value: unknown): string | null =>
+		typeof value === 'string' && value.trim() ? value.trim() : null;
+
+	if (typeof result === 'string') {
+		return nonEmpty(result);
 	}
-	if (isPlainObject(result) && typeof result.response === 'string' && result.response.trim()) {
-		return result.response.trim();
+	if (!isPlainObject(result)) {
+		return null;
 	}
-	return null;
+
+	if (Array.isArray(result.choices)) {
+		const choice = result.choices[0];
+		if (!isPlainObject(choice)) {
+			return null;
+		}
+		const finish = choice.finish_reason;
+		if (finish !== undefined && finish !== null && finish !== 'stop') {
+			return null;
+		}
+		return isPlainObject(choice.message) ? nonEmpty(choice.message.content) : null;
+	}
+
+	return nonEmpty(result.response);
 }
 
-/** Map native binding thrown errors to safe AnalyzeHttpError (no secret leakage). */
+/**
+ * Map native binding thrown errors to safe AnalyzeHttpError (no secret leakage).
+ *
+ * The binding throws `AiError` whose message is `<internal code>: <description>` and
+ * exposes no status/code properties (verified live 2026-11-20 for a retired model:
+ * "5028: <model> was deprecated on <date>. See the model catalog ..."). Classification
+ * therefore keys on Cloudflare's documented internal codes and specific provider
+ * evidence; a bare "404" is NOT treated as model retirement.
+ */
 export function mapAiBindingError(err: unknown): AnalyzeHttpError {
 	const message = err instanceof Error ? err.message : String(err);
 	const lower = message.toLowerCase();
 
-	const codeMatch = message.match(/\b(3036|3040|3007|3008|5035|5018|5016|3023|3041|3042|5007)\b/);
+	const codeMatch = message.match(/\b(3036|3040|3007|3008|5035|5018|5016|3023|3041|3042|5007|5028)\b/);
 	const internal = codeMatch?.[1];
 
+	// Operator action required: the configured model is retired (5028, HTTP 410),
+	// unknown (5007), has an invalid ID (3042), or returned model_not_found.
+	if (
+		internal === '5028' ||
+		internal === '5007' ||
+		internal === '3042' ||
+		lower.includes('was deprecated on') ||
+		lower.includes('model_not_found') ||
+		lower.includes('no such model')
+	) {
+		safeLog('Workers AI model unavailable', message);
+		return new AnalyzeHttpError(503, 'config', 'Configured AI model is retired or unavailable');
+	}
 	if (internal === '3036' || lower.includes('daily free allocation') || lower.includes('10,000 neurons')) {
 		return new AnalyzeHttpError(429, 'quota_exhausted', 'AI daily free allocation exhausted');
 	}
@@ -587,17 +636,30 @@ export function mapAiBindingError(err: unknown): AnalyzeHttpError {
 	return new AnalyzeHttpError(503, 'provider', 'Analysis temporarily unavailable');
 }
 
+/** Request payload accepted by the supported models (see AI_MODEL_REQUEST_OPTIONS). */
+export type AiRunInput = {
+	messages: Array<{ role: string; content: string }>;
+	temperature: number;
+	max_tokens?: number;
+	max_completion_tokens?: number;
+	chat_template_kwargs?: { enable_thinking: boolean };
+};
+
 /** Minimal AI binding surface used by analyze (compatible with env.AI and test mocks). */
 export type AiBindingLike = {
-	run: (
-		model: SupportedAiModel,
-		input: {
-			messages: Array<{ role: string; content: string }>;
-			max_tokens: number;
-			temperature: number;
-		},
-	) => Promise<unknown>;
+	run: (model: SupportedAiModel, input: AiRunInput) => Promise<unknown>;
 };
+
+/** Build the model-specific request: shared budget/temperature mapped to the model's own parameters. */
+export function buildAiRunInput(model: SupportedAiModel, messages: AiRunInput['messages']): AiRunInput {
+	const options = AI_MODEL_REQUEST_OPTIONS[model];
+	return {
+		messages,
+		temperature: AI_GENERATION.temperature,
+		[options.tokenLimitParam]: AI_GENERATION.maxOutputTokens,
+		...(options.disableThinking ? { chat_template_kwargs: { enable_thinking: false } } : {}),
+	};
+}
 
 export async function runAnalyze(
 	req: AnalyzeRequest,
@@ -626,11 +688,7 @@ export async function runAnalyze(
 
 	let raw: unknown;
 	try {
-		raw = await env.AI.run(n.model, {
-			messages,
-			max_tokens: AI_GENERATION.max_tokens,
-			temperature: AI_GENERATION.temperature,
-		});
+		raw = await env.AI.run(n.model, buildAiRunInput(n.model, messages));
 	} catch (err) {
 		throw mapAiBindingError(err);
 	}

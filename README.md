@@ -61,7 +61,7 @@
   - Real-time countdown timers
 
 ### 3. **AI Coverage Analysis**
-- **Powered by**: Cloudflare Workers AI (default `@cf/meta/llama-3.1-8b-instruct-fp8`)
+- **Powered by**: Cloudflare Workers AI (default `@cf/google/gemma-4-26b-a4b-it`)
 - **Smart Caching System**:
   - Final assessments cached by normalized inputs (model, prompt version, type, satellite, pass, cloud)
   - 2-hour TTL; failures and unavailable states are not cached as AI
@@ -202,7 +202,7 @@
    # Optional — fire hotspots
    FIRMS_MAP_KEY=your_firms_map_key_here
    # Optional — override default Workers AI model (must be allowlisted in src/config.ts)
-   # AI_MODEL=@cf/meta/llama-3.1-8b-instruct-fp8
+   # AI_MODEL=@cf/google/gemma-4-26b-a4b-it
    ```
    Workers AI uses the Wrangler AI binding (`ai.binding = AI`, `remote: true` for local). No API token is required in the Worker for the native binding path.
 

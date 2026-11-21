@@ -16,7 +16,7 @@ npm run dev
 npm run verify:analyze
 ```
 
-Default model: `@cf/meta/llama-3.1-8b-instruct-fp8` (override via allowlisted `AI_MODEL` var).
+Default model: `@cf/google/gemma-4-26b-a4b-it` (override via allowlisted `AI_MODEL` var).
 Wrangler **4.148+** / **Node ≥ 22** required for remote AI preview.
 Production `compatibility_date` is `2025-11-21` (`wrangler.jsonc`); vitest uses `vitest.wrangler.jsonc` pinned to the local workerd build.
 

@@ -35,9 +35,18 @@ export function analysisViewState(input: {
     return 'error-provider';
 }
 
-export function describeAnalysisError(code: string | undefined, fallback: string): string {
+/**
+ * User-facing text for a structured /api/analyze failure. `serverMessage` is the
+ * Worker's sanitized message (never raw provider output); it is only appended where
+ * it tells an operator what to fix.
+ */
+export function describeAnalysisError(code: string | undefined, serverMessage: string): string {
+    const cleanDetail = serverMessage.trim().replace(/\.+$/, '');
     switch (code) {
         case 'config':
+            return cleanDetail
+                ? `Analysis service requires server configuration attention: ${cleanDetail}.`
+                : 'Analysis service is not configured correctly on the server.';
         case 'access':
             return 'Analysis service is not configured correctly on the server.';
         case 'quota_exhausted':
@@ -50,8 +59,10 @@ export function describeAnalysisError(code: string | undefined, fallback: string
             return 'Workers AI returned an unusable response.';
         case 'invalid_request':
             return 'The analysis request was rejected as invalid.';
+        case 'provider':
+            return 'Analysis is temporarily unavailable. Try again shortly.';
         default:
-            return `Analysis unavailable (${fallback}).`;
+            return cleanDetail ? `Analysis unavailable (${cleanDetail}).` : 'Analysis is temporarily unavailable.';
     }
 }
 

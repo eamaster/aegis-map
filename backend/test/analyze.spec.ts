@@ -3,23 +3,51 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import worker from '../src';
 import {
 	AnalyzeHttpError,
+	buildAiRunInput,
 	buildAnalysisCacheKey,
 	buildAnalyzeMessages,
+	extractWorkersAiText,
 	formatPassTimeUtc,
 	mapAiBindingError,
 	parseAnalyzeRequest,
 	runAnalyze,
 } from '../src/analyze';
-import { ANALYSIS_CACHE_VERSION, DEFAULT_AI_MODEL, resolveAiModel } from '../src/config';
+import { AI_GENERATION, ANALYSIS_CACHE_VERSION, DEFAULT_AI_MODEL, resolveAiModel } from '../src/config';
 import { resolveSatelliteCapabilities } from '../src/satellites';
 
+/** Retired on 2026-11-20 (HTTP 410 / code 5028); kept only as a retirement regression fixture. */
+const RETIRED_LLAMA_31_MODEL = '@cf/meta/llama-3.1-8b-instruct-fp8';
+
 describe('config + satellites', () => {
-	it('resolves default and allowlisted model overrides', () => {
+	it('resolves default Gemma 4, allows retained override, and rejects retired or unknown models', () => {
+		expect(DEFAULT_AI_MODEL).toBe('@cf/google/gemma-4-26b-a4b-it');
 		expect(resolveAiModel(undefined)).toBe(DEFAULT_AI_MODEL);
 		expect(resolveAiModel('@cf/meta/llama-3.3-70b-instruct-fp8-fast')).toBe(
 			'@cf/meta/llama-3.3-70b-instruct-fp8-fast',
 		);
+		expect(() => resolveAiModel(RETIRED_LLAMA_31_MODEL)).toThrow();
 		expect(() => resolveAiModel('@cf/meta/made-up-model')).toThrow();
+	});
+
+	it('maps generation parameters per model contract (Gemma 4 vs Llama 3.3)', () => {
+		const messages = [{ role: 'user', content: 'test' }];
+		const gemmaInput = buildAiRunInput(DEFAULT_AI_MODEL, messages);
+		expect(gemmaInput).toEqual({
+			messages,
+			temperature: AI_GENERATION.temperature,
+			max_completion_tokens: AI_GENERATION.maxOutputTokens,
+			chat_template_kwargs: { enable_thinking: false },
+		});
+		expect('max_tokens' in gemmaInput).toBe(false);
+
+		const llamaInput = buildAiRunInput('@cf/meta/llama-3.3-70b-instruct-fp8-fast', messages);
+		expect(llamaInput).toEqual({
+			messages,
+			temperature: AI_GENERATION.temperature,
+			max_tokens: AI_GENERATION.maxOutputTokens,
+		});
+		expect('max_completion_tokens' in llamaInput).toBe(false);
+		expect('chat_template_kwargs' in llamaInput).toBe(false);
 	});
 
 	it('grounds Landsat/Sentinel-2/Terra/Aqua capabilities without SAR', () => {
@@ -291,6 +319,98 @@ describe('prompt grounding', () => {
 	});
 });
 
+describe('response extraction', () => {
+	it('extracts Gemma chat completion content and preserves legacy shapes', () => {
+		expect(
+			extractWorkersAiText({
+				id: 'chatcmpl-1',
+				object: 'chat.completion',
+				choices: [
+					{
+						index: 0,
+						message: {
+							role: 'assistant',
+							content: '  Landsat 9 thermal infrared works at night. Optical is unusable in darkness.  ',
+							reasoning_content: 'Internal thought that must never be returned.',
+						},
+						finish_reason: 'stop',
+					},
+				],
+			}),
+		).toBe('Landsat 9 thermal infrared works at night. Optical is unusable in darkness.');
+
+		expect(extractWorkersAiText({ response: 'Legacy response text.' })).toBe('Legacy response text.');
+		expect(extractWorkersAiText('  Plain string text. ')).toBe('Plain string text.');
+	});
+
+	it('rejects empty, whitespace-only, reasoning-only, truncated, and malformed outputs', () => {
+		// Reasoning-only output truncated at length (observed live with Gemma default thinking + 160 budget)
+		expect(
+			extractWorkersAiText({
+				choices: [
+					{
+						index: 0,
+						message: {
+							role: 'assistant',
+							content: '',
+							reasoning_content: '* Event: Sahel Savanna Fire...',
+						},
+						finish_reason: 'length',
+					},
+				],
+			}),
+		).toBeNull();
+
+		// Reasoning-only output even with finish_reason "stop"
+		expect(
+			extractWorkersAiText({
+				choices: [
+					{
+						index: 0,
+						message: {
+							role: 'assistant',
+							content: '   ',
+							reasoning_content: 'Only internal reasoning',
+						},
+						finish_reason: 'stop',
+					},
+				],
+			}),
+		).toBeNull();
+
+		// Truncated partial content (finish_reason !== "stop")
+		expect(
+			extractWorkersAiText({
+				choices: [
+					{
+						index: 0,
+						message: { role: 'assistant', content: 'Cut off mid-sent' },
+						finish_reason: 'length',
+					},
+				],
+			}),
+		).toBeNull();
+
+		// Content filter or refusal-only
+		expect(
+			extractWorkersAiText({
+				choices: [
+					{
+						index: 0,
+						message: { role: 'assistant', content: null, refusal: 'Cannot answer' },
+						finish_reason: 'stop',
+					},
+				],
+			}),
+		).toBeNull();
+
+		expect(extractWorkersAiText({ choices: [] })).toBeNull();
+		expect(extractWorkersAiText({ response: '   ' })).toBeNull();
+		expect(extractWorkersAiText(null)).toBeNull();
+		expect(extractWorkersAiText({})).toBeNull();
+	});
+});
+
 describe('error mapping', () => {
 	it('maps Workers AI internal codes to safe errors', () => {
 		expect(mapAiBindingError(new Error('3036 daily free allocation')).code).toBe(
@@ -305,6 +425,28 @@ describe('error mapping', () => {
 			'config',
 		);
 	});
+
+	it('maps confirmed model retirement/unavailability to config without misclassifying generic 404', () => {
+		// Exact native binding error shape observed live on 2026-11-20
+		const retired = mapAiBindingError(
+			new Error(
+				`5028: ${RETIRED_LLAMA_31_MODEL} was deprecated on 2026-11-20. See the model catalog for alternatives: https://developers.cloudflare.com/workers-ai/models/`,
+			),
+		);
+		expect(retired.status).toBe(503);
+		expect(retired.code).toBe('config');
+
+		expect(mapAiBindingError(new Error(`5007: No such model ${RETIRED_LLAMA_31_MODEL} or task`)).code).toBe(
+			'config',
+		);
+		expect(mapAiBindingError(new Error('3042: The model name is invalid')).code).toBe('config');
+		expect(mapAiBindingError(new Error('404 model_not_found: model unavailable')).code).toBe('config');
+
+		// A generic 404 without model-specific evidence must stay a provider error
+		const generic404 = mapAiBindingError(new Error('404 Not Found'));
+		expect(generic404.status).toBe(503);
+		expect(generic404.code).toBe('provider');
+	});
 });
 
 describe('runAnalyze + cache', () => {
@@ -312,14 +454,29 @@ describe('runAnalyze + cache', () => {
 		vi.restoreAllMocks();
 	});
 
-	it('invokes Workers AI with messages payload and caches successful analysis', async () => {
+	it('invokes Workers AI with Gemma messages payload and caches successful analysis', async () => {
 		const put = vi.fn(async () => undefined);
 		const get = vi.fn(async () => null);
-		const run = vi.fn(async (_model: string, input: Record<string, unknown>) => {
+		const run = vi.fn(async (model: string, input: Record<string, unknown>) => {
+			expect(model).toBe(DEFAULT_AI_MODEL);
 			expect(input.messages).toBeTruthy();
 			expect(Array.isArray(input.messages)).toBe(true);
-			expect(input.max_tokens).toBeTypeOf('number');
-			return { response: 'Pass is useful for optical context. Thermal remains available on this satellite.' };
+			expect(input.max_completion_tokens).toBe(AI_GENERATION.maxOutputTokens);
+			expect(input.chat_template_kwargs).toEqual({ enable_thinking: false });
+			return {
+				id: 'chatcmpl-test',
+				object: 'chat.completion',
+				choices: [
+					{
+						index: 0,
+						message: {
+							role: 'assistant',
+							content: 'Pass is useful for optical context. Thermal remains available on this satellite.',
+						},
+						finish_reason: 'stop',
+					},
+				],
+			};
 		});
 
 		const result = await runAnalyze(
@@ -508,22 +665,36 @@ describe('runAnalyze + cache', () => {
 		expect(diffTitle).not.toBe(keyBase);
 	});
 
-	it('does not cache malformed provider output', async () => {
+	it('does not cache malformed, reasoning-only, or truncated provider output', async () => {
 		const put = vi.fn(async () => undefined);
 		const get = vi.fn(async () => null);
-		const run = vi.fn(async () => ({ response: '   ' }));
-		await expect(
-			runAnalyze(
-				{
-					disasterTitle: 'Fire',
-					satelliteName: 'LANDSAT 9',
-					passTime: '2026-10-08T15:00:00.000Z',
-					cloudCover: 10,
-					disasterType: 'fire',
-				},
-				{ AI: { run }, AEGIS_CACHE: { get, put } as unknown as KVNamespace },
-			),
-		).rejects.toMatchObject({ code: 'malformed_output' });
+		const unusableResponses: unknown[] = [
+			{ response: '   ' },
+			{
+				choices: [
+					{
+						index: 0,
+						message: { role: 'assistant', content: '', reasoning_content: 'Internal chain of thought' },
+						finish_reason: 'length',
+					},
+				],
+			},
+		];
+		for (const bad of unusableResponses) {
+			const run = vi.fn(async () => bad);
+			await expect(
+				runAnalyze(
+					{
+						disasterTitle: 'Fire',
+						satelliteName: 'LANDSAT 9',
+						passTime: '2026-10-08T15:00:00.000Z',
+						cloudCover: 10,
+						disasterType: 'fire',
+					},
+					{ AI: { run }, AEGIS_CACHE: { get, put } as unknown as KVNamespace },
+				),
+			).rejects.toMatchObject({ status: 502, code: 'malformed_output' });
+		}
 		expect(put).not.toHaveBeenCalled();
 	});
 
@@ -709,6 +880,30 @@ describe('HTTP /api/analyze', () => {
 			okAi,
 		);
 		expect(incomplete.status).toBe(400);
+	});
+
+	it('maps confirmed model retirement (5028) to structured config failure without leaking raw upstream text', async () => {
+		const response = await fetchAnalyze(
+			JSON.stringify({
+				disasterTitle: 'Fire',
+				satelliteName: 'LANDSAT 9',
+				passTime: '2026-10-08T15:00:00.000Z',
+				cloudCover: 10,
+				disasterType: 'fire',
+			}),
+			async () => {
+				throw new Error(
+					`5028: ${RETIRED_LLAMA_31_MODEL} was deprecated on 2026-11-20. See the model catalog for alternatives: https://developers.cloudflare.com/workers-ai/models/`,
+				);
+			},
+		);
+		expect(response.status).toBe(503);
+		const body = (await response.json()) as { code: string; message: string; error: string };
+		expect(body.code).toBe('config');
+		expect(body.error).toBe('analysis_unavailable');
+		expect(body.message).toBe('Configured AI model is retired or unavailable');
+		expect(body.message).not.toContain('5028');
+		expect(body.message).not.toContain(RETIRED_LLAMA_31_MODEL);
 	});
 
 	it('maps quota exhaustion to non-2xx without leaking internals', async () => {
