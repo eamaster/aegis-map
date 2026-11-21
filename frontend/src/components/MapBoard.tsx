@@ -389,11 +389,18 @@ export default function MapBoard({
             });
             map.current = mapInstance;
 
-            // Preserve WebGL context if browser temporarily suspends GPU resources
-            mapInstance.getCanvas().addEventListener('webglcontextlost', (evt) => {
+            // Preserve & recover WebGL context cleanly if browser temporarily suspends GPU resources
+            const canvas = mapInstance.getCanvas();
+            const handleContextLost = (evt: Event) => {
                 evt.preventDefault();
                 debugLog('map', 'WebGL context lost; awaiting restoration', 'warning');
-            });
+            };
+            const handleContextRestored = () => {
+                debugLog('map', 'WebGL context restored; resizing map', 'info');
+                mapInstance.resize();
+            };
+            canvas.addEventListener('webglcontextlost', handleContextLost);
+            canvas.addEventListener('webglcontextrestored', handleContextRestored);
 
             // Compact attribution in bottom-left
             mapInstance.addControl(
@@ -544,6 +551,18 @@ export default function MapBoard({
                 }
                 setIsMapLoaded(true);
             });
+
+            return () => {
+                canvas.removeEventListener('webglcontextlost', handleContextLost);
+                canvas.removeEventListener('webglcontextrestored', handleContextRestored);
+                tooltipRef.current?.remove();
+                tooltipRef.current = null;
+                removeDisasterLayers(mapInstance, pulseIntervalRef);
+                mapInstance.remove();
+                map.current = null;
+                styleLoadedRef.current = false;
+                setIsMapLoaded(false);
+            };
         } catch (error) {
             console.error('Error creating map:', error);
             setMapError(`Failed to create map: ${error}`);
