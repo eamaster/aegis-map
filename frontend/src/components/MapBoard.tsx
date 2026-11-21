@@ -12,27 +12,31 @@ import type { Disaster, DisasterSourceStatus, FireDetectionCell, ObservationWind
 import { DEFAULT_OBSERVATION_WINDOW, DEFAULT_VOLCANO_MODE } from '../config/disasters';
 import {
     classifyMapboxError,
+    DISASTER_LAYER_ICONS,
     DISASTER_LAYER_IDS,
+    DISASTER_LAYER_PRIORITY,
     DISASTER_SOURCE_IDS,
+    FALLBACK_SATELLITE_LAYER_ID,
+    FALLBACK_SATELLITE_SOURCE_ID,
+    FALLBACK_SATELLITE_TILE_TEMPLATE,
+    MAP_BASEMAP_CONFIG,
     MAP_INITIAL_VIEW,
     MAP_STYLES,
+    rewriteSatelliteTileUrl,
+    SELECTED_DISASTER_LAYER_ID,
+    SELECTED_DISASTER_SOURCE_ID,
 } from '../config/map';
 import { describeDisasterSources } from '../utils/disasterSources';
 import { cellToDisasterItem, fetchDisastersData } from '../utils/disastersClient';
 import { DESIGN_SYSTEM } from '../constants/designSystem';
 import MapLegend from './MapLegend';
 
-type LayerHandler = {
-    type: 'click' | 'mouseenter' | 'mouseleave';
-    layer: string;
-    fn: (e: mapboxgl.MapMouseEvent) => void;
-};
-
 // Set Mapbox access token
 const accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
 mapboxgl.accessToken = accessToken;
 
 interface MapBoardProps {
+    selectedDisaster?: Disaster | null;
     onDisasterSelect: (disaster: Disaster | null) => void;
     activeFilters: Set<string>;
     onFilterToggle: (type: string) => void;
@@ -42,54 +46,76 @@ interface MapBoardProps {
     onVolcanoModeChange?: (mode: VolcanoMode) => void;
 }
 
+const toPointFeatureCollection = (items: Disaster[]): GeoJSON.FeatureCollection<GeoJSON.Point> => ({
+    type: 'FeatureCollection',
+    features: items.map((item) => ({
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [item.lng, item.lat] },
+        properties: { id: item.id, severity: item.severity },
+    })),
+});
+
+/** Mount backup satellite imagery in Standard Satellite's bottom slot without rebuilding the style. */
+const mountFallbackSatelliteLayer = (mapInstance: mapboxgl.Map) => {
+    try {
+        if (!mapInstance.getSource(FALLBACK_SATELLITE_SOURCE_ID)) {
+            mapInstance.addSource(FALLBACK_SATELLITE_SOURCE_ID, {
+                type: 'raster',
+                tiles: [FALLBACK_SATELLITE_TILE_TEMPLATE],
+                tileSize: 256,
+                maxzoom: 19,
+                attribution: 'Esri World Imagery',
+            });
+        }
+        if (!mapInstance.getLayer(FALLBACK_SATELLITE_LAYER_ID)) {
+            mapInstance.addLayer({
+                id: FALLBACK_SATELLITE_LAYER_ID,
+                type: 'raster',
+                source: FALLBACK_SATELLITE_SOURCE_ID,
+                slot: 'bottom',
+                paint: { 'raster-opacity': 1 },
+            });
+        }
+    } catch (err) {
+        debugLog('map', `Could not mount backup satellite layer: ${err}`, 'warning');
+    }
+};
+
 // Helper function to safely remove all disaster layers and sources
 const removeDisasterLayers = (
     mapInstance: mapboxgl.Map | null,
-    animationIds?: Record<string, ReturnType<typeof setInterval>>,
-    handlers?: LayerHandler[]
+    pulseIntervalRef?: { current: ReturnType<typeof setInterval> | null },
 ) => {
     if (!mapInstance) return;
 
-    // Layer-delegated listeners outlive removeLayer, so detach them explicitly
-    if (handlers) {
-        handlers.forEach(({ type, layer, fn }) => mapInstance.off(type, layer, fn));
-        handlers.length = 0;
+    if (pulseIntervalRef?.current) {
+        clearInterval(pulseIntervalRef.current);
+        pulseIntervalRef.current = null;
     }
 
-    // Stop all animations first
-    if (animationIds) {
-        Object.values(animationIds).forEach(intervalId => {
-            if (intervalId) clearInterval(intervalId);
-        });
-        // Clear the animation IDs object
-        Object.keys(animationIds).forEach(key => delete animationIds[key]);
-    }
-
-    // Remove layers (must be done before removing sources)
-    DISASTER_LAYER_IDS.forEach(layerId => {
+    DISASTER_LAYER_IDS.forEach((layerId) => {
         if (mapInstance.getLayer(layerId)) {
             try {
                 mapInstance.removeLayer(layerId);
             } catch (e) {
-                console.warn(`  ⚠️ Could not remove layer ${layerId}:`, e);
+                console.warn(`Could not remove layer ${layerId}:`, e);
             }
         }
     });
 
-    // Remove sources
-    DISASTER_SOURCE_IDS.forEach(sourceId => {
+    DISASTER_SOURCE_IDS.forEach((sourceId) => {
         if (mapInstance.getSource(sourceId)) {
             try {
                 mapInstance.removeSource(sourceId);
             } catch (e) {
-                console.warn(`  ⚠️ Could not remove source ${sourceId}:`, e);
+                console.warn(`Could not remove source ${sourceId}:`, e);
             }
         }
     });
 };
 
-
 export default function MapBoard({
+    selectedDisaster = null,
     onDisasterSelect,
     activeFilters,
     onFilterToggle,
@@ -101,6 +127,12 @@ export default function MapBoard({
     const mapContainerRef = useRef<HTMLDivElement>(null);
     const map = useRef<mapboxgl.Map | null>(null);
     const tooltipRef = useRef<mapboxgl.Popup | null>(null);
+    const hoveredIdRef = useRef<string | null>(null);
+    const onDisasterSelectRef = useRef(onDisasterSelect);
+    useEffect(() => {
+        onDisasterSelectRef.current = onDisasterSelect;
+    }, [onDisasterSelect]);
+
     const [disasters, setDisasters] = useState<Disaster[]>([]);
     const [fireCells, setFireCells] = useState<FireDetectionCell[]>([]);
     const [detectionCountTotal, setDetectionCountTotal] = useState<number>(0);
@@ -117,355 +149,140 @@ export default function MapBoard({
     const isInitialLoadRef = useRef(true);
     const basemapFallbackAppliedRef = useRef(false);
     const disastersByIdRef = useRef<Map<string, Disaster>>(new Map());
+    const pulseIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-    // Animation interval refs for proper cleanup
-    const animationIdsRef = useRef<Record<string, ReturnType<typeof setInterval>>>({});
-    const layerHandlersRef = useRef<LayerHandler[]>([]);
+    /** Resolve the single topmost rendered disaster feature at `point` in strict visual priority order. */
+    const resolveTopFeature = (
+        mapInstance: mapboxgl.Map,
+        point: mapboxgl.PointLike,
+    ): { disaster: Disaster; icon: string } | null => {
+        const presentLayers = DISASTER_LAYER_PRIORITY.filter((id) => mapInstance.getLayer(id));
+        if (presentLayers.length === 0) return null;
+        const features = mapInstance.queryRenderedFeatures(point, { layers: presentLayers });
+        if (features.length === 0) return null;
 
-    // Selection always resolves to the backend record so valid zero values survive
-    const bindLayerInteractions = (layerId: string, icon: string) => {
-        if (!map.current) return;
-
-        const resolve = (e: mapboxgl.MapMouseEvent): Disaster | undefined => {
-            const id = e.features?.[0]?.properties?.id;
-            return typeof id === 'string' ? disastersByIdRef.current.get(id) : undefined;
-        };
-
-        const onClick = (e: mapboxgl.MapMouseEvent) => {
-            e.preventDefault();
-            e.originalEvent?.stopPropagation();
-            const selected = resolve(e);
-            if (!selected) {
-                console.warn(`Clicked ${layerId} feature has no matching disaster record`);
-                return;
+        for (const layerId of presentLayers) {
+            const match = features.find((f) => f.layer?.id === layerId);
+            const id = match?.properties?.id;
+            if (typeof id === 'string') {
+                const disaster = disastersByIdRef.current.get(id);
+                if (disaster) {
+                    return { disaster, icon: DISASTER_LAYER_ICONS[layerId] };
+                }
             }
-            onDisasterSelect(selected);
-        };
-
-        const onEnter = (e: mapboxgl.MapMouseEvent) => {
-            if (!map.current) return;
-            map.current.getCanvas().style.cursor = 'pointer';
-            const selected = resolve(e);
-            if (!selected) return;
-
-            tooltipRef.current?.remove();
-            const content = document.createElement('div');
-            content.className = 'text-sm font-medium';
-            if (selected.type === 'fire_detection') {
-                const count = selected.detectionCell?.detectionCount ?? '';
-                const frp = selected.detectionCell?.maxFrp !== null && selected.detectionCell?.maxFrp !== undefined
-                    ? ` (Peak FRP: ${selected.detectionCell.maxFrp} MW)`
-                    : '';
-                content.innerHTML = `
-                    <div style="font-weight: 700; color: ${DESIGN_SYSTEM.colors.disaster.fire_detection};">${icon} Satellite Hotspots Cell</div>
-                    <div style="font-size: 0.75rem;">${count} detections${frp}</div>
-                    <div style="font-size: 0.65rem; color: #9ca3af; margin-top: 2px;">Sensor thermal signature — not confirmed perimeter</div>
-                `;
-            } else {
-                const magText = selected.magnitude !== undefined ? ` M${selected.magnitude}` : '';
-                const areaText = selected.areaAcres !== undefined ? ` (${Math.round(selected.areaAcres).toLocaleString()} ac)` : '';
-                content.textContent = `${icon} ${selected.title}${magText}${areaText}`;
-            }
-            tooltipRef.current = new mapboxgl.Popup({
-                closeButton: false,
-                closeOnClick: false,
-                className: 'disaster-tooltip'
-            })
-                .setLngLat(e.lngLat)
-                .setDOMContent(content)
-                .addTo(map.current);
-        };
-
-        const onLeave = () => {
-            if (map.current) map.current.getCanvas().style.cursor = '';
-            tooltipRef.current?.remove();
-            tooltipRef.current = null;
-        };
-
-        const handlers: LayerHandler[] = [
-            { type: 'click', layer: layerId, fn: onClick },
-            { type: 'mouseenter', layer: layerId, fn: onEnter },
-            { type: 'mouseleave', layer: layerId, fn: onLeave },
-        ];
-        handlers.forEach(({ type, layer, fn }) => map.current?.on(type, layer, fn));
-        layerHandlersRef.current.push(...handlers);
+        }
+        return null;
     };
 
-    // Add disaster data layers to map
-    const addDisasterLayers = (disasters: Disaster[]) => {
+    // Add disaster data layers to map (bottom-to-top matching DISASTER_LAYER_PRIORITY)
+    const addDisasterLayers = (items: Disaster[]) => {
         if (!map.current) return;
+        const mapInstance = map.current;
 
-        // Safety check: Clean up any existing layers first
-        removeDisasterLayers(map.current, animationIdsRef.current, layerHandlersRef.current);
+        removeDisasterLayers(mapInstance, pulseIntervalRef);
 
-        // ✅ Filter disasters based on active filters
-        const visibleDisasters = disasters.filter(d => activeFilters.has(d.type));
+        const visible = items.filter((d) => activeFilters.has(d.type));
+        const fireDetections = visible.filter((d) => d.type === 'fire_detection');
+        const earthquakes = visible.filter((d) => d.type === 'earthquake');
+        const volcanoes = visible.filter((d) => d.type === 'volcano');
+        const fires = visible.filter((d) => d.type === 'fire');
 
-        // Separate disasters by type
-        const fires = visibleDisasters.filter((d) => d.type === 'fire');
-        const fireDetections = visibleDisasters.filter((d) => d.type === 'fire_detection');
-        const volcanoes = visibleDisasters.filter((d) => d.type === 'volcano');
-        const earthquakes = visibleDisasters.filter((d) => d.type === 'earthquake');
-
-        // Add fires layer
-        if (fires.length > 0) {
-            // DEBUG: Log layer creation
-            debugLog(
-                'map',
-                `Adding fires layer with ${fires.length} markers`,
-                'info'
-            );
-
-            map.current.addSource('fires', {
-                type: 'geojson',
-                data: {
-                    type: 'FeatureCollection',
-                    features: fires.map((disaster) => ({
-                        type: 'Feature',
-                        geometry: {
-                            type: 'Point',
-                            coordinates: [disaster.lng, disaster.lat],
-                        },
-                        properties: disaster,
-                    })),
-                },
-            });
-
-            map.current.addLayer({
-                id: 'fires-layer',
-                type: 'circle',
-                source: 'fires',
-                paint: {
-                    'circle-radius': [
-                        'case',
-                        ['==', ['get', 'severity'], 'high'],
-                        10, // Larger for high severity
-                        8
-                    ],
-                    'circle-color': DESIGN_SYSTEM.colors.disaster.fire,
-                    'circle-stroke-width': [
-                        'case',
-                        ['==', ['get', 'severity'], 'high'],
-                        4, // Thicker stroke for high severity
-                        3  // Better visibility on satellite
-                    ],
-                    'circle-stroke-color': '#ffffff',
-                    'circle-stroke-opacity': 1.0,
-                    'circle-opacity': 0.9,
-                },
-            });
-
-            // Add pulsing effect for high-severity fires
-            const animateFires = () => {
-                if (!map.current || !map.current.getLayer('fires-layer')) return;
-
-                const phase = (Date.now() % 2000) / 2000; // 2 second cycle
-                const radius = 10 + Math.sin(phase * Math.PI * 2) * 3;
-
-                try {
-                    map.current.setPaintProperty('fires-layer', 'circle-radius', [
-                        'case',
-                        ['==', ['get', 'severity'], 'high'],
-                        radius,
-                        8
-                    ]);
-                } catch {
-                    // Layer might be removed during animation
-                }
-            };
-
-            // Start animation loop for high-severity markers
-            const firesAnimationId = setInterval(animateFires, 50);
-            // Store animation ID for cleanup
-            animationIdsRef.current.fires = firesAnimationId;
-
-            bindLayerInteractions('fires-layer', '🔥');
-        }
-
-        // Add satellite thermal detection cells layer (FIRMS VIIRS)
+        // 1. Satellite thermal cells (bottom of disaster stack so confirmed events stay clickable on top)
         if (fireDetections.length > 0) {
-            debugLog(
-                'map',
-                `Adding fire-cells layer with ${fireDetections.length} cells`,
-                'info'
-            );
-
-            map.current.addSource('fire-cells', {
+            debugLog('map', `Adding fire-cells layer with ${fireDetections.length} cells`, 'info');
+            mapInstance.addSource('fire-cells', {
                 type: 'geojson',
-                data: {
-                    type: 'FeatureCollection',
-                    features: fireDetections.map((cellItem) => ({
-                        type: 'Feature',
-                        geometry: {
-                            type: 'Point',
-                            coordinates: [cellItem.lng, cellItem.lat],
-                        },
-                        properties: cellItem,
-                    })),
-                },
+                data: toPointFeatureCollection(fireDetections),
             });
-
-            map.current.addLayer({
+            mapInstance.addLayer({
                 id: 'fire-cells-layer',
                 type: 'circle',
                 source: 'fire-cells',
+                slot: 'top',
                 paint: {
                     'circle-color': [
                         'match',
                         ['get', 'severity'],
                         'high', DESIGN_SYSTEM.colors.disaster.fire,
                         'medium', DESIGN_SYSTEM.colors.disaster.fire_detection,
-                        /* default/low */ DESIGN_SYSTEM.colors.disaster.earthquake
+                        DESIGN_SYSTEM.colors.disaster.earthquake,
                     ],
-                    'circle-radius': [
-                        'interpolate',
-                        ['linear'],
-                        ['zoom'],
-                        1, 3.5,
-                        4, 5.5,
-                        8, 9,
-                        12, 14
-                    ],
+                    'circle-radius': ['interpolate', ['linear'], ['zoom'], 1, 3.5, 4, 5.5, 8, 9, 12, 14],
                     'circle-stroke-width': 1.5,
                     'circle-stroke-color': '#ffffff',
                     'circle-stroke-opacity': 0.85,
                     'circle-opacity': 0.82,
                 },
             });
-
-            bindLayerInteractions('fire-cells-layer', '🛰️');
         }
 
-        // Add earthquakes layer
-        if (earthquakes.length > 0) {
-            map.current.addSource('earthquakes', {
-                type: 'geojson',
-                data: {
-                    type: 'FeatureCollection',
-                    features: earthquakes.map((disaster) => ({
-                        type: 'Feature',
-                        geometry: {
-                            type: 'Point',
-                            coordinates: [disaster.lng, disaster.lat],
-                        },
-                        properties: disaster,
-                    })),
-                },
-            });
+        // 2. Point disaster layers (earthquakes -> volcanoes -> confirmed wildfires on top)
+        const pointSpecs: Array<{
+            sourceId: (typeof DISASTER_SOURCE_IDS)[number];
+            layerId: (typeof DISASTER_LAYER_PRIORITY)[number];
+            records: Disaster[];
+            color: string;
+        }> = [
+            { sourceId: 'earthquakes', layerId: 'earthquakes-layer', records: earthquakes, color: DESIGN_SYSTEM.colors.disaster.earthquake },
+            { sourceId: 'volcanoes', layerId: 'volcanoes-layer', records: volcanoes, color: DESIGN_SYSTEM.colors.disaster.volcano },
+            { sourceId: 'fires', layerId: 'fires-layer', records: fires, color: DESIGN_SYSTEM.colors.disaster.fire },
+        ];
 
-            map.current.addLayer({
-                id: 'earthquakes-layer',
+        const animatedLayerIds: string[] = [];
+        for (const spec of pointSpecs) {
+            if (spec.records.length === 0) continue;
+            mapInstance.addSource(spec.sourceId, {
+                type: 'geojson',
+                data: toPointFeatureCollection(spec.records),
+            });
+            mapInstance.addLayer({
+                id: spec.layerId,
                 type: 'circle',
-                source: 'earthquakes',
+                source: spec.sourceId,
+                slot: 'top',
                 paint: {
-                    'circle-radius': [
-                        'case',
-                        ['==', ['get', 'severity'], 'high'],
-                        10, // Larger for high severity
-                        8
-                    ],
-                    'circle-color': DESIGN_SYSTEM.colors.disaster.earthquake,
-                    'circle-stroke-width': [
-                        'case',
-                        ['==', ['get', 'severity'], 'high'],
-                        4, // Thicker stroke for high severity
-                        3  // Better visibility on satellite
-                    ],
+                    'circle-radius': ['case', ['==', ['get', 'severity'], 'high'], 10, 8],
+                    'circle-color': spec.color,
+                    'circle-stroke-width': ['case', ['==', ['get', 'severity'], 'high'], 4, 3],
                     'circle-stroke-color': '#ffffff',
                     'circle-stroke-opacity': 1.0,
                     'circle-opacity': 0.9,
                 },
             });
-
-            // Add pulsing effect for high-severity earthquakes
-            const animateEarthquakes = () => {
-                if (!map.current || !map.current.getLayer('earthquakes-layer')) return;
-
-                const phase = (Date.now() % 2000) / 2000; // 2 second cycle
-                const radius = 10 + Math.sin(phase * Math.PI * 2) * 3;
-
-                try {
-                    map.current.setPaintProperty('earthquakes-layer', 'circle-radius', [
-                        'case',
-                        ['==', ['get', 'severity'], 'high'],
-                        radius,
-                        8
-                    ]);
-                } catch {
-                    // Layer might be removed during animation
-                }
-            };
-
-            const earthquakesAnimationId = setInterval(animateEarthquakes, 50);
-            animationIdsRef.current.earthquakes = earthquakesAnimationId;
-
-            bindLayerInteractions('earthquakes-layer', '🌍');
+            if (spec.records.some((r) => r.severity === 'high')) {
+                animatedLayerIds.push(spec.layerId);
+            }
         }
 
-        // Add volcanoes layer (similar to fires but different color)
-        if (volcanoes.length > 0) {
-            map.current.addSource('volcanoes', {
-                type: 'geojson',
-                data: {
-                    type: 'FeatureCollection',
-                    features: volcanoes.map((disaster) => ({
-                        type: 'Feature',
-                        geometry: {
-                            type: 'Point',
-                            coordinates: [disaster.lng, disaster.lat],
-                        },
-                        properties: disaster,
-                    })),
-                },
-            });
-
-            map.current.addLayer({
-                id: 'volcanoes-layer',
-                type: 'circle',
-                source: 'volcanoes',
-                paint: {
-                    'circle-radius': [
-                        'case',
-                        ['==', ['get', 'severity'], 'high'],
-                        10, // Larger for high severity
-                        8
-                    ],
-                    'circle-color': DESIGN_SYSTEM.colors.disaster.volcano,
-                    'circle-stroke-width': [
-                        'case',
-                        ['==', ['get', 'severity'], 'high'],
-                        4, // Thicker stroke for high severity
-                        3  // Better visibility on satellite
-                    ],
-                    'circle-stroke-color': '#ffffff',
-                    'circle-stroke-opacity': 1.0,
-                    'circle-opacity': 0.9,
-                },
-            });
-
-            // Add pulsing effect for high-severity volcanoes
-            const animateVolcanoes = () => {
-                if (!map.current || !map.current.getLayer('volcanoes-layer')) return;
-
-                const phase = (Date.now() % 2000) / 2000; // 2 second cycle
+        // Single shared pulse animation for high-severity markers across active point layers
+        if (animatedLayerIds.length > 0) {
+            pulseIntervalRef.current = setInterval(() => {
+                if (!map.current) return;
+                const phase = (Date.now() % 2000) / 2000;
                 const radius = 10 + Math.sin(phase * Math.PI * 2) * 3;
-
-                try {
-                    map.current.setPaintProperty('volcanoes-layer', 'circle-radius', [
-                        'case',
-                        ['==', ['get', 'severity'], 'high'],
-                        radius,
-                        8
-                    ]);
-                } catch {
-                    // Layer might be removed during animation
+                for (const layerId of animatedLayerIds) {
+                    if (!map.current.getLayer(layerId)) continue;
+                    try {
+                        map.current.setPaintProperty(layerId, 'circle-radius', [
+                            'case',
+                            ['==', ['get', 'severity'], 'high'],
+                            radius,
+                            8,
+                        ]);
+                    } catch {
+                        // Layer may be torn down during filter update
+                    }
                 }
-            };
+            }, 50);
+        }
 
-            const volcanoesAnimationId = setInterval(animateVolcanoes, 50);
-            animationIdsRef.current.volcanoes = volcanoesAnimationId;
-
-            bindLayerInteractions('volcanoes-layer', '🌋');
+        // Keep selection ring layer on top of disaster layers when present
+        if (mapInstance.getLayer(SELECTED_DISASTER_LAYER_ID)) {
+            try {
+                mapInstance.moveLayer(SELECTED_DISASTER_LAYER_ID);
+            } catch {
+                // Best-effort ordering
+            }
         }
     };
 
@@ -549,62 +366,149 @@ export default function MapBoard({
         }
 
         try {
-            // Create map instance from centralized map config (with automatic vector fallback on raster 429)
-            map.current = new mapboxgl.Map({
+            // Create map instance using official Mapbox Standard Satellite style (Mapbox GL JS v3)
+            const mapInstance = new mapboxgl.Map({
                 container: mapContainerRef.current,
                 style: MAP_STYLES.primary,
+                config: MAP_BASEMAP_CONFIG,
                 center: MAP_INITIAL_VIEW.center,
                 zoom: MAP_INITIAL_VIEW.zoom,
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 projection: { name: MAP_INITIAL_VIEW.projection } as any,
                 pitch: MAP_INITIAL_VIEW.pitch,
                 bearing: MAP_INITIAL_VIEW.bearing,
-                attributionControl: false, // ✅ Remove default cluttered attribution
+                attributionControl: false,
+                transformRequest: (url) => {
+                    if (!basemapFallbackAppliedRef.current) return { url };
+                    const rewritten = rewriteSatelliteTileUrl(url);
+                    return rewritten ? { url: rewritten } : { url };
+                },
+            });
+            map.current = mapInstance;
+
+            // Preserve WebGL context if browser temporarily suspends GPU resources
+            mapInstance.getCanvas().addEventListener('webglcontextlost', (evt) => {
+                evt.preventDefault();
+                debugLog('map', 'WebGL context lost; awaiting restoration', 'warning');
             });
 
-            // ✅ Add compact attribution in bottom-left
-            map.current.addControl(
+            // Compact attribution in bottom-left
+            mapInstance.addControl(
                 new mapboxgl.AttributionControl({
                     compact: true,
-                    customAttribution: '© Mapbox © OpenStreetMap'
+                    customAttribution: '© Mapbox © OpenStreetMap',
                 }),
-                'bottom-left'
+                'bottom-left',
             );
 
-            // DEBUG: Expose map and selection handler for console debugging
+            // DEBUG: Expose map and selection handler for debugging / E2E
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (window as any).mapDebug = map.current;
+            (window as any).mapDebug = mapInstance;
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            (window as any).selectDisasterDebug = onDisasterSelect;
+            (window as any).selectDisasterDebug = (d: Disaster | null) => onDisasterSelectRef.current(d);
 
-            // Add navigation controls
-            map.current.addControl(new mapboxgl.NavigationControl(), 'bottom-right');
-
-            // Add geolocate control
-            map.current.addControl(
+            // Navigation & geolocate controls
+            mapInstance.addControl(new mapboxgl.NavigationControl(), 'bottom-right');
+            mapInstance.addControl(
                 new mapboxgl.GeolocateControl({
-                    positionOptions: {
-                        enableHighAccuracy: true,
-                    },
+                    positionOptions: { enableHighAccuracy: true },
                     trackUserLocation: true,
                 }),
-                'bottom-right'
+                'bottom-right',
             );
 
-            // Classify map errors: fall back to vector basemap on raster 429 and never hide MapLegend on tile failures
-            map.current.on('error', (e) => {
+            // Unified priority-ordered click handler: selects the exact topmost feature and keeps its position visible
+            mapInstance.on('click', (e) => {
+                const hit = resolveTopFeature(mapInstance, e.point);
+                if (!hit) return;
+                e.preventDefault();
+                e.originalEvent?.stopPropagation();
+                onDisasterSelectRef.current(hit.disaster);
+
+                // Keep user's exact zoom & position; only nudge if the right sidebar (420px) would cover the point on desktop
+                const rect = mapInstance.getCanvas().getBoundingClientRect();
+                if (window.innerWidth >= 768 && e.point.x > rect.width - 440) {
+                    mapInstance.easeTo({
+                        center: [hit.disaster.lng, hit.disaster.lat],
+                        zoom: mapInstance.getZoom(),
+                        padding: { left: 280, right: 440, top: 64, bottom: 24 },
+                        duration: 450,
+                    });
+                }
+            });
+
+            // Unified hover tooltip handler: always matches the exact topmost clickable feature
+            mapInstance.on('mousemove', (e) => {
+                const hit = resolveTopFeature(mapInstance, e.point);
+                if (!hit) {
+                    if (hoveredIdRef.current !== null) {
+                        hoveredIdRef.current = null;
+                        mapInstance.getCanvas().style.cursor = '';
+                        tooltipRef.current?.remove();
+                        tooltipRef.current = null;
+                    }
+                    return;
+                }
+
+                mapInstance.getCanvas().style.cursor = 'pointer';
+                if (hoveredIdRef.current === hit.disaster.id && tooltipRef.current) {
+                    return;
+                }
+                hoveredIdRef.current = hit.disaster.id;
+
+                tooltipRef.current?.remove();
+                const content = document.createElement('div');
+                content.className = 'text-sm font-medium';
+                const { disaster: selected, icon } = hit;
+                if (selected.type === 'fire_detection') {
+                    const count = selected.detectionCell?.detectionCount ?? '';
+                    const frp =
+                        selected.detectionCell?.maxFrp !== null && selected.detectionCell?.maxFrp !== undefined
+                            ? ` (Peak FRP: ${selected.detectionCell.maxFrp} MW)`
+                            : '';
+                    content.innerHTML = `
+                        <div style="font-weight: 700; color: ${DESIGN_SYSTEM.colors.disaster.fire_detection};">${icon} Satellite Hotspots Cell</div>
+                        <div style="font-size: 0.75rem;">${count} detections${frp}</div>
+                        <div style="font-size: 0.65rem; color: #9ca3af; margin-top: 2px;">Sensor thermal signature — not confirmed perimeter</div>
+                    `;
+                } else {
+                    const magText = selected.magnitude !== undefined ? ` M${selected.magnitude}` : '';
+                    const areaText =
+                        selected.areaAcres !== undefined
+                            ? ` (${Math.round(selected.areaAcres).toLocaleString()} ac)`
+                            : '';
+                    content.textContent = `${icon} ${selected.title}${magText}${areaText}`;
+                }
+
+                tooltipRef.current = new mapboxgl.Popup({
+                    closeButton: false,
+                    closeOnClick: false,
+                    className: 'disaster-tooltip',
+                })
+                    .setLngLat([selected.lng, selected.lat])
+                    .setDOMContent(content)
+                    .addTo(mapInstance);
+            });
+
+            mapInstance.on('mouseleave', () => {
+                hoveredIdRef.current = null;
+                mapInstance.getCanvas().style.cursor = '';
+                tooltipRef.current?.remove();
+                tooltipRef.current = null;
+            });
+
+            // Classify map errors: swap satellite raster tiles in-place on HTTP 429 (no setStyle rebuild, always satellite)
+            mapInstance.on('error', (e) => {
                 const action = classifyMapboxError(
                     e as { sourceId?: string; error?: { status?: number; message?: string; url?: string } },
                     { hasFallbackApplied: basemapFallbackAppliedRef.current },
                 );
-                if (action.kind === 'fallback_basemap') {
+                if (action.kind === 'fallback_satellite_tiles') {
                     basemapFallbackAppliedRef.current = true;
                     debugLog('map', action.reason, 'warning');
-                    toast(action.reason, { id: 'map-basemap-fallback', duration: 5000, icon: '🗺️' });
-                    if (map.current) {
-                        removeDisasterLayers(map.current, animationIdsRef.current, layerHandlersRef.current);
-                        setIsMapLoaded(false);
-                        map.current.setStyle(MAP_STYLES.fallback);
+                    toast(action.reason, { id: 'map-basemap-fallback', duration: 5000, icon: '🛰️' });
+                    if (mapInstance.isStyleLoaded()) {
+                        mountFallbackSatelliteLayer(mapInstance);
                     }
                     return;
                 }
@@ -617,22 +521,20 @@ export default function MapBoard({
                 debugLog('map', `Non-fatal Mapbox tile/source error: ${action.detail}`, 'warning');
             });
 
-            // ✅ PERFORMANCE: Load disaster data immediately in parallel with map
-            // Don't wait for map to finish loading - fetch data while map renders
+            // Load disaster data immediately in parallel with map
             // eslint-disable-next-line react-hooks/set-state-in-effect
             loadDisasters();
 
-            // Add disaster layers when map finishes loading (and after any basemap fallback style swap)
-            map.current.on('load', () => {
+            mapInstance.on('load', () => {
                 debugLog('map', 'Map finished loading', 'success');
+                if (basemapFallbackAppliedRef.current) {
+                    mountFallbackSatelliteLayer(mapInstance);
+                }
                 setIsMapLoaded(true);
             });
-            map.current.on('style.load', () => {
-                try {
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    map.current?.setProjection({ name: MAP_INITIAL_VIEW.projection } as any);
-                } catch {
-                    // Style projection fallback is best-effort
+            mapInstance.on('style.load', () => {
+                if (basemapFallbackAppliedRef.current) {
+                    mountFallbackSatelliteLayer(mapInstance);
                 }
                 setIsMapLoaded(true);
             });
@@ -658,9 +560,52 @@ export default function MapBoard({
     useEffect(() => {
         if (!map.current || !isMapLoaded) return;
 
-        removeDisasterLayers(map.current, animationIdsRef.current, layerHandlersRef.current);
+        removeDisasterLayers(map.current, pulseIntervalRef);
         if (disasters.length > 0) addDisasterLayers(disasters);
     }, [isMapLoaded, activeFilters, disasters]);
+
+    // Pin a persistent highlight ring on the selected disaster without rebuilding disaster layers
+    useEffect(() => {
+        if (!map.current || !isMapLoaded) return;
+        const mapInstance = map.current;
+        const data: GeoJSON.FeatureCollection<GeoJSON.Point> = selectedDisaster
+            ? {
+                  type: 'FeatureCollection',
+                  features: [
+                      {
+                          type: 'Feature',
+                          geometry: { type: 'Point', coordinates: [selectedDisaster.lng, selectedDisaster.lat] },
+                          properties: { id: selectedDisaster.id },
+                      },
+                  ],
+              }
+            : { type: 'FeatureCollection', features: [] };
+
+        const existingSource = mapInstance.getSource(SELECTED_DISASTER_SOURCE_ID) as
+            | mapboxgl.GeoJSONSource
+            | undefined;
+        if (existingSource) {
+            existingSource.setData(data);
+        } else {
+            mapInstance.addSource(SELECTED_DISASTER_SOURCE_ID, { type: 'geojson', data });
+        }
+
+        if (!mapInstance.getLayer(SELECTED_DISASTER_LAYER_ID)) {
+            mapInstance.addLayer({
+                id: SELECTED_DISASTER_LAYER_ID,
+                type: 'circle',
+                source: SELECTED_DISASTER_SOURCE_ID,
+                slot: 'top',
+                paint: {
+                    'circle-radius': 15,
+                    'circle-color': 'rgba(59, 130, 246, 0.25)',
+                    'circle-stroke-width': 3,
+                    'circle-stroke-color': '#ffffff',
+                    'circle-stroke-opacity': 1,
+                },
+            });
+        }
+    }, [isMapLoaded, selectedDisaster]);
 
     // Calculate disaster counts
     const disasterCounts = {

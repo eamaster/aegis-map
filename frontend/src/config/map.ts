@@ -1,14 +1,21 @@
 /**
- * Centralized Mapbox map configuration and error classification.
- * Keeps style URLs, layer/source registries, and fatal vs. recoverable
- * Mapbox error rules in one place (zero hardcoding in MapBoard).
+ * Centralized Mapbox Standard Satellite configuration, satellite tile fallback,
+ * layer/source registries, and error classification.
+ * Reference: https://docs.mapbox.com/map-styles/guides/standard-styles/#mapbox-standard-satellite
  */
 
 export const MAP_STYLES = {
-    /** Satellite imagery with streets/labels (uses Mapbox raster + vector tiles). */
-    primary: 'mapbox://styles/mapbox/satellite-streets-v12',
-    /** Vector-only fallback when Mapbox raster satellite tiles are rate-limited (HTTP 429). */
-    fallback: 'mapbox://styles/mapbox/dark-v11',
+    /** Official Mapbox GL JS v3 Standard Satellite style. */
+    primary: 'mapbox://styles/mapbox/standard-satellite',
+} as const;
+
+/** Standard Satellite basemap configuration (Mapbox GL JS v3). */
+export const MAP_BASEMAP_CONFIG = {
+    basemap: {
+        showPlaceLabels: true,
+        showRoadLabels: true,
+        showPointOfInterestLabels: false,
+    },
 } as const;
 
 export const MAP_INITIAL_VIEW = {
@@ -19,13 +26,60 @@ export const MAP_INITIAL_VIEW = {
     projection: 'globe' as const,
 } as const;
 
+/**
+ * Fallback satellite raster tile service (Esri World Imagery, CORS-enabled, no API key)
+ * mounted in Standard Satellite's `bottom` slot ONLY when Mapbox's `mapbox.satellite`
+ * raster tiles return HTTP 429. Preserves the satellite globe, borders, place labels,
+ * and WebGL context without calling `setStyle()`.
+ */
+export const FALLBACK_SATELLITE_SOURCE_ID = 'fallback-satellite-imagery';
+export const FALLBACK_SATELLITE_LAYER_ID = 'fallback-satellite-imagery-layer';
+export const FALLBACK_SATELLITE_TILE_TEMPLATE =
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+
+const MAPBOX_SATELLITE_TILE_RE =
+    /^https:\/\/api\.mapbox\.com\/v4\/mapbox\.satellite\/(\d+)\/(\d+)\/(\d+)(?:@2x)?\.(?:webp|jpg\d*|png)(?:\?.*)?$/i;
+
+/**
+ * Rewrite a rate-limited Mapbox satellite raster tile URL to the equivalent
+ * Esri World Imagery XYZ tile (Esri uses `{z}/{y}/{x}`). Returns null for
+ * non-satellite URLs (styles, fonts, sprites, vector borders/labels).
+ */
+export function rewriteSatelliteTileUrl(url: string): string | null {
+    const match = MAPBOX_SATELLITE_TILE_RE.exec(url);
+    if (!match) return null;
+    const [, z, x, y] = match;
+    return FALLBACK_SATELLITE_TILE_TEMPLATE
+        .replace('{z}', z)
+        .replace('{y}', y)
+        .replace('{x}', x);
+}
+
+export const SELECTED_DISASTER_SOURCE_ID = 'selected-disaster';
+export const SELECTED_DISASTER_LAYER_ID = 'selected-disaster-ring-layer';
+
 export const DISASTER_SOURCE_IDS = ['fires', 'fire-cells', 'earthquakes', 'volcanoes'] as const;
-export const DISASTER_LAYER_IDS = [
+
+/**
+ * Render/hit-test priority order for disaster layers (topmost interactive priority first).
+ * Used by both layer cleanup and unified click/hover resolution so tooltips and
+ * clicks always resolve the exact same feature when markers overlap.
+ */
+export const DISASTER_LAYER_PRIORITY = [
     'fires-layer',
-    'fire-cells-layer',
-    'earthquakes-layer',
     'volcanoes-layer',
+    'earthquakes-layer',
+    'fire-cells-layer',
 ] as const;
+
+export const DISASTER_LAYER_IDS = DISASTER_LAYER_PRIORITY;
+
+export const DISASTER_LAYER_ICONS: Readonly<Record<(typeof DISASTER_LAYER_PRIORITY)[number], string>> = {
+    'fires-layer': '🔥',
+    'volcanoes-layer': '🌋',
+    'earthquakes-layer': '🌍',
+    'fire-cells-layer': '🛰️',
+};
 
 export interface MapboxErrorEventLike {
     sourceId?: string;
@@ -38,19 +92,13 @@ export interface MapboxErrorEventLike {
 
 export type MapErrorAction =
     | { kind: 'fatal'; message: string }
-    | { kind: 'fallback_basemap'; reason: string }
+    | { kind: 'fallback_satellite_tiles'; reason: string }
     | { kind: 'ignore'; detail: string };
 
 /**
  * Classify a Mapbox GL JS `error` event so transient or per-tile failures
- * never unmount the Live Monitor legend or block the interactive map.
- *
- * - HTTP 429 (e.g. Mapbox raster tile quota/rate limit on `mapbox.satellite`):
- *   triggers a one-time automatic fallback to `MAP_STYLES.fallback` (vector basemap),
- *   and suppresses duplicate subsequent tile 429s.
- * - HTTP 401/403 or WebGL initialization errors: fatal (invalid token or unsupported browser).
- * - Other tile/source/network errors: non-fatal (`ignore`) so disaster markers and
- *   monitoring controls remain usable.
+ * never unmount the Live Monitor legend, switch away from satellite imagery,
+ * or rebuild the Mapbox style.
  */
 export function classifyMapboxError(
     event: MapboxErrorEventLike | null | undefined,
@@ -64,8 +112,8 @@ export function classifyMapboxError(
     if (status === 429 || lower.includes('too many requests')) {
         if (!options.hasFallbackApplied) {
             return {
-                kind: 'fallback_basemap',
-                reason: 'Satellite basemap tiles rate-limited (HTTP 429); switched to vector basemap.',
+                kind: 'fallback_satellite_tiles',
+                reason: 'Mapbox satellite tiles rate-limited (HTTP 429); switched to backup satellite imagery.',
             };
         }
         return { kind: 'ignore', detail: `Tile rate-limited (429): ${url || rawMessage}` };

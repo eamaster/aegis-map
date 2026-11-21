@@ -176,6 +176,7 @@ function App() {
       {/* Main Content Area */}
       <main className="flex-1 relative">
         <MapBoard
+          selectedDisaster={selectedDisaster}
           onDisasterSelect={handleDisasterSelect}
           activeFilters={activeFilters}
           onFilterToggle={handleFilterToggle}
