@@ -147,6 +147,7 @@ export default function MapBoard({
     const [sourceStatus, setSourceStatus] = useState<DisasterSourceStatus | null>(null);
     const [loadFailed, setLoadFailed] = useState(false);
     const isInitialLoadRef = useRef(true);
+    const styleLoadedRef = useRef(false);
     const basemapFallbackAppliedRef = useRef(false);
     const disastersByIdRef = useRef<Map<string, Disaster>>(new Map());
     const pulseIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -507,7 +508,7 @@ export default function MapBoard({
                     basemapFallbackAppliedRef.current = true;
                     debugLog('map', action.reason, 'warning');
                     toast(action.reason, { id: 'map-basemap-fallback', duration: 5000, icon: '🛰️' });
-                    if (mapInstance.isStyleLoaded()) {
+                    if (styleLoadedRef.current || mapInstance.isStyleLoaded()) {
                         mountFallbackSatelliteLayer(mapInstance);
                     }
                     return;
@@ -526,6 +527,7 @@ export default function MapBoard({
             loadDisasters();
 
             mapInstance.on('load', () => {
+                styleLoadedRef.current = true;
                 debugLog('map', 'Map finished loading', 'success');
                 if (basemapFallbackAppliedRef.current) {
                     mountFallbackSatelliteLayer(mapInstance);
@@ -533,6 +535,7 @@ export default function MapBoard({
                 setIsMapLoaded(true);
             });
             mapInstance.on('style.load', () => {
+                styleLoadedRef.current = true;
                 if (basemapFallbackAppliedRef.current) {
                     mountFallbackSatelliteLayer(mapInstance);
                 }
