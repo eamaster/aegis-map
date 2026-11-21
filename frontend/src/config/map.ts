@@ -36,6 +36,57 @@ export const FALLBACK_SATELLITE_SOURCE_ID = 'fallback-satellite-imagery';
 export const FALLBACK_SATELLITE_LAYER_ID = 'fallback-satellite-imagery-layer';
 export const FALLBACK_SATELLITE_TILE_TEMPLATE =
     'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+export const SATELLITE_FALLBACK_TTL_MS = 60 * 60 * 1000; // 1 hour per browser session
+
+const SATELLITE_FALLBACK_STORAGE_PREFIX = 'aegis-map:sat-fallback:';
+
+/** Derive a non-secret storage key scoped to the active Mapbox token (without storing the token). */
+function satelliteFallbackStorageKey(token: string): string {
+    let hash = 2166136261;
+    for (let i = 0; i < token.length; i++) {
+        hash ^= token.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+    }
+    return `${SATELLITE_FALLBACK_STORAGE_PREFIX}${(hash >>> 0).toString(16)}`;
+}
+
+/** Check whether satellite tile fallback was already activated for this token in the current session. */
+export function isSatelliteFallbackRemembered(
+    token: string | undefined,
+    storage: Pick<Storage, 'getItem' | 'removeItem'> | null | undefined =
+        typeof window !== 'undefined' ? window.sessionStorage : null,
+    nowMs: number = Date.now(),
+): boolean {
+    if (!token || !storage) return false;
+    const key = satelliteFallbackStorageKey(token);
+    try {
+        const raw = storage.getItem(key);
+        if (!raw) return false;
+        const expiresAt = Number(raw);
+        if (!Number.isFinite(expiresAt) || nowMs >= expiresAt) {
+            storage.removeItem(key);
+            return false;
+        }
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+/** Remember satellite tile fallback for this token in sessionStorage to avoid repeated 429 bursts on reload. */
+export function rememberSatelliteFallback(
+    token: string | undefined,
+    storage: Pick<Storage, 'setItem'> | null | undefined =
+        typeof window !== 'undefined' ? window.sessionStorage : null,
+    nowMs: number = Date.now(),
+): void {
+    if (!token || !storage) return;
+    try {
+        storage.setItem(satelliteFallbackStorageKey(token), String(nowMs + SATELLITE_FALLBACK_TTL_MS));
+    } catch {
+        // Ignore private-mode storage errors
+    }
+}
 
 const MAPBOX_SATELLITE_TILE_RE =
     /^https:\/\/api\.mapbox\.com\/v4\/mapbox\.satellite\/(\d+)\/(\d+)\/(\d+)(?:@2x)?\.(?:webp|jpg\d*|png)(?:\?.*)?$/i;

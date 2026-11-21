@@ -19,9 +19,11 @@ import {
     FALLBACK_SATELLITE_LAYER_ID,
     FALLBACK_SATELLITE_SOURCE_ID,
     FALLBACK_SATELLITE_TILE_TEMPLATE,
+    isSatelliteFallbackRemembered,
     MAP_BASEMAP_CONFIG,
     MAP_INITIAL_VIEW,
     MAP_STYLES,
+    rememberSatelliteFallback,
     rewriteSatelliteTileUrl,
     SELECTED_DISASTER_LAYER_ID,
     SELECTED_DISASTER_SOURCE_ID,
@@ -148,7 +150,7 @@ export default function MapBoard({
     const [loadFailed, setLoadFailed] = useState(false);
     const isInitialLoadRef = useRef(true);
     const styleLoadedRef = useRef(false);
-    const basemapFallbackAppliedRef = useRef(false);
+    const basemapFallbackAppliedRef = useRef(isSatelliteFallbackRemembered(accessToken));
     const disastersByIdRef = useRef<Map<string, Disaster>>(new Map());
     const pulseIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -506,6 +508,7 @@ export default function MapBoard({
                 );
                 if (action.kind === 'fallback_satellite_tiles') {
                     basemapFallbackAppliedRef.current = true;
+                    rememberSatelliteFallback(accessToken);
                     debugLog('map', action.reason, 'warning');
                     toast(action.reason, { id: 'map-basemap-fallback', duration: 5000, icon: '🛰️' });
                     if (styleLoadedRef.current || mapInstance.isStyleLoaded()) {

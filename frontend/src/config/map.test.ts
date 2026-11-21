@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
     classifyMapboxError,
     DISASTER_LAYER_PRIORITY,
+    isSatelliteFallbackRemembered,
     MAP_STYLES,
+    rememberSatelliteFallback,
     rewriteSatelliteTileUrl,
+    SATELLITE_FALLBACK_TTL_MS,
 } from './map';
 
 describe('map config and satellite fallback', () => {
@@ -85,5 +88,29 @@ describe('map config and satellite fallback', () => {
 
         expect(classifyMapboxError({ error: {} }, { hasFallbackApplied: false }).kind).toBe('ignore');
         expect(classifyMapboxError(undefined, { hasFallbackApplied: false }).kind).toBe('ignore');
+    });
+
+    it('remembers satellite fallback per token with TTL and expires cleanly', () => {
+        const backing = new Map<string, string>();
+        const storage = {
+            getItem: (k: string) => backing.get(k) ?? null,
+            setItem: (k: string, v: string) => {
+                backing.set(k, v);
+            },
+            removeItem: (k: string) => {
+                backing.delete(k);
+            },
+        };
+        const t0 = 1_700_000_000_000;
+        expect(isSatelliteFallbackRemembered('pk.tokenA', storage, t0)).toBe(false);
+
+        rememberSatelliteFallback('pk.tokenA', storage, t0);
+        // Stored key must not expose raw token
+        expect([...backing.keys()].every((k) => !k.includes('pk.tokenA'))).toBe(true);
+        expect(isSatelliteFallbackRemembered('pk.tokenA', storage, t0 + 1000)).toBe(true);
+        // Scoped to the rate-limited token; a different token stays unaffected
+        expect(isSatelliteFallbackRemembered('pk.tokenB', storage, t0 + 1000)).toBe(false);
+        // Expires after TTL
+        expect(isSatelliteFallbackRemembered('pk.tokenA', storage, t0 + SATELLITE_FALLBACK_TTL_MS)).toBe(false);
     });
 });
