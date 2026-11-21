@@ -10,6 +10,13 @@ import { debugLog } from '../utils/debug';
 import toast from 'react-hot-toast';
 import type { Disaster, DisasterSourceStatus, FireDetectionCell, ObservationWindow, VolcanoMode } from '../types';
 import { DEFAULT_OBSERVATION_WINDOW, DEFAULT_VOLCANO_MODE } from '../config/disasters';
+import {
+    classifyMapboxError,
+    DISASTER_LAYER_IDS,
+    DISASTER_SOURCE_IDS,
+    MAP_INITIAL_VIEW,
+    MAP_STYLES,
+} from '../config/map';
 import { describeDisasterSources } from '../utils/disasterSources';
 import { cellToDisasterItem, fetchDisastersData } from '../utils/disastersClient';
 import { DESIGN_SYSTEM } from '../constants/designSystem';
@@ -59,7 +66,7 @@ const removeDisasterLayers = (
     }
 
     // Remove layers (must be done before removing sources)
-    ['fires-layer', 'fire-cells-layer', 'earthquakes-layer', 'volcanoes-layer'].forEach(layerId => {
+    DISASTER_LAYER_IDS.forEach(layerId => {
         if (mapInstance.getLayer(layerId)) {
             try {
                 mapInstance.removeLayer(layerId);
@@ -70,7 +77,7 @@ const removeDisasterLayers = (
     });
 
     // Remove sources
-    ['fires', 'fire-cells', 'earthquakes', 'volcanoes'].forEach(sourceId => {
+    DISASTER_SOURCE_IDS.forEach(sourceId => {
         if (mapInstance.getSource(sourceId)) {
             try {
                 mapInstance.removeSource(sourceId);
@@ -108,6 +115,7 @@ export default function MapBoard({
     const [sourceStatus, setSourceStatus] = useState<DisasterSourceStatus | null>(null);
     const [loadFailed, setLoadFailed] = useState(false);
     const isInitialLoadRef = useRef(true);
+    const basemapFallbackAppliedRef = useRef(false);
     const disastersByIdRef = useRef<Map<string, Disaster>>(new Map());
 
     // Animation interval refs for proper cleanup
@@ -541,16 +549,16 @@ export default function MapBoard({
         }
 
         try {
-            // Create map instance with Satellite Streets v12 style (avoids Mapbox v3 standard-satellite place-A featureset selector warning)
+            // Create map instance from centralized map config (with automatic vector fallback on raster 429)
             map.current = new mapboxgl.Map({
                 container: mapContainerRef.current,
-                style: 'mapbox://styles/mapbox/satellite-streets-v12',
-                center: [0, 20], // ✅ Global center (Africa/Europe visible)
-                zoom: 1.3, // ✅ Full globe view showing all continents
+                style: MAP_STYLES.primary,
+                center: MAP_INITIAL_VIEW.center,
+                zoom: MAP_INITIAL_VIEW.zoom,
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                projection: { name: 'globe' } as any,
-                pitch: 0, // Flat view for better overview
-                bearing: 0, // North-up orientation
+                projection: { name: MAP_INITIAL_VIEW.projection } as any,
+                pitch: MAP_INITIAL_VIEW.pitch,
+                bearing: MAP_INITIAL_VIEW.bearing,
                 attributionControl: false, // ✅ Remove default cluttered attribution
             });
 
@@ -583,11 +591,30 @@ export default function MapBoard({
                 'bottom-right'
             );
 
-            // Handle map errors
+            // Classify map errors: fall back to vector basemap on raster 429 and never hide MapLegend on tile failures
             map.current.on('error', (e) => {
-                console.error('Mapbox error:', e);
-                setMapError(`Map error: ${e.error.message}`);
-                setLoading(false);
+                const action = classifyMapboxError(
+                    e as { sourceId?: string; error?: { status?: number; message?: string; url?: string } },
+                    { hasFallbackApplied: basemapFallbackAppliedRef.current },
+                );
+                if (action.kind === 'fallback_basemap') {
+                    basemapFallbackAppliedRef.current = true;
+                    debugLog('map', action.reason, 'warning');
+                    toast(action.reason, { id: 'map-basemap-fallback', duration: 5000, icon: '🗺️' });
+                    if (map.current) {
+                        removeDisasterLayers(map.current, animationIdsRef.current, layerHandlersRef.current);
+                        setIsMapLoaded(false);
+                        map.current.setStyle(MAP_STYLES.fallback);
+                    }
+                    return;
+                }
+                if (action.kind === 'fatal') {
+                    console.error('Fatal Mapbox error:', e);
+                    setMapError(action.message);
+                    setLoading(false);
+                    return;
+                }
+                debugLog('map', `Non-fatal Mapbox tile/source error: ${action.detail}`, 'warning');
             });
 
             // ✅ PERFORMANCE: Load disaster data immediately in parallel with map
@@ -595,12 +622,18 @@ export default function MapBoard({
             // eslint-disable-next-line react-hooks/set-state-in-effect
             loadDisasters();
 
-            // Add disaster layers when map finishes loading
+            // Add disaster layers when map finishes loading (and after any basemap fallback style swap)
             map.current.on('load', () => {
                 debugLog('map', 'Map finished loading', 'success');
                 setIsMapLoaded(true);
             });
             map.current.on('style.load', () => {
+                try {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    map.current?.setProjection({ name: MAP_INITIAL_VIEW.projection } as any);
+                } catch {
+                    // Style projection fallback is best-effort
+                }
                 setIsMapLoaded(true);
             });
         } catch (error) {
@@ -844,8 +877,8 @@ export default function MapBoard({
                 </div>
             )}
 
-            {/* Map Legend - shows disaster types and counts */}
-            {!loading && !mapError && (
+            {/* Map Legend - always stays visible once disaster data has loaded */}
+            {!loading && (
                 <MapLegend
                     counts={disasterCounts}
                     lastUpdated={lastUpdated}
