@@ -124,13 +124,22 @@ Found 45 fire events. Testing 10 samples...
   Success Rate: 100.0%
 ```
 
-## Unit Tests
-
-### Running Tests
+## Unit Tests & D1 Archive Tests
 
 ```bash
-# Run all tests
+npm run typecheck
 npm test
+```
+
+Vitest runs on `@cloudflare/vitest-pool-workers` with `vitest.wrangler.jsonc` and automatically applies `backend/migrations/*.sql` to an isolated local test D1 database (`AEGIS_DB`) via `test/applyMigrations.ts`.
+
+### Bounded Live Provider Checks
+
+```bash
+node scripts/verify-live-providers.mjs
+```
+
+Checks MET Norway, MET Malaysia (`api.data.gov.my`), IRIMO (WMO S3 CAP RSS + direct `irimo.ir` reachability note), India SACHET CAP RSS, Copernicus STAC `sentinel-1-grd`, USGS, NASA EONET, and CelesTrak without modifying caches or spending Workers AI quota.
 
 # Run tests in watch mode
 npm test -- --watch

@@ -52,5 +52,35 @@
 	 */
 	"vars": {
 		"CORS_ORIGINS": "https://hesam.me,https://www.hesam.me"
+	},
+	/**
+	 * Isolated staging/preview Worker & bindings for pre-release verification,
+	 * D1 migrations, backfill rehearsals, and rollback drills (never touches production KV/D1).
+	 */
+	"env": {
+		"preview": {
+			"name": "aegis-map-backend-preview",
+			"kv_namespaces": [
+				{
+					"binding": "AEGIS_CACHE",
+					"id": "27d9eee1bce4417dbf26e3c194a25a5c"
+				}
+			],
+			"d1_databases": [
+				{
+					"binding": "AEGIS_DB",
+					"database_name": "aegis-map-db-preview",
+					"database_id": "dd0baf2c-42a3-435b-97ea-44f47b3babb5",
+					"migrations_dir": "migrations"
+				}
+			],
+			"ai": {
+				"binding": "AI",
+				"remote": true
+			},
+			"vars": {
+				"CORS_ORIGINS": "https://hesam.me,https://www.hesam.me,http://localhost:4173,http://127.0.0.1:4173,http://localhost:5173"
+			}
+		}
 	}
 }

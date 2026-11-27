@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "verify-map-points": "node scripts/verify-map-points.mjs",
-    "verify:e2e": "node --experimental-strip-types scripts/verify-e2e-sidebar.mjs"
+    "verify:e2e": "node scripts/verify-e2e-sidebar.mjs",
+    "verify:v15": "node scripts/verify-v15-slices.mjs"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.1.17",

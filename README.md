@@ -28,16 +28,12 @@
 
 ## 🎯 Overview
 
-**AegisMap** is an advanced disaster monitoring and satellite intelligence platform designed for emergency response teams, researchers, and disaster management professionals. It combines real-time disaster data from multiple authoritative sources with sophisticated satellite orbital mechanics to predict optimal imaging opportunities and provide AI-powered coverage analysis.
+**AegisMap** is a real-time disaster safety & Earth-observation platform with two specialized experiences:
 
-### What Makes AegisMap Unique?
+1. **Resident Safety (`?view=near-me`)**: Accessible, text-first view that works **without Mapbox WebGL or AI**. Supports place search disambiguation (with an offline fallback gazetteer), manual coordinate entry, optional GPS, multiple locally saved places, interface translation in **English (LTR)**, **Persian (RTL)**, and **Malay (LTR)** with `<bdi dir="ltr">` mixed-script isolation, official authority warnings (`/api/v1/warnings` — MET Norway, MET Malaysia, IRIMO via WMO CAP, India SACHET), Service Worker offline notice caching, ITU-verified emergency contacts resolved for the resident's **confirmed present jurisdiction**, and sandbox/double-opt-in warning email alerts.
+2. **Researcher Event Explorer (`Explore events`)**: Interactive Mapbox GL JS 3D globe + 24h/7d observation windows, FIRMS VIIRS 375m gridded thermal hotspots, multi-satellite SGP4 overpass comparison + **RFC 5545 `.ics` snapshot export**, **Copernicus Data Space STAC Sentinel-1 GRD SAR acquisition search** (`/api/v1/sar-scenes`), **D1 historical archive playback & source-health analytics** (`/api/v1/history`, `/api/v1/analytics/sources`), NASA GIBS imagery, and Workers AI metadata guidance strictly separated from official warnings and confirmed acquisitions.
 
-- **🛰️ Real-Time Orbital Predictions**: Calculate next satellite overpass times using SGP4 propagation
-- **🤖 AI-Powered Analysis**: Cloudflare Workers AI evaluates imaging feasibility from pass metadata, cloud cover, and known sensor capabilities
-- **🔥 Live Fire Hotspot Tracking**: NASA FIRMS data integration with thermal intensity visualization
-- **🌦️ Weather-Aware**: Automatic cloud forecast integration for pass quality assessment
-- **📊 Multi-Source Data Fusion**: Combines NASA EONET, USGS, and FIRMS data streams
-- **💾 Smart Caching**: Intelligent response caching reduces API costs and improves performance
+For authority coverage, ITU emergency numbers, privacy controls, Cloudflare resource estimates, and the D1 backfill/rollback runbook, see [docs/ROADMAP_AND_COVERAGE.md](docs/ROADMAP_AND_COVERAGE.md).
 
 ---
 
@@ -815,18 +811,19 @@ The frontend uses **Satellite.js** to perform client-side orbital mechanics calc
 
 ---
 
-## 📈 Future Enhancements
+## 📈 Roadmap Status & Future Enhancements
 
-- [ ] Historical disaster timeline with playback
-- [ ] Export satellite pass schedule to calendar (.ics)
-- [ ] Push notifications for optimal imaging passes
-- [ ] Multi-satellite comparison view
-- [ ] SAR satellite integration (all-weather imaging)
-- [ ] Offline PWA support with service workers
-- [ ] Mobile app (React Native)
-- [ ] Advanced analytics dashboard
-- [ ] User accounts with saved locations
-- [ ] Email/SMS alerts for disasters in areas of interest
+- [x] Historical disaster timeline with playback & D1 revision tracking (`/api/v1/history`, `/api/v1/analytics/sources`)
+- [x] Export satellite pass schedule to calendar (`.ics` RFC 5545 UTC snapshots)
+- [x] Multi-satellite comparison view (`PassComparisonPanel`)
+- [x] SAR satellite integration via Copernicus Data Space STAC Sentinel-1 GRD (`/api/v1/sar-scenes`)
+- [x] Offline PWA support with service workers & locally cached warning notices (`sw.js`, excluding map tiles)
+- [x] Official warning CAP v1.2 & regional authority integration (`MET Norway`, `MET Malaysia`, `IRIMO`, `India SACHET`)
+- [x] Multilingual accessible resident UI (`English`, `Persian RTL`, `Malay`) & ITU-verified jurisdiction help handoff
+- [x] Double-opt-in warning email subscriptions & durable outbox (sandbox ready; regional SMS explicitly deferred as `501 sms_deferred`)
+- [ ] Regional SMS carrier gateway integration & cost-bounded delivery receipts (`501 sms_deferred`)
+- [ ] Expand official CAP warning adapters (US NOAA NWS, Canada ECCC, Australia BoM, Japan JMA, EU Meteoalarm)
+- [ ] Mobile app (React Native) & native push notifications
 
 ---
 

@@ -213,7 +213,7 @@ function App() {
               type="button"
               data-testid="open-timeline-drawer-btn"
               onClick={() => setShowTimelineDrawer(true)}
-              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-xs font-bold border transition-colors hover:opacity-90"
+              className="inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-xs font-bold border transition-colors hover:opacity-90"
               style={{
                 background: ds.surface.overlaySubtle,
                 borderColor: ds.surface.border,

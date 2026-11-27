@@ -23,11 +23,39 @@
  *
  * Exit codes: 0 all checks passed, 1 a check failed, 2 the run could not start.
  */
+import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import * as esbuild from 'esbuild';
 import { chromium } from 'playwright';
-import { EONET_QUERIES, USGS_URL, parseEonetPayload, parseUsgsPayload } from '../../backend/src/disasters.ts';
-import { MONITORED_NORAD_IDS, validateTleRecord } from '../../backend/src/satellites.ts';
-import { isDisasterRecord, parseDisasterSourceHeaders } from '../src/utils/disasterSources.ts';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const bundled = await esbuild.build({
+    stdin: {
+        contents: `
+            export { EONET_QUERIES, USGS_URL, parseEonetPayload, parseUsgsPayload } from '../../backend/src/disasters.ts';
+            export { MONITORED_NORAD_IDS, validateTleRecord } from '../../backend/src/satellites.ts';
+            export { isDisasterRecord, parseDisasterSourceHeaders } from '../src/utils/disasterSources.ts';
+        `,
+        resolveDir: __dirname,
+        sourcefile: 'verify-e2e-deps.ts',
+        loader: 'ts',
+    },
+    bundle: true,
+    platform: 'node',
+    format: 'esm',
+    target: 'node22',
+    write: false,
+});
+const {
+    EONET_QUERIES,
+    USGS_URL,
+    parseEonetPayload,
+    parseUsgsPayload,
+    MONITORED_NORAD_IDS,
+    validateTleRecord,
+    isDisasterRecord,
+    parseDisasterSourceHeaders,
+} = await import(`data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text, 'utf-8').toString('base64')}`);
 
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:5173/aegis-map/';
 const API_BASE_URL = (process.env.API_BASE_URL || 'http://127.0.0.1:8787').replace(/\/+$/, '');
@@ -145,16 +173,22 @@ function attachCommonListeners(page, checks, state, { liveAnalyze = false } = {}
 }
 
 async function loadApp(page, checks) {
-    const disastersResponse = page.waitForResponse((r) => isApi(r.url(), '/api/disasters'), { timeout: STEP_TIMEOUT });
+    const disastersResponse = page.waitForResponse(
+        (r) => isApi(r.url(), '/api/v2/disasters') || isApi(r.url(), '/api/disasters'),
+        { timeout: STEP_TIMEOUT },
+    );
     await page.goto(FRONTEND_URL, { waitUntil: 'domcontentloaded', timeout: STEP_TIMEOUT });
     const res = await disastersResponse;
-    const body = await res.json().catch(() => null);
+    const rawEnvelope = await res.json().catch(() => null);
+    const body = rawEnvelope?.version === 2
+        ? [...(rawEnvelope.wildfires ?? []), ...(rawEnvelope.volcanoes ?? []), ...(rawEnvelope.earthquakes ?? [])]
+        : rawEnvelope;
     await page.waitForFunction(() => {
         const map = window.mapDebug;
         return !!map && typeof map.getLayer === 'function' && ['fires-layer', 'volcanoes-layer', 'earthquakes-layer'].some((l) => map.getLayer(l));
     }, undefined, { timeout: STEP_TIMEOUT });
     checks.record(true, 'map rendered disaster layers');
-    return { res, body };
+    return { res, body, rawEnvelope };
 }
 
 async function runSuccess(browser) {
@@ -169,11 +203,12 @@ async function runSuccess(browser) {
         const analyzeResponse = LIVE_ANALYZE ? page.waitForResponse((r) => isApi(r.url(), '/api/analyze') && r.request().method() === 'POST', { timeout: STEP_TIMEOUT * 3 }) : null;
         analyzeResponse?.catch(() => {});
 
-        const { res, body } = await loadApp(page, checks);
+        const { res, body, rawEnvelope } = await loadApp(page, checks);
+        const isV2 = rawEnvelope?.version === 2;
         const sources = parseDisasterSourceHeaders({ get: (n) => res.headers()[n.toLowerCase()] ?? null });
-        checks.record(res.status() === 200, '/api/disasters HTTP 200 from expected backend', `${res.status()} ${res.url()}`);
+        checks.record(res.status() === 200, `${isV2 ? '/api/v2/disasters' : '/api/disasters'} HTTP 200 from expected backend`, `${res.status()} ${res.url()}`);
         const valid = Array.isArray(body) && body.length > 0 && body.every(isDisasterRecord);
-        checks.record(valid, '/api/disasters body is a non-empty array of valid records', Array.isArray(body) ? `${body.length} records` : typeof body);
+        checks.record(valid, 'disasters response carries non-empty valid records', Array.isArray(body) ? `${body.length} records` : typeof body);
         checks.record(sources?.eonet === 'ok' && sources?.usgs === 'ok' && !sources.partial, 'disaster sources complete', res.headers()['x-disaster-sources'] ?? 'missing header');
         const legendState = await waitForAttr(page, '[data-testid="map-legend"]', 'data-disaster-state', ['complete', 'partial', 'failed', 'unknown'], 'legend');
         checks.record(legendState === 'complete', 'legend shows complete source state', legendState);
@@ -185,6 +220,7 @@ async function runSuccess(browser) {
         evidence.disasters = {
             fetchedAt: res.headers()['x-disaster-fetched-at'],
             sources: res.headers()['x-disaster-sources'],
+            windowRange: isV2 ? rawEnvelope.windowRange : null,
             counts: Array.isArray(body) ? { fire: body.filter((d) => d.type === 'fire').length, volcano: body.filter((d) => d.type === 'volcano').length, earthquake: body.filter((d) => d.type === 'earthquake').length } : null,
         };
 
@@ -192,6 +228,7 @@ async function runSuccess(browser) {
         if (!checks.record(fires.length > 0, 'at least one fire event available for FIRMS checks')) return { checks, evidence, state };
 
         evidence.appDisasters = Array.isArray(body) ? body : [];
+        evidence.v2WindowRange = isV2 ? rawEnvelope.windowRange : null;
         const expectResponse = (predicate, label, timeout = STEP_TIMEOUT) =>
             page.waitForResponse(predicate, { timeout }).catch(() => {
                 throw new Error(`no ${label} response within ${timeout} ms`);
@@ -350,14 +387,23 @@ async function runFailure(browser) {
     try {
         const page = await context.newPage();
         await attachCommonListeners(page, checks, state);
-        await page.route(`${API_ORIGIN}/api/disasters`, async (route) => {
+        await page.route(new RegExp(`^${API_ORIGIN.replace(/[.]/g, '\\.')}/api/(v2/)?disasters`), async (route) => {
             const upstream = await route.fetch();
-            const records = (await upstream.json()).filter((d) => d.type !== 'earthquake');
+            const parsed = await upstream.json();
+            const patched = parsed?.version === 2
+                ? {
+                      ...parsed,
+                      earthquakes: [],
+                      sources: { ...parsed.sources, usgs: { status: 'failed', count: 0, rejected: 0 } },
+                  }
+                : Array.isArray(parsed)
+                  ? parsed.filter((d) => d.type !== 'earthquake')
+                  : parsed;
             await route.fulfill({
                 status: 200,
                 headers: { ...upstream.headers(), 'x-disaster-sources': 'eonet=ok;usgs=failed', 'x-disaster-partial': 'true' },
                 contentType: 'application/json',
-                body: JSON.stringify(records),
+                body: JSON.stringify(patched),
             });
         });
         await page.route(`${API_ORIGIN}/api/tles`, (route) =>
@@ -470,11 +516,19 @@ function rawEonetFacts(payload) {
  * application's fetch, using only evidence visible in the raw upstream data.
  * Returns null when the difference is not explained.
  */
-function explainDifference(name, kind, record, raw, appFetchedMs, directMs) {
+function explainDifference(name, kind, record, raw, appFetchedMs, directMs, v2WindowRange) {
     if (name === 'usgs') {
         if (kind === 'onlyApp') return Date.parse(record.date) < directMs - DAY_MS ? 'aged out of past-day feed' : null;
         if (!raw) return null;
         return Math.max(raw.time ?? 0, raw.updated ?? 0) > appFetchedMs ? 'event created/updated after app fetch' : null;
+    }
+    if (v2WindowRange && kind === 'onlyUpstream' && record.type === 'fire') {
+        const startMs = Date.parse(v2WindowRange.startInclusive);
+        const endMs = Date.parse(v2WindowRange.endExclusive);
+        const recMs = Date.parse(record.date);
+        if (Number.isFinite(startMs) && Number.isFinite(recMs) && (recMs < startMs || recMs >= endMs)) {
+            return 'outside active v2 observation window';
+        }
     }
     if (kind === 'onlyApp') return record.type === 'fire' && Date.parse(record.date) < directMs - 60 * DAY_MS ? 'aged out of 60-day query' : null;
     if (kind === 'field') return raw && raw.date !== record.date ? 'newer geometry published' : null;
@@ -488,7 +542,7 @@ function explainDifference(name, kind, record, raw, appFetchedMs, directMs) {
  * fetch), or defect. Raw upstream values are also checked against the app
  * independently of the shared parser.
  */
-async function verifyHiddenSources(appBody, appFetchedAt, checks) {
+async function verifyHiddenSources(appBody, appFetchedAt, checks, v2WindowRange = null) {
     console.log('\n=== EONET / USGS (behind /api/disasters) ===');
     const results = {};
     const appFetchedMs = Date.parse(appFetchedAt ?? '');
@@ -521,7 +575,7 @@ async function verifyHiddenSources(appBody, appFetchedAt, checks) {
             const unexplained = [];
             const explained = [];
             const classify = (kind, record) => {
-                const why = Number.isFinite(appFetchedMs) ? explainDifference(name, kind, record, raw.get(record.id), appFetchedMs, directMs) : null;
+                const why = Number.isFinite(appFetchedMs) ? explainDifference(name, kind, record, raw.get(record.id), appFetchedMs, directMs, v2WindowRange) : null;
                 (why ? explained : unexplained).push(`${kind}:${record.id}${why ? ` (${why})` : ''}`);
             };
             onlyApp.forEach((d) => classify('onlyApp', d));
@@ -586,13 +640,18 @@ async function main() {
     let browser;
     const summaries = [];
     try {
-        browser = await chromium.launch({ headless: true });
+        browser = await chromium.launch({
+            headless: true,
+            args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
+        });
         if (scenarioArg === 'all' || scenarioArg === 'success') {
             const { checks, evidence, state } = await runSuccess(browser);
             const appBody = evidence.appDisasters ?? [];
+            const v2WindowRange = evidence.v2WindowRange ?? null;
             delete evidence.appDisasters;
+            delete evidence.v2WindowRange;
             if (checks.record(appBody.length > 0, 'application disaster body captured for source comparison')) {
-                evidence.hiddenSources = await verifyHiddenSources(appBody, evidence.disasters?.fetchedAt, checks);
+                evidence.hiddenSources = await verifyHiddenSources(appBody, evidence.disasters?.fetchedAt, checks, v2WindowRange);
             }
             checks.record(state.pageErrors.length === 0, 'no application page errors', state.pageErrors.join(' | '));
             checks.record(state.foreignApi.length === 0, 'no API requests to an unexpected backend', state.foreignApi.slice(0, 3).join(' | '));
