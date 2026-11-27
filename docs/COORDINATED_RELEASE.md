@@ -36,7 +36,8 @@ The GitHub Actions workflow (`.github/workflows/deploy.yml`) runs checks on `pul
    - Runs `cd backend && npm run typecheck && npm test`.
    - On `push` to `main`, deploys the Worker via `npx wrangler deploy --var GIT_SHA:${GITHUB_SHA}`.
    - Required secrets: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`.
-   - **Important**: Before deploying production v1.5 Worker code, apply D1 migrations cleanly via `npx wrangler d1 migrations apply AEGIS_DB --remote` and run bounded backfill (`node scripts/backfill-history.mjs --days 14 --limit 100 --remote`).
+   - **Important**: Before merging a change that adds a migration, an authorized operator must apply D1 migrations (`cd backend && npx wrangler d1 migrations apply AEGIS_DB --remote`) and run the bounded backfill (`node scripts/backfill-history.mjs --days 14 --limit 100 --remote`). CI does **not** run D1 migrations: the `CLOUDFLARE_API_TOKEN` secret is scoped to Worker deploys and the D1 query API rejects it (error 7403, observed in run 46026807736). Granting that token "D1: Edit" would let CI apply migrations too; until then the gate below fails closed.
+   - **Fail-closed schema gate**: `GET /` reports `services.d1 === "ready"` only when all 6 tables and the migration `0002` indexes exist. The `build-frontend` job refuses to publish the frontend otherwise, so a skipped migration can never ship UI that depends on it. Production state at v1.5.0 cutover: migrations `0001` + `0002` applied to `aegis-map-db` (`a09535fa-cd71-467c-ab29-a8f1e7545d5d`).
 2. **`build-frontend` job** (`needs: [deploy-backend]`):
    - Runs `cd frontend && npm run lint && npm test`.
    - On `push` to `main`, verifies live Worker `/` capabilities and runs `/api/v2/disasters` + `/api/v1/warnings` smoke checks.

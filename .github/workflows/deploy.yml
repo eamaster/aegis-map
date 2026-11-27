@@ -41,7 +41,11 @@ jobs:
       - name: Test backend
         run: cd backend && npm test
 
-      - name: Apply D1 Migrations & Deploy Worker to Cloudflare
+      # D1 schema migrations are applied by an authorized operator (`wrangler d1 migrations apply AEGIS_DB --remote`,
+      # see docs/COORDINATED_RELEASE.md). The CI token is deliberately scoped to Worker deploys only: the D1 query API
+      # rejects it (Cloudflare error 7403). Schema readiness is still a hard gate: the build-frontend job refuses to
+      # publish unless the deployed Worker reports services.d1 === "ready" (all tables + migration 0002 indexes).
+      - name: Deploy Worker to Cloudflare
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -56,7 +60,6 @@ jobs:
             exit 1
           fi
           cd backend
-          npx wrangler d1 migrations apply AEGIS_DB --remote
           npx wrangler deploy --var "GIT_SHA:${GITHUB_SHA}"
 
   build-frontend:
