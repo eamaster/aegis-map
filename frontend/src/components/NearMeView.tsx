@@ -3,10 +3,11 @@ import {
 	AlertTriangle,
 	CheckCircle2,
 	Clock,
+	Compass,
 	ExternalLink,
-	Globe,
 	Info,
 	RefreshCw,
+	ShieldAlert,
 	ShieldOff,
 	Trash2,
 	WifiOff,
@@ -72,17 +73,47 @@ function formatDualTime(iso: string | null | undefined): string {
 function coverageBadgeInfo(status: WarningCoverageStatus, t: ReturnType<typeof useLocale>['t']) {
 	switch (status) {
 		case 'active_warnings':
-			return { label: t.coverageActive, tone: 'border-red-500/50 bg-red-500/15 text-red-200', icon: AlertTriangle };
+			return {
+				label: t.coverageActive,
+				tone: 'border-red-500/55 bg-red-500/15',
+				iconColor: 'text-red-400',
+				icon: AlertTriangle,
+			};
 		case 'checked_no_warnings':
-			return { label: t.coverageEmpty, tone: 'border-emerald-500/50 bg-emerald-500/15 text-emerald-200', icon: CheckCircle2 };
+			return {
+				label: t.coverageEmpty,
+				tone: 'border-emerald-500/50 bg-emerald-500/12',
+				iconColor: 'text-emerald-400',
+				icon: CheckCircle2,
+			};
 		case 'partial_coverage':
-			return { label: t.coveragePartial, tone: 'border-amber-500/50 bg-amber-500/15 text-amber-200', icon: AlertTriangle };
+			return {
+				label: t.coveragePartial,
+				tone: 'border-amber-500/50 bg-amber-500/12',
+				iconColor: 'text-amber-400',
+				icon: AlertTriangle,
+			};
 		case 'stale':
-			return { label: t.coverageStale, tone: 'border-amber-500/50 bg-amber-500/15 text-amber-200', icon: Clock };
+			return {
+				label: t.coverageStale,
+				tone: 'border-amber-500/50 bg-amber-500/12',
+				iconColor: 'text-amber-400',
+				icon: Clock,
+			};
 		case 'source_unavailable':
-			return { label: t.coverageUnavailable, tone: 'border-red-500/50 bg-red-500/15 text-red-200', icon: ShieldOff };
+			return {
+				label: t.coverageUnavailable,
+				tone: 'border-red-500/50 bg-red-500/12',
+				iconColor: 'text-red-400',
+				icon: ShieldOff,
+			};
 		default:
-			return { label: t.coverageUnsupported, tone: 'border-slate-500/50 bg-slate-500/15 text-slate-200', icon: Info };
+			return {
+				label: t.coverageUnsupported,
+				tone: 'border-slate-500/50 bg-slate-500/12',
+				iconColor: 'text-slate-400',
+				icon: Info,
+			};
 	}
 }
 
@@ -98,43 +129,51 @@ function WarningCard({
 	const [langIdx, setLangIdx] = useState(0);
 	const block = warning.translations[langIdx] ?? warning.translations[0];
 	const bulletinHref = sanitizeExternalUrl(block?.web ?? warning.bulletinUrl ?? warning.issuerUrl);
+	const isHighSeverity = warning.severity === 'extreme' || warning.severity === 'severe';
 
 	return (
 		<article
 			data-testid={`warning-card-${warning.id}`}
-			className="rounded-xl p-4 border space-y-3"
+			className="rounded-2xl p-4 sm:p-5 border space-y-3.5 shadow-sm"
 			style={{
-				background: ds.surface.overlay,
-				borderColor:
-					warning.severity === 'extreme' || warning.severity === 'severe'
-						? 'rgba(239, 68, 68, 0.55)'
-						: ds.surface.border,
+				background: 'var(--color-surface-card)',
+				borderColor: isHighSeverity ? 'rgba(239, 68, 68, 0.55)' : ds.surface.border,
 			}}
 		>
-			<div className="flex flex-wrap items-start justify-between gap-2">
-				<div className="space-y-1">
+			<div className="flex flex-wrap items-start justify-between gap-2.5">
+				<div className="space-y-1.5 min-w-0">
 					<div className="flex flex-wrap items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide">
-						<span className="px-2 py-0.5 rounded bg-red-500/20 text-red-300 border border-red-500/40">
-							{warning.severity}
+						<span
+							className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md border ${
+								isHighSeverity
+									? 'bg-red-500/20 text-red-300 border-red-500/45'
+									: 'bg-amber-500/20 text-amber-300 border-amber-500/45'
+							}`}
+						>
+							<AlertTriangle size={12} aria-hidden="true" />
+							<span>{warning.severity}</span>
 						</span>
-						<span className="px-2 py-0.5 rounded bg-blue-500/15 text-blue-300 border border-blue-500/30">
+						<span className="px-2 py-0.5 rounded-md bg-blue-500/15 text-blue-300 border border-blue-500/35">
 							{warning.lifecycleState}
 						</span>
-						<span className="px-2 py-0.5 rounded bg-slate-500/20 text-slate-200 border border-slate-500/30">
+						<span
+							className="px-2 py-0.5 rounded-md border"
+							style={{ borderColor: ds.surface.border, color: ds.text.secondary }}
+						>
 							{t.bulletinLanguageTag}: <BdiLtr mono>{block?.language ?? warning.primaryLanguage}</BdiLtr>
 						</span>
 						{isOfflineExpired && (
-							<span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-200 border border-amber-500/40">
+							<span className="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-300 border border-amber-500/45">
 								EXPIRED
 							</span>
 						)}
 					</div>
-					<h3 className="text-base font-bold" style={{ color: ds.text.primary }} lang={block?.language}>
+					<h3 className="text-base sm:text-lg font-extrabold break-words" style={{ color: ds.text.primary }} lang={block?.language}>
 						{block?.headline || block?.event || warning.category}
 					</h3>
-					<p className="text-xs" style={{ color: ds.text.tertiary }}>
-						{warning.issuerName} · {warning.matchNote}
-						{warning.matchUncertain ? ' (area match uncertain — verify area description below)' : ''}
+					<p className="text-xs leading-relaxed" style={{ color: ds.text.secondary }}>
+						<strong>{warning.issuerName}</strong> · {warning.matchNote}
+						{warning.matchUncertain ? ' (area match approximate — verify affected area below)' : ''}
 					</p>
 				</div>
 
@@ -145,9 +184,14 @@ function WarningCard({
 								key={`${warning.id}-lang-${tr.language}-${idx}`}
 								type="button"
 								onClick={() => setLangIdx(idx)}
-								className={`px-2 py-1 rounded text-xs font-semibold border ${
-									idx === langIdx ? 'bg-blue-600 text-white border-blue-500' : 'border-slate-600 text-slate-300'
+								className={`min-h-[36px] px-2.5 py-1 rounded-lg text-xs font-bold border ${
+									idx === langIdx ? 'bg-blue-600 text-white border-blue-500' : ''
 								}`}
+								style={
+									idx === langIdx
+										? undefined
+										: { borderColor: ds.surface.border, color: ds.text.secondary }
+								}
 							>
 								{tr.language.toUpperCase()}
 							</button>
@@ -157,8 +201,8 @@ function WarningCard({
 			</div>
 
 			{block?.areaDesc && (
-				<div className="text-xs">
-					<span className="font-semibold" style={{ color: ds.text.secondary }}>
+				<div className="text-xs leading-relaxed">
+					<span className="font-bold" style={{ color: ds.text.secondary }}>
 						{t.affectedAreaHeading}:{' '}
 					</span>
 					<span style={{ color: ds.text.primary }} lang={block.language}>
@@ -167,19 +211,14 @@ function WarningCard({
 				</div>
 			)}
 
-			{block?.description && (
-				<p className="text-sm leading-relaxed whitespace-pre-line" style={{ color: ds.text.primary }} lang={block.language}>
-					{block.description}
-				</p>
-			)}
-
 			{block?.instruction && (
 				<div
-					className="rounded-lg p-3 border border-amber-500/40 bg-amber-500/10"
+					className="rounded-xl p-3.5 border border-amber-500/45 bg-amber-500/12 space-y-1"
 					lang={block.language}
 				>
-					<div className="text-xs font-bold uppercase tracking-wide text-amber-300 mb-1">
-						{t.issuerInstructionsHeading}
+					<div className="text-xs font-extrabold uppercase tracking-wide flex items-center gap-1.5 text-amber-400">
+						<ShieldAlert size={14} aria-hidden="true" />
+						<span>{t.issuerInstructionsHeading}</span>
 					</div>
 					<p className="text-sm leading-relaxed whitespace-pre-line" style={{ color: ds.text.primary }}>
 						{block.instruction}
@@ -187,34 +226,56 @@ function WarningCard({
 				</div>
 			)}
 
-			<dl className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs pt-2 border-t" style={{ borderColor: ds.surface.borderSubtle }}>
+			{block?.description && (
+				<p className="text-sm leading-relaxed whitespace-pre-line break-words" style={{ color: ds.text.primary }} lang={block.language}>
+					{block.description}
+				</p>
+			)}
+
+			<dl
+				className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs pt-3 border-t"
+				style={{ borderColor: ds.surface.borderSubtle }}
+			>
 				<div>
-					<dt className="font-semibold" style={{ color: ds.text.tertiary }}>{t.issuedLabel}</dt>
-					<dd style={{ color: ds.text.secondary }}><BdiLtr>{formatDualTime(warning.sentAt)}</BdiLtr></dd>
+					<dt className="font-bold" style={{ color: ds.text.tertiary }}>
+						{t.issuedLabel}
+					</dt>
+					<dd className="mt-0.5" style={{ color: ds.text.secondary }}>
+						<BdiLtr>{formatDualTime(warning.sentAt)}</BdiLtr>
+					</dd>
 				</div>
 				<div>
-					<dt className="font-semibold" style={{ color: ds.text.tertiary }}>{t.onsetLabel}</dt>
-					<dd style={{ color: ds.text.secondary }}><BdiLtr>{formatDualTime(warning.onsetAt)}</BdiLtr></dd>
+					<dt className="font-bold" style={{ color: ds.text.tertiary }}>
+						{t.onsetLabel}
+					</dt>
+					<dd className="mt-0.5" style={{ color: ds.text.secondary }}>
+						<BdiLtr>{formatDualTime(warning.onsetAt)}</BdiLtr>
+					</dd>
 				</div>
 				<div>
-					<dt className="font-semibold" style={{ color: ds.text.tertiary }}>{t.expiresLabel}</dt>
-					<dd style={{ color: ds.text.secondary }}>
+					<dt className="font-bold" style={{ color: ds.text.tertiary }}>
+						{t.expiresLabel}
+					</dt>
+					<dd className="mt-0.5" style={{ color: ds.text.secondary }}>
 						<BdiLtr>{warning.missingExpiry ? 'No expiry stated by issuer' : formatDualTime(warning.expiresAt)}</BdiLtr>
 					</dd>
 				</div>
 			</dl>
 
-			<div className="flex flex-wrap items-center justify-between gap-2 text-xs pt-1">
+			<div
+				className="flex flex-wrap items-center justify-between gap-2 text-xs pt-2 border-t"
+				style={{ borderColor: ds.surface.borderSubtle }}
+			>
 				<span style={{ color: ds.text.tertiary }}>{warning.attribution}</span>
 				{bulletinHref && (
 					<a
 						href={bulletinHref}
 						target="_blank"
 						rel="noopener noreferrer"
-						className="inline-flex items-center gap-1 text-blue-400 font-semibold hover:underline"
+						className="min-h-[36px] inline-flex items-center gap-1.5 text-blue-400 font-bold underline underline-offset-2 hover:text-blue-300"
 					>
 						<span>{t.originalBulletinLink}</span>
-						<ExternalLink size={12} aria-hidden="true" />
+						<ExternalLink size={13} aria-hidden="true" />
 					</a>
 				)}
 			</div>
@@ -223,7 +284,7 @@ function WarningCard({
 }
 
 export default function NearMeView({ onOpenExploreEvents }: NearMeViewProps) {
-	const { locale, t } = useLocale();
+	const { t } = useLocale();
 	const ds = useDesignSystem();
 
 	const [savedPlaces, setSavedPlaces] = useState<SelectedPlace[]>(() => loadSavedPlaces());
@@ -241,6 +302,7 @@ export default function NearMeView({ onOpenExploreEvents }: NearMeViewProps) {
 	const [warningsData, setWarningsData] = useState<WarningsApiResponse | null>(null);
 	const [offlineState, setOfflineState] = useState<OfflineWarningsState | null>(null);
 	const [networkError, setNetworkError] = useState<string | null>(null);
+	const [confirmingWipe, setConfirmingWipe] = useState(false);
 	const [wipeNotice, setWipeNotice] = useState<string | null>(null);
 
 	const effectiveCountry = (countryOverride || selectedPlace?.countryCode || '').toUpperCase() || null;
@@ -282,6 +344,8 @@ export default function NearMeView({ onOpenExploreEvents }: NearMeViewProps) {
 
 	const handleSelectPlace = (place: SelectedPlace) => {
 		setSelectedPlace(place);
+		// Only physical GPS capture may initialize presentJurisdiction when unconfirmed;
+		// remote/manual monitored place selection NEVER silently alters emergency contact country.
 		if (place.source === 'gps' && place.countryCode && !presentJurisdiction) {
 			setPresentJurisdiction(place.countryCode);
 			try {
@@ -301,13 +365,15 @@ export default function NearMeView({ onOpenExploreEvents }: NearMeViewProps) {
 		}
 	};
 
-	const handleClearLocalData = async () => {
+	const handleExecuteLocalWipe = async () => {
 		await clearAllLocalResidentData();
 		setSavedPlaces([]);
 		setSelectedPlace(null);
+		setCountryOverride('');
 		setPresentJurisdiction('');
 		setWarningsData(null);
 		setOfflineState(null);
+		setConfirmingWipe(false);
 		setWipeNotice(t.clearLocalDataConfirm);
 	};
 
@@ -317,39 +383,29 @@ export default function NearMeView({ onOpenExploreEvents }: NearMeViewProps) {
 	return (
 		<div
 			data-testid="near-me-view"
-			className="h-full overflow-y-auto px-4 py-6 sm:px-6"
+			className="w-full px-4 py-5 sm:px-6 sm:py-7"
 			style={{ color: ds.text.primary }}
 		>
-			<div className="max-w-4xl mx-auto space-y-6 pb-12">
-				<header className="flex flex-wrap items-start justify-between gap-3">
-					<div>
-						<h1 className="text-2xl font-black tracking-tight">{t.nearMeTitle}</h1>
-						<p className="text-sm mt-1" style={{ color: ds.text.secondary }}>
-							{t.nearMeSubtitle}
-						</p>
-					</div>
-					<div className="flex items-center gap-2 text-xs">
-						<span className="px-2.5 py-1 rounded-md border" style={{ borderColor: ds.surface.border, color: ds.text.tertiary }}>
-							{t.interfaceLanguageTag}: <BdiLtr mono>{locale.toUpperCase()}</BdiLtr>
-						</span>
-						<button
-							type="button"
-							onClick={handleClearLocalData}
-							data-testid="clear-local-data-btn"
-							className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-red-500/40 text-red-300 hover:bg-red-500/10 text-xs font-semibold"
-						>
-							<Trash2 size={13} aria-hidden="true" />
-							<span>{t.clearLocalData}</span>
-						</button>
-					</div>
+			<div className="max-w-6xl mx-auto space-y-6 pb-12">
+				{/* Page Heading */}
+				<header className="space-y-1">
+					<h1 className="text-2xl sm:text-3xl font-black tracking-tight">{t.nearMeTitle}</h1>
+					<p className="text-sm leading-relaxed max-w-3xl" style={{ color: ds.text.secondary }}>
+						{t.nearMeSubtitle}
+					</p>
 				</header>
 
 				{wipeNotice && (
-					<div role="status" data-testid="wipe-status-notice" className="text-xs px-3 py-2 rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-emerald-300">
+					<div
+						role="status"
+						data-testid="wipe-status-notice"
+						className="text-xs font-semibold px-4 py-3 rounded-xl border border-emerald-500/45 bg-emerald-500/12 text-emerald-400"
+					>
 						{wipeNotice}
 					</div>
 				)}
 
+				{/* Step 1: Choose / View Monitored Place */}
 				<PlaceSelector
 					selectedPlace={selectedPlace}
 					savedPlaces={savedPlaces}
@@ -360,202 +416,288 @@ export default function NearMeView({ onOpenExploreEvents }: NearMeViewProps) {
 					onCountryOverrideChange={setCountryOverride}
 				/>
 
-				{/* Section 1: Official Warnings */}
-				<section
-					aria-labelledby="official-warnings-heading"
-					data-testid="official-warnings-section"
-					className="rounded-xl p-4 sm:p-5 space-y-4"
-					style={{
-						background: ds.surface.elevated,
-						border: `1px solid ${ds.surface.border}`,
-					}}
-				>
-					<div className="flex flex-wrap items-center justify-between gap-2">
-						<div>
-							<h2 id="official-warnings-heading" className="text-base font-bold">
-								{t.warningsSectionTitle}
-							</h2>
-							<p className="text-xs mt-0.5" style={{ color: ds.text.tertiary }}>
-								{t.bulletinLanguageNote}
-							</p>
-						</div>
-						{selectedPlace && (
-							<button
-								type="button"
-								disabled={loading}
-								onClick={() => void loadWarningsForPlace(selectedPlace, effectiveCountry)}
-								data-testid="refresh-warnings-btn"
-								className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold"
-								style={{
-									background: ds.surface.overlay,
-									borderColor: ds.surface.border,
-									color: ds.text.primary,
-								}}
-							>
-								<RefreshCw size={13} className={loading ? 'animate-spin' : ''} aria-hidden="true" />
-								<span>{t.refreshWarnings}</span>
-							</button>
-						)}
-					</div>
-
-					{!selectedPlace ? (
-						<p className="text-sm" style={{ color: ds.text.secondary }}>
-							Select a saved place, search for a city, request GPS, or enter coordinates above to check official authority warnings.
-						</p>
-					) : (
-						<>
-							<div className="text-xs flex flex-wrap gap-3" style={{ color: ds.text.secondary }}>
-								<span>
-									Monitoring: <strong>{selectedPlace.label}</strong>
-								</span>
-								<span>
-									<BdiLtr mono>
-										{selectedPlace.lat.toFixed(4)}, {selectedPlace.lng.toFixed(4)}
-									</BdiLtr>
-								</span>
-								{selectedPlace.accuracyMeters != null && (
-									<span>
-										{t.gpsAccuracyLabel}: <BdiLtr mono>±{selectedPlace.accuracyMeters} m</BdiLtr>
-									</span>
+				{/* Step 2: Responsive Two-Column Workspace (Official Warnings primary + Local Help alongside on wide screens, stacked on phone) */}
+				<div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+					{/* Primary Column: Official Warnings + Optional Subscriptions */}
+					<div className="lg:col-span-7 space-y-6 min-w-0">
+						<section
+							aria-labelledby="official-warnings-heading"
+							data-testid="official-warnings-section"
+							className="rounded-2xl p-4 sm:p-6 space-y-4 border shadow-sm"
+							style={{
+								background: 'var(--color-surface-elevated)',
+								borderColor: ds.surface.border,
+							}}
+						>
+							<div className="flex flex-wrap items-center justify-between gap-3">
+								<div>
+									<h2 id="official-warnings-heading" className="text-lg font-extrabold tracking-tight">
+										{t.warningsSectionTitle}
+									</h2>
+									<p className="text-xs mt-0.5" style={{ color: ds.text.tertiary }}>
+										{t.bulletinLanguageNote}
+									</p>
+								</div>
+								{selectedPlace && (
+									<button
+										type="button"
+										disabled={loading}
+										onClick={() => void loadWarningsForPlace(selectedPlace, effectiveCountry)}
+										data-testid="refresh-warnings-btn"
+										className="min-h-[42px] inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border text-xs font-bold transition-colors hover:border-blue-400 disabled:opacity-60"
+										style={{
+											background: ds.surface.overlaySubtle,
+											borderColor: ds.surface.border,
+											color: ds.text.primary,
+										}}
+									>
+										<RefreshCw size={14} className={loading ? 'animate-spin' : ''} aria-hidden="true" />
+										<span>{t.refreshWarnings}</span>
+									</button>
 								)}
 							</div>
 
-							{offlineState?.status === 'empty_offline' && networkError && (
+							{!selectedPlace ? (
 								<div
-									role="status"
-									data-testid="offline-empty-notice"
-									className="flex items-start gap-2 rounded-lg p-3 border border-amber-500/40 bg-amber-500/10 text-xs"
+									className="rounded-xl p-5 border text-sm leading-relaxed"
+									style={{
+										background: 'var(--color-surface-card)',
+										borderColor: ds.surface.borderSubtle,
+										color: ds.text.secondary,
+									}}
 								>
-									<WifiOff size={15} className="shrink-0 text-amber-400 mt-0.5" aria-hidden="true" />
-									<div>
-										<div className="font-bold">{t.offlineFirstVisit}</div>
-										<div className="mt-0.5" style={{ color: ds.text.tertiary }}>
-											({networkError})
-										</div>
-									</div>
+									Search for a city, use your location, or enter coordinates above to check official authority warnings and coverage freshness.
 								</div>
-							)}
-
-							{(offlineState?.status === 'cached_valid' || offlineState?.status === 'cached_expired') && (
-								<div
-									role="status"
-									data-testid="offline-cached-banner"
-									className="flex items-start gap-2 rounded-lg p-3 border border-amber-500/40 bg-amber-500/10 text-xs"
-								>
-									<WifiOff size={15} className="shrink-0 text-amber-400 mt-0.5" aria-hidden="true" />
-									<div>
-										<div className="font-bold">
-											{offlineState.status === 'cached_expired' ? t.offlineExpiredNotice : t.offlineCachedNotice}
+							) : (
+								<>
+									{/* Offline / Cached Fallback Banner */}
+									{offlineState && offlineState.status !== 'live' && (
+										<div
+											role="status"
+											data-testid="offline-cached-banner"
+											className="rounded-xl p-3.5 border border-amber-500/50 bg-amber-500/12 text-xs space-y-1"
+											style={{ color: ds.text.primary }}
+										>
+											<div className="flex items-center gap-2 font-bold text-amber-400">
+												<WifiOff size={15} className="shrink-0" aria-hidden="true" />
+												<span>
+													{offlineState.status === 'empty_offline' ? t.offlineFirstVisit : t.offlineCachedNotice}
+												</span>
+											</div>
+											{offlineState.entry && (
+												<div style={{ color: ds.text.secondary }}>
+													Cached snapshot time: <BdiLtr mono>{formatDualTime(offlineState.entry.cachedAt)}</BdiLtr>
+												</div>
+											)}
+											{offlineState.status === 'cached_expired' && (
+												<div className="font-semibold text-amber-400">{t.offlineExpiredNotice}</div>
+											)}
+											{networkError && <div style={{ color: ds.text.tertiary }}>Connection status: {networkError}</div>}
 										</div>
-										<div className="mt-0.5" style={{ color: ds.text.tertiary }}>
-											Cached at <BdiLtr>{formatDualTime(offlineState.entry?.cachedAt)}</BdiLtr>
-										</div>
-									</div>
-								</div>
-							)}
+									)}
 
-							{badge && warningsData && (
-								<div
-									role="status"
-									data-testid="warnings-coverage-banner"
-									data-coverage-status={warningsData.coverageStatus}
-									className={`rounded-lg p-3 border text-xs flex items-start gap-2.5 ${badge.tone}`}
-								>
-									<BadgeIcon size={16} className="shrink-0 mt-0.5" aria-hidden="true" />
-									<div className="space-y-1">
-										<div className="font-bold text-sm">{badge.label}</div>
-										<div>{warningsData.coverageExplanation}</div>
-										<div className="text-[11px] opacity-85">
-											{t.lastCheckedLabel}: <BdiLtr>{formatDualTime(warningsData.query.checkedAt)}</BdiLtr>
-										</div>
-									</div>
-								</div>
-							)}
-
-							{warningsData && warningsData.warnings.length > 0 && (
-								<div className="space-y-3" data-testid="warnings-list">
-									{warningsData.warnings.map((w) => (
-										<WarningCard
-											key={w.id}
-											warning={w}
-											isOfflineExpired={offlineState?.expiredWarningIds.includes(w.id) ?? false}
-										/>
-									))}
-								</div>
-							)}
-
-							{warningsData && warningsData.sources.length > 0 && (
-								<div className="space-y-2 pt-2 border-t" style={{ borderColor: ds.surface.borderSubtle }}>
-									<div className="text-xs font-semibold" style={{ color: ds.text.secondary }}>
-										Authority Source Coverage & Attribution
-									</div>
-									<ul className="space-y-1.5 text-xs" data-testid="warning-sources-list">
-										{warningsData.sources.map((src) => (
-											<li
-												key={src.sourceId}
-												className="rounded-lg p-2.5 border"
-												style={{ background: ds.surface.overlay, borderColor: ds.surface.borderSubtle }}
+									{loading && !warningsData ? (
+										<p className="text-sm py-3" style={{ color: ds.text.secondary }}>
+											Checking official alerting authorities…
+										</p>
+									) : warningsData && badge ? (
+										<div className="space-y-4">
+											{/* Coverage & Freshness Banner (icon + label, never color alone) */}
+											<div
+												role="status"
+												data-testid="warnings-coverage-banner"
+												className={`rounded-xl p-4 border ${badge.tone} flex items-start gap-3`}
+												style={{ color: ds.text.primary }}
 											>
-												<div className="flex flex-wrap items-center justify-between gap-2">
-													<span className="font-semibold">{src.authorityName}</span>
-													<span className="uppercase font-mono text-[11px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-200">
-														{src.status}
-													</span>
-												</div>
-												<div className="text-[11px] mt-1" style={{ color: ds.text.tertiary }}>
-													{src.attribution} · Last success:{' '}
-													<BdiLtr>{formatDualTime(src.lastSuccessAt)}</BdiLtr>
-												</div>
-												{src.unsupportedHazards.length > 0 && (
-													<div className="text-[11px] mt-0.5" style={{ color: ds.text.tertiary }}>
-														Not covered by this feed: {src.unsupportedHazards.join(', ')}
+												<BadgeIcon size={20} className={`shrink-0 mt-0.5 ${badge.iconColor}`} aria-hidden="true" />
+												<div className="space-y-1 text-xs min-w-0">
+													<div className="font-extrabold text-sm">{badge.label}</div>
+													<div className="leading-relaxed" style={{ color: ds.text.secondary }}>
+														{warningsData.coverageExplanation}
 													</div>
-												)}
-											</li>
-										))}
-									</ul>
-								</div>
+													<div style={{ color: ds.text.tertiary }}>
+														{t.lastCheckedLabel}: <BdiLtr mono>{formatDualTime(warningsData.query.checkedAt)}</BdiLtr>
+													</div>
+												</div>
+											</div>
+
+											{/* Matched Warning Cards */}
+											{warningsData.warnings.length > 0 && (
+												<div className="space-y-3.5" data-testid="warnings-list">
+													{warningsData.warnings.map((w) => (
+														<WarningCard
+															key={w.id}
+															warning={w}
+															isOfflineExpired={offlineState?.expiredWarningIds.includes(w.id) ?? false}
+														/>
+													))}
+												</div>
+											)}
+
+											{/* Authority Provenance & Coverage Scope */}
+											{warningsData.sources.length > 0 && (
+												<div className="space-y-2 pt-2 border-t" style={{ borderColor: ds.surface.borderSubtle }}>
+													<h3 className="text-xs font-bold uppercase tracking-wide" style={{ color: ds.text.tertiary }}>
+														Authority Source Coverage & Freshness
+													</h3>
+													<div className="grid grid-cols-1 gap-2">
+														{warningsData.sources.map((src) => (
+															<div
+																key={src.sourceId}
+																className="rounded-xl p-3 border text-xs space-y-1"
+																style={{
+																	background: 'var(--color-surface-card)',
+																	borderColor: ds.surface.borderSubtle,
+																}}
+															>
+																<div className="flex flex-wrap items-center justify-between gap-2">
+																	<span className="font-bold" style={{ color: ds.text.primary }}>
+																		{src.authorityName}
+																	</span>
+																	<span
+																		className={`uppercase text-[10px] font-bold px-2 py-0.5 rounded-md border ${
+																			src.status === 'ok' || src.status === 'not_modified'
+																				? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/35'
+																				: 'bg-amber-500/15 text-amber-400 border-amber-500/35'
+																		}`}
+																	>
+																		{src.status}
+																	</span>
+																</div>
+																<div className="text-[11px] leading-relaxed" style={{ color: ds.text.tertiary }}>
+																	{src.attribution}
+																	{src.lastSuccessAt ? (
+																		<>
+																			{' '}
+																			· Last verified: <BdiLtr mono>{formatDualTime(src.lastSuccessAt)}</BdiLtr>
+																		</>
+																	) : null}
+																</div>
+																{src.unsupportedHazards.length > 0 && (
+																	<div className="text-[11px]" style={{ color: ds.text.tertiary }}>
+																		Not covered by this feed: {src.unsupportedHazards.join(', ')}
+																	</div>
+																)}
+																{src.errorReason && (
+																	<div className="text-[11px] text-amber-400">Source note: {src.errorReason}</div>
+																)}
+															</div>
+														))}
+													</div>
+												</div>
+											)}
+										</div>
+									) : null}
+								</>
 							)}
-						</>
-					)}
-				</section>
+						</section>
 
-				{/* Section 2: Emergency Contacts & Location Handoff */}
-				<LocationHelpPanel
-					monitoredPlace={selectedPlace}
-					presentJurisdiction={presentJurisdiction}
-					onPresentJurisdictionChange={handlePresentJurisdictionChange}
-				/>
+						{/* Opt-in Subscriptions (only shown when a place with supported feed is selected) */}
+						<SubscriptionOptIn monitoredPlace={selectedPlace} effectiveCountry={effectiveCountry} />
+					</div>
 
-				{/* Section 2.5: Opt-In Official Warning Alerts */}
-				<SubscriptionOptIn monitoredPlace={selectedPlace} />
+					{/* Secondary Column: Local Help & Research Map Link */}
+					<div className="lg:col-span-5 space-y-6 min-w-0">
+						<LocationHelpPanel
+							monitoredPlace={selectedPlace}
+							presentJurisdiction={presentJurisdiction}
+							onPresentJurisdictionChange={handlePresentJurisdictionChange}
+						/>
 
-				{/* Section 3: Explicit Separation of Scientific Research Observations */}
+						<section
+							aria-labelledby="research-callout-heading"
+							className="rounded-2xl p-4 sm:p-5 border flex flex-col gap-3 shadow-sm"
+							style={{
+								background: 'var(--color-surface-elevated)',
+								borderColor: ds.surface.border,
+							}}
+						>
+							<div className="space-y-1">
+								<h2
+									id="research-callout-heading"
+									className="text-sm font-bold flex items-center gap-2"
+									style={{ color: ds.text.primary }}
+								>
+									<Compass size={16} className="text-blue-400 shrink-0" aria-hidden="true" />
+									<span>{t.researchNoticeTitle}</span>
+								</h2>
+								<p className="text-xs leading-relaxed" style={{ color: ds.text.secondary }}>
+									{t.researchNoticeBody}
+								</p>
+							</div>
+							<div>
+								<button
+									type="button"
+									onClick={onOpenExploreEvents}
+									data-testid="near-me-open-explore-btn"
+									className="min-h-[42px] inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-bold border hover:border-blue-400 transition-colors"
+									style={{
+										background: ds.surface.overlaySubtle,
+										borderColor: ds.surface.border,
+										color: ds.text.primary,
+									}}
+								>
+									<Compass size={14} aria-hidden="true" />
+									<span>{t.openExploreEvents}</span>
+								</button>
+							</div>
+						</section>
+					</div>
+				</div>
+
+				{/* Footer Local Data & Privacy Settings (separated from ordinary place selection, with confirmation) */}
 				<section
-					aria-labelledby="research-separation-heading"
-					className="rounded-xl p-4 border flex flex-wrap items-center justify-between gap-3"
+					aria-labelledby="local-data-settings-heading"
+					data-testid="local-data-settings"
+					className="rounded-2xl p-4 sm:p-5 border flex flex-col sm:flex-row sm:items-center justify-between gap-4"
 					style={{
-						background: ds.surface.overlay,
-						borderColor: ds.surface.border,
+						background: 'var(--color-surface-card)',
+						borderColor: ds.surface.borderSubtle,
 					}}
 				>
-					<div className="space-y-1 max-w-xl">
-						<h2 id="research-separation-heading" className="text-sm font-bold flex items-center gap-2">
-							<Globe size={16} className="text-blue-400" aria-hidden="true" />
-							<span>{t.researchNoticeTitle}</span>
+					<div className="space-y-1 max-w-2xl">
+						<h2 id="local-data-settings-heading" className="text-xs font-bold uppercase tracking-wide" style={{ color: ds.text.secondary }}>
+							{t.localDataSettingsHeading}
 						</h2>
-						<p className="text-xs" style={{ color: ds.text.secondary }}>
-							{t.researchNoticeBody}
+						<p className="text-xs leading-relaxed" style={{ color: ds.text.tertiary }}>
+							{t.localDataSettingsBody}
 						</p>
 					</div>
-					<button
-						type="button"
-						onClick={onOpenExploreEvents}
-						data-testid="open-explore-events-btn"
-						className="px-4 py-2 rounded-lg text-xs font-semibold border border-blue-500/40 bg-blue-500/15 text-blue-300 hover:bg-blue-500/25"
-					>
-						{t.openExploreEvents}
-					</button>
+
+					{!confirmingWipe ? (
+						<button
+							type="button"
+							onClick={() => setConfirmingWipe(true)}
+							data-testid="clear-local-data-btn"
+							className="min-h-[42px] shrink-0 inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl border border-red-500/40 text-red-400 hover:bg-red-500/10 text-xs font-bold"
+						>
+							<Trash2 size={14} aria-hidden="true" />
+							<span>{t.clearLocalData}</span>
+						</button>
+					) : (
+						<div className="flex flex-col sm:items-end gap-2 shrink-0" role="group" aria-label={t.confirmClearLocalDataPrompt}>
+							<p className="text-xs font-semibold text-red-400">{t.confirmClearLocalDataPrompt}</p>
+							<div className="flex flex-wrap items-center gap-2">
+								<button
+									type="button"
+									onClick={() => void handleExecuteLocalWipe()}
+									data-testid="confirm-clear-local-data-btn"
+									className="min-h-[40px] px-3.5 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold"
+								>
+									{t.confirmClearLocalDataAction}
+								</button>
+								<button
+									type="button"
+									onClick={() => setConfirmingWipe(false)}
+									data-testid="cancel-clear-local-data-btn"
+									className="min-h-[40px] px-3.5 py-2 rounded-xl border text-xs font-semibold"
+									style={{ borderColor: ds.surface.border, color: ds.text.primary }}
+								>
+									{t.cancelAction}
+								</button>
+							</div>
+						</div>
+					)}
 				</section>
 			</div>
 		</div>
