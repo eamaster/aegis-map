@@ -54,6 +54,7 @@ import {
 	WindowRange,
 } from './firmsGlobal';
 import { loadMonitoredTles, serializeTles, TLE_SCHEDULED_REFRESH_AFTER_MS } from './satellites';
+import { queryOfficialWarnings } from './warnings/service';
 
 type Bindings = {
 	AEGIS_CACHE: KVNamespace;
@@ -524,6 +525,27 @@ app.post('/api/analyze', async (c) => {
 		const mapped = analyzeErrorResponse(error);
 		return c.json(mapped.body, mapped.status as 400);
 	}
+});
+
+// Route 4: GET /api/v1/warnings — Official warnings for a location (never logs or caches user coords)
+app.get('/api/v1/warnings', async (c) => {
+	const parsed = parseCoordinateQuery(c.req.query('lat'), c.req.query('lng'));
+	if (!parsed.ok) {
+		return c.json({ error: parsed.reason }, 400);
+	}
+	const countryRaw = c.req.query('country');
+	const countryCode = countryRaw && /^[A-Za-z]{2}$/.test(countryRaw.trim()) ? countryRaw.trim().toUpperCase() : null;
+
+	const result = await queryOfficialWarnings({
+		lat: parsed.lat,
+		lng: parsed.lng,
+		countryCode,
+		kv: c.env.AEGIS_CACHE,
+	});
+
+	return c.json(result, 200, {
+		'Cache-Control': 'private, no-store',
+	});
 });
 
 /** Cron Trigger: refresh orbital elements outside user requests (same cache policy). */
