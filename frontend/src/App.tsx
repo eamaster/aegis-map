@@ -1,5 +1,5 @@
 import { useState, useEffect, Suspense, lazy } from 'react';
-import { Globe, HelpCircle, MapPin, Compass } from 'lucide-react';
+import { Globe, HelpCircle, MapPin, Compass, History } from 'lucide-react';
 import { Toaster } from 'react-hot-toast';
 import DebugPanel from './components/DebugPanel';
 import ThemeToggle from './components/ThemeToggle';
@@ -14,6 +14,7 @@ const MapBoard = lazy(() => import('./components/MapBoard'));
 const Sidebar = lazy(() => import('./components/Sidebar'));
 const NearMeView = lazy(() => import('./components/NearMeView'));
 const TutorialOverlay = lazy(() => import('./components/TutorialOverlay'));
+const TimelineAnalyticsDrawer = lazy(() => import('./components/TimelineAnalyticsDrawer'));
 
 type ActiveView = 'explore' | 'near-me';
 
@@ -29,6 +30,7 @@ function App() {
   const [activeView, setActiveView] = useState<ActiveView>(resolveInitialView);
   const [selectedDisaster, setSelectedDisaster] = useState<Disaster | null>(null);
   const [showTutorial, setShowTutorial] = useState(false);
+  const [showTimelineDrawer, setShowTimelineDrawer] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [observationWindow, setObservationWindow] = useState<ObservationWindow>(DEFAULT_OBSERVATION_WINDOW);
   const [volcanoMode, setVolcanoMode] = useState<VolcanoMode>(DEFAULT_VOLCANO_MODE);
@@ -206,6 +208,23 @@ function App() {
 
         {/* Right Controls */}
         <div className="relative flex items-center" style={{ gap: '8px' }}>
+          {activeView === 'explore' && (
+            <button
+              type="button"
+              data-testid="open-timeline-drawer-btn"
+              onClick={() => setShowTimelineDrawer(true)}
+              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-xs font-bold border transition-colors hover:opacity-90"
+              style={{
+                background: ds.surface.overlaySubtle,
+                borderColor: ds.surface.border,
+                color: ds.text.primary,
+              }}
+              aria-label="Open Historical Archive and Source Health"
+            >
+              <History size={14} aria-hidden="true" />
+              <span>Archive</span>
+            </button>
+          )}
           <label htmlFor="ui-locale-select" className="sr-only">
             {t.languageLabel}
           </label>
@@ -290,6 +309,16 @@ function App() {
 
       <Suspense fallback={null}>
         {showTutorial && <TutorialOverlay onClose={() => setShowTutorial(false)} />}
+        {showTimelineDrawer && (
+          <TimelineAnalyticsDrawer
+            isOpen={showTimelineDrawer}
+            onClose={() => setShowTimelineDrawer(false)}
+            onSelectEvent={(ev) => {
+              setShowTimelineDrawer(false);
+              handleDisasterSelect(ev);
+            }}
+          />
+        )}
       </Suspense>
 
       <Toaster

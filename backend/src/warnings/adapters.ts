@@ -299,6 +299,13 @@ async function pollMetNorway(
 		const eventName = typeof p.eventAwarenessName === 'string' ? p.eventAwarenessName.trim() : String(p.event ?? 'Hazard');
 		const description = typeof p.description === 'string' ? p.description.trim() : '';
 		const instruction = typeof p.instruction === 'string' && p.instruction.trim() ? p.instruction.trim() : null;
+		const prevRecord = prevDoc?.records.find((r) => r.identifier === id);
+		const explicitSentMs = typeof p.sent === 'string' ? Date.parse(p.sent) : NaN;
+		const sentAt = Number.isFinite(explicitSentMs)
+			? new Date(explicitSentMs).toISOString()
+			: prevRecord && prevRecord.expiresAt === expiresAt && prevRecord.translations[0]?.headline === headline
+				? prevRecord.sentAt
+				: (onsetAt ?? now.toISOString());
 
 		records.push({
 			id: `no-${id}`,
@@ -312,7 +319,7 @@ async function pollMetNorway(
 			severity: normalizeSeverity(String(p.riskMatrixColor ?? p.severity ?? 'unknown')),
 			urgency: 'Expected',
 			certainty: String(p.certainty ?? 'Likely'),
-			sentAt: now.toISOString(),
+			sentAt,
 			effectiveAt: onsetAt,
 			onsetAt,
 			expiresAt,

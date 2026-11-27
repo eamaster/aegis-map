@@ -26,6 +26,7 @@ import { fetchOfficialWarnings } from '../utils/warningsClient';
 import { BdiLtr } from './BdiLtr';
 import LocationHelpPanel from './LocationHelpPanel';
 import PlaceSelector from './PlaceSelector';
+import SubscriptionOptIn from './SubscriptionOptIn';
 
 interface NearMeViewProps {
 	onOpenExploreEvents: () => void;
@@ -525,6 +526,9 @@ export default function NearMeView({ onOpenExploreEvents }: NearMeViewProps) {
 					presentJurisdiction={presentJurisdiction}
 					onPresentJurisdictionChange={handlePresentJurisdictionChange}
 				/>
+
+				{/* Section 2.5: Opt-In Official Warning Alerts */}
+				<SubscriptionOptIn monitoredPlace={selectedPlace} />
 
 				{/* Section 3: Explicit Separation of Scientific Research Observations */}
 				<section
