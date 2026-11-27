@@ -44,6 +44,9 @@ export interface Disaster {
     areaAcres?: number; // For wildfires (EONET size)
     detectionCell?: FireDetectionCell; // For satellite fire detections
     isHistoricalContext?: boolean; // For open volcanoes outside strict window
+    isArchived?: boolean; // Selected from D1 historical archive
+    archiveProvenance?: 'live_captured' | 'reconstructed_backfill';
+    archiveAttribution?: string;
 }
 
 /** Rolling UTC interval [startInclusive, endExclusive). */

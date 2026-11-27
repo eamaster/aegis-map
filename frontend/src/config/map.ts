@@ -107,6 +107,7 @@ export function rewriteSatelliteTileUrl(url: string): string | null {
 }
 
 export const SELECTED_DISASTER_SOURCE_ID = 'selected-disaster';
+export const SELECTED_DISASTER_HALO_LAYER_ID = 'selected-disaster-halo-layer';
 export const SELECTED_DISASTER_LAYER_ID = 'selected-disaster-ring-layer';
 
 export const DISASTER_SOURCE_IDS = ['fires', 'fire-cells', 'earthquakes', 'volcanoes'] as const;

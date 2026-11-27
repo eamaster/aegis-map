@@ -1,5 +1,16 @@
-import { useEffect, useState } from 'react';
-import { X, History, Activity, Play, Pause, SkipBack, SkipForward, Crosshair } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import {
+	X,
+	History,
+	Activity,
+	Play,
+	Pause,
+	SkipBack,
+	SkipForward,
+	Crosshair,
+	CheckCircle2,
+	RotateCcw,
+} from 'lucide-react';
 import type { Disaster } from '../types';
 import type {
 	ArchivedDisasterEvent as SharedArchivedEvent,
@@ -7,6 +18,9 @@ import type {
 } from '../../../shared/contracts';
 import { fetchArchivedHistory, fetchSourceAnalytics } from '../utils/researchClient';
 import { useDesignSystem } from '../hooks/useDesignSystem';
+import { useLocale } from '../hooks/useLocale';
+import { getHazardMeta } from '../utils/eventFormatters';
+import { BdiLtr } from './BdiLtr';
 
 type ArchivedRow = SharedArchivedEvent;
 type ProviderRow = SharedProviderHealth;
@@ -23,6 +37,10 @@ export default function TimelineAnalyticsDrawer({
 	onSelectEvent,
 }: TimelineAnalyticsDrawerProps) {
 	const ds = useDesignSystem();
+	const { t } = useLocale();
+	const closeBtnRef = useRef<HTMLButtonElement>(null);
+	const triggerElRef = useRef<HTMLElement | null>(null);
+
 	const [activeTab, setActiveTab] = useState<'timeline' | 'analytics'>('timeline');
 	const [typeFilter, setTypeFilter] = useState<'all' | 'fire' | 'volcano' | 'earthquake'>('all');
 	const [events, setEvents] = useState<ArchivedRow[]>([]);
@@ -33,7 +51,26 @@ export default function TimelineAnalyticsDrawer({
 	const [errorMsg, setErrorMsg] = useState<string | null>(null);
 	const [playIndex, setPlayIndex] = useState(0);
 	const [playing, setPlaying] = useState(false);
-	const [expandedRevId, setExpandedRevId] = useState<string | null>(null);
+
+	// Capture triggering element on open, focus dialog close control, and always stop playback on close
+	useEffect(() => {
+		if (isOpen) {
+			triggerElRef.current = document.activeElement as HTMLElement | null;
+			const id = requestAnimationFrame(() => closeBtnRef.current?.focus());
+			return () => cancelAnimationFrame(id);
+		}
+		setPlaying(false);
+		return undefined;
+	}, [isOpen]);
+
+	const handleClose = () => {
+		setPlaying(false);
+		onClose();
+		const prev = triggerElRef.current;
+		if (prev && typeof prev.focus === 'function') {
+			requestAnimationFrame(() => prev.focus());
+		}
+	};
 
 	useEffect(() => {
 		if (!isOpen) return;
@@ -66,18 +103,19 @@ export default function TimelineAnalyticsDrawer({
 	}, [isOpen, typeFilter]);
 
 	useEffect(() => {
-		if (!playing || events.length === 0) return;
+		if (!isOpen || !playing || events.length === 0) return;
 		const id = window.setInterval(() => {
 			setPlayIndex((idx) => (idx + 1) % events.length);
 		}, 1600);
 		return () => window.clearInterval(id);
-	}, [playing, events.length]);
+	}, [isOpen, playing, events.length]);
 
 	if (!isOpen) return null;
 
 	const currentEvent = events[playIndex] ?? null;
 
 	const focusOnMap = (ev: ArchivedRow) => {
+		setPlaying(false);
 		onSelectEvent({
 			id: ev.upstreamId,
 			type: ev.type,
@@ -88,6 +126,9 @@ export default function TimelineAnalyticsDrawer({
 			severity: ev.severity,
 			magnitude: ev.magnitude ?? undefined,
 			areaAcres: ev.areaAcres ?? undefined,
+			isArchived: true,
+			archiveProvenance: ev.provenance,
+			archiveAttribution: ev.attribution,
 		});
 	};
 
@@ -97,20 +138,30 @@ export default function TimelineAnalyticsDrawer({
 			aria-modal="true"
 			aria-labelledby="timeline-analytics-title"
 			data-testid="timeline-analytics-drawer"
-			className="fixed inset-0 z-[140] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm"
+			data-playing={playing ? 'true' : 'false'}
+			onClick={handleClose}
+			className="fixed inset-0 z-[140] flex items-end md:items-center justify-center p-0 md:p-4 bg-black/65 backdrop-blur-sm"
 		>
 			<div
-				className="w-full max-w-3xl max-h-[88vh] flex flex-col rounded-2xl border shadow-2xl overflow-hidden"
+				onClick={(e) => e.stopPropagation()}
+				className="w-full h-[100dvh] md:h-auto md:max-w-3xl md:max-h-[86dvh] flex flex-col rounded-none md:rounded-2xl border shadow-2xl overflow-hidden"
 				style={{
 					...ds.glass.panel,
 					borderColor: ds.surface.border,
 					color: ds.text.primary,
 				}}
 			>
-				<div className="flex items-center justify-between px-5 py-4 border-b" style={{ borderColor: ds.surface.border }}>
-					<div>
-						<h2 id="timeline-analytics-title" className="text-base font-bold flex items-center gap-2">
-							<History size={18} className="text-blue-400" aria-hidden="true" />
+				{/* Non-scrolling Header */}
+				<div
+					className="shrink-0 flex items-start justify-between gap-3 px-4 sm:px-5 py-3.5 border-b"
+					style={{ borderColor: ds.surface.border }}
+				>
+					<div className="min-w-0">
+						<h2
+							id="timeline-analytics-title"
+							className="text-sm sm:text-base font-extrabold flex items-center gap-2"
+						>
+							<History size={18} className="text-blue-400 shrink-0" aria-hidden="true" />
 							<span>Historical Archive & Source Health</span>
 						</h2>
 						<p className="text-xs mt-0.5" style={{ color: ds.text.tertiary }}>
@@ -118,233 +169,412 @@ export default function TimelineAnalyticsDrawer({
 						</p>
 					</div>
 					<button
+						ref={closeBtnRef}
 						type="button"
-						onClick={onClose}
+						data-testid="close-timeline-drawer-btn"
+						onClick={handleClose}
 						aria-label="Close timeline and analytics drawer"
-						className="p-2 rounded-lg border"
+						className="min-h-[38px] min-w-[38px] shrink-0 rounded-lg border flex items-center justify-center"
 						style={{ background: ds.surface.overlaySubtle, borderColor: ds.surface.border }}
 					>
-						<X size={16} />
+						<X size={16} aria-hidden="true" />
 					</button>
 				</div>
 
-				<div className="flex items-center justify-between gap-2 px-5 py-2.5 border-b" style={{ borderColor: ds.surface.borderSubtle }}>
-					<div className="flex gap-2">
+				{/* Non-scrolling Tab & Filter Controls */}
+				<div
+					className="shrink-0 flex flex-wrap items-center justify-between gap-2 px-4 sm:px-5 py-2.5 border-b"
+					style={{ borderColor: ds.surface.borderSubtle, background: ds.surface.overlaySubtle }}
+				>
+					<div className="flex flex-wrap gap-1.5">
 						<button
 							type="button"
 							data-testid="tab-timeline"
 							onClick={() => setActiveTab('timeline')}
-							className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold ${
-								activeTab === 'timeline' ? 'bg-blue-600 text-white' : 'border border-slate-600'
+							className={`min-h-[36px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold ${
+								activeTab === 'timeline' ? 'bg-blue-600 text-white' : 'border'
 							}`}
+							style={
+								activeTab === 'timeline'
+									? undefined
+									: { borderColor: ds.surface.border, color: ds.text.secondary }
+							}
 						>
 							<History size={13} aria-hidden="true" />
-							<span>Archive Playback ({events.length})</span>
+							<span>
+								Archive (<BdiLtr mono>{events.length}</BdiLtr>)
+							</span>
 						</button>
 						<button
 							type="button"
 							data-testid="tab-analytics"
 							onClick={() => setActiveTab('analytics')}
-							className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold ${
-								activeTab === 'analytics' ? 'bg-blue-600 text-white' : 'border border-slate-600'
+							className={`min-h-[36px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold ${
+								activeTab === 'analytics' ? 'bg-blue-600 text-white' : 'border'
 							}`}
+							style={
+								activeTab === 'analytics'
+									? undefined
+									: { borderColor: ds.surface.border, color: ds.text.secondary }
+							}
 						>
 							<Activity size={13} aria-hidden="true" />
-							<span>Source Health ({providers.length})</span>
+							<span>
+								Source Health (<BdiLtr mono>{providers.length}</BdiLtr>)
+							</span>
 						</button>
 					</div>
 
 					{activeTab === 'timeline' && (
 						<select
+							data-testid="archive-type-filter"
 							aria-label="Filter archive by hazard type"
 							value={typeFilter}
 							onChange={(e) => setTypeFilter(e.target.value as typeof typeFilter)}
-							className="px-2.5 py-1.5 rounded-lg text-xs font-semibold border"
+							className="min-h-[36px] px-2.5 py-1.5 rounded-lg text-xs font-semibold border"
 							style={{
-								background: ds.surface.overlaySubtle,
+								background: ds.surface.overlay,
 								borderColor: ds.surface.border,
 								color: ds.text.primary,
 							}}
 						>
-							<option value="all" style={{ background: '#111827' }}>All Hazards</option>
-							<option value="fire" style={{ background: '#111827' }}>Wildfires</option>
-							<option value="earthquake" style={{ background: '#111827' }}>Earthquakes</option>
-							<option value="volcano" style={{ background: '#111827' }}>Volcanoes</option>
+							<option value="all" style={{ background: '#111827', color: '#fff' }}>
+								All Hazards
+							</option>
+							<option value="fire" style={{ background: '#111827', color: '#fff' }}>
+								Wildfires
+							</option>
+							<option value="earthquake" style={{ background: '#111827', color: '#fff' }}>
+								Earthquakes
+							</option>
+							<option value="volcano" style={{ background: '#111827', color: '#fff' }}>
+								Volcanoes
+							</option>
 						</select>
 					)}
 				</div>
 
-				<div className="flex-1 overflow-y-auto p-5 space-y-4">
+				{/* Non-scrolling Playback Bar when Timeline has events */}
+				{activeTab === 'timeline' && !loading && events.length > 0 && (
+					<div
+						data-testid="archive-playback-bar"
+						className="shrink-0 px-4 sm:px-5 py-2.5 border-b flex flex-wrap items-center justify-between gap-2"
+						style={{ background: ds.surface.overlay, borderColor: ds.surface.border }}
+					>
+						<div className="flex items-center gap-1.5">
+							<button
+								type="button"
+								onClick={() => setPlayIndex((i) => Math.max(0, i - 1))}
+								aria-label="Previous archived event"
+								className="min-h-[34px] min-w-[34px] rounded-lg border flex items-center justify-center"
+								style={{ borderColor: ds.surface.border }}
+							>
+								<SkipBack size={13} aria-hidden="true" />
+							</button>
+							<button
+								type="button"
+								data-testid="archive-play-toggle-btn"
+								onClick={() => setPlaying((p) => !p)}
+								aria-label={playing ? 'Pause playback' : 'Play playback'}
+								className="min-h-[34px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white"
+							>
+								{playing ? (
+									<Pause size={12} aria-hidden="true" />
+								) : (
+									<Play size={12} aria-hidden="true" />
+								)}
+								<span>{playing ? 'Pause' : 'Play'}</span>
+							</button>
+							<button
+								type="button"
+								onClick={() => setPlayIndex((i) => (i + 1) % events.length)}
+								aria-label="Next archived event"
+								className="min-h-[34px] min-w-[34px] rounded-lg border flex items-center justify-center"
+								style={{ borderColor: ds.surface.border }}
+							>
+								<SkipForward size={13} aria-hidden="true" />
+							</button>
+							<BdiLtr mono className="text-xs ps-1">
+								<span style={{ color: ds.text.secondary }}>
+									{playIndex + 1} / {events.length}
+								</span>
+							</BdiLtr>
+						</div>
+
+						{currentEvent && (
+							<button
+								type="button"
+								data-testid="archive-inspect-current-btn"
+								onClick={() => focusOnMap(currentEvent)}
+								className="min-h-[34px] inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white max-w-full"
+							>
+								<Crosshair size={13} className="shrink-0" aria-hidden="true" />
+								<span className="truncate max-w-[180px] sm:max-w-[260px]">
+									{t.inspectEventButton}: {currentEvent.title}
+								</span>
+							</button>
+						)}
+					</div>
+				)}
+
+				{/* Independently Scrolling Body */}
+				<div
+					data-testid="archive-scroll-body"
+					className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-4 sm:p-5 space-y-3"
+				>
 					{!storageAvailable && (
-						<div className="rounded-lg p-3 border border-amber-500/40 bg-amber-500/10 text-xs text-amber-200">
-							{note ?? 'D1 archive binding (AEGIS_DB) is not configured in this Worker environment.'}
+						<div className="rounded-lg p-3 border border-amber-500/40 bg-amber-500/10 text-xs text-amber-300">
+							{note ?? 'Historical archive storage is not enabled on this deployment.'}
 						</div>
 					)}
 
 					{errorMsg && (
-						<div className="rounded-lg p-3 border border-red-500/40 bg-red-500/10 text-xs text-red-200">
+						<div
+							data-testid="archive-error-banner"
+							className="rounded-lg p-3 border border-red-500/40 bg-red-500/10 text-xs text-red-300"
+						>
 							{errorMsg}
 						</div>
 					)}
 
 					{loading ? (
-						<p className="text-xs" style={{ color: ds.text.tertiary }}>Loading D1 archive…</p>
+						<p className="text-xs" style={{ color: ds.text.tertiary }}>
+							Loading historical archive…
+						</p>
 					) : activeTab === 'timeline' ? (
 						events.length === 0 ? (
 							<p className="text-xs" style={{ color: ds.text.secondary }}>
-								No archived events recorded yet for this filter. Live queries or bounded backfill will populate the archive.
+								No archived events recorded yet for this filter. Live queries or bounded backfill will
+								populate the archive.
 							</p>
 						) : (
-							<>
-								{/* Playback Bar */}
-								<div
-									className="rounded-xl p-3 border flex flex-wrap items-center justify-between gap-3"
-									style={{ background: ds.surface.overlay, borderColor: ds.surface.border }}
-								>
-									<div className="flex items-center gap-2">
-										<button
-											type="button"
-											onClick={() => setPlayIndex((i) => Math.max(0, i - 1))}
-											aria-label="Previous archived event"
-											className="p-1.5 rounded border border-slate-600"
-										>
-											<SkipBack size={13} />
-										</button>
-										<button
-											type="button"
-											onClick={() => setPlaying((p) => !p)}
-											aria-label={playing ? 'Pause playback' : 'Play playback'}
-											className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-bold bg-blue-600 text-white"
-										>
-											{playing ? <Pause size={12} /> : <Play size={12} />}
-											<span>{playing ? 'Pause' : 'Play'}</span>
-										</button>
-										<button
-											type="button"
-											onClick={() => setPlayIndex((i) => (i + 1) % events.length)}
-											aria-label="Next archived event"
-											className="p-1.5 rounded border border-slate-600"
-										>
-											<SkipForward size={13} />
-										</button>
-										<span className="text-xs font-mono" style={{ color: ds.text.secondary }}>
-											{playIndex + 1} / {events.length}
-										</span>
-									</div>
+							<ul className="space-y-2.5" data-testid="archive-events-list">
+								{events.map((ev, idx) => {
+									const meta = getHazardMeta(ev.type);
+									const isCurrent = idx === playIndex;
+									const isLive = ev.provenance === 'live_captured';
 
-									{currentEvent && (
-										<button
-											type="button"
-											onClick={() => focusOnMap(currentEvent)}
-											className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-500 text-white"
-										>
-											<Crosshair size={12} aria-hidden="true" />
-											<span>Inspect Selected ({currentEvent.title.slice(0, 28)})</span>
-										</button>
-									)}
-								</div>
-
-								{/* Event list */}
-								<ul className="space-y-2">
-									{events.map((ev, idx) => (
+									return (
 										<li
 											key={ev.id}
-											className="rounded-xl p-3 border text-xs space-y-1.5"
+											data-testid={`archive-row-${ev.id}`}
+											className="rounded-xl p-3.5 border text-xs space-y-2"
 											style={{
-												background: idx === playIndex ? 'rgba(37, 99, 235, 0.12)' : ds.surface.overlay,
-												borderColor: idx === playIndex ? 'rgba(59, 130, 246, 0.55)' : ds.surface.borderSubtle,
+												background: isCurrent
+													? 'rgba(37, 99, 235, 0.14)'
+													: ds.surface.overlay,
+												borderColor: isCurrent
+													? 'rgba(59, 130, 246, 0.6)'
+													: ds.surface.borderSubtle,
 											}}
 										>
-											<div className="flex flex-wrap items-center justify-between gap-2">
-												<div className="flex flex-wrap items-center gap-1.5">
-													<span className="font-bold">{ev.title}</span>
-													<span
-														className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${
-															ev.provenance === 'live_captured'
-																? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/35'
-																: 'bg-amber-500/20 text-amber-300 border border-amber-500/35'
-														}`}
-													>
-														{ev.provenance === 'live_captured' ? 'Live captured' : 'Reconstructed backfill'}
-													</span>
-													{ev.gdacsMatchId && (
-														<span className="px-1.5 py-0.5 rounded text-[10px] bg-slate-700 text-slate-200">
-															GDACS #{ev.gdacsMatchId}
+											<div className="flex flex-wrap items-start justify-between gap-2">
+												<div className="min-w-0 flex-1 space-y-1">
+													<div className="flex flex-wrap items-center gap-1.5">
+														<span
+															className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase"
+															style={{
+																background: `${meta.accentHex}22`,
+																border: `1px solid ${meta.accentHex}55`,
+															}}
+														>
+															<span aria-hidden="true">{meta.icon}</span>
+															<span>{meta.typeLabel}</span>
 														</span>
-													)}
+														<span
+															className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+																isLive
+																	? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+																	: 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+															}`}
+														>
+															{isLive ? (
+																<CheckCircle2 size={10} aria-hidden="true" />
+															) : (
+																<RotateCcw size={10} aria-hidden="true" />
+															)}
+															<span>
+																{isLive ? 'Live captured' : 'Reconstructed backfill'}
+															</span>
+														</span>
+													</div>
+
+													<div
+														className="font-extrabold text-xs sm:text-sm leading-snug break-words"
+														style={{ color: ds.text.primary }}
+													>
+														{ev.title}
+													</div>
 												</div>
+
 												<button
 													type="button"
+													data-testid={`inspect-archive-${ev.id}`}
 													onClick={() => focusOnMap(ev)}
-													className="text-[11px] font-semibold text-blue-300 hover:underline"
+													className="min-h-[36px] shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 hover:bg-blue-500 text-white"
 												>
-													Fly to event
+													<Crosshair size={12} aria-hidden="true" />
+													<span>{t.inspectEventButton}</span>
 												</button>
 											</div>
 
-											<div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[11px]" style={{ color: ds.text.secondary }}>
-												<span>Event: {ev.eventTime.slice(0, 16).replace('T', ' ')} UTC</span>
-												<span>First seen: {ev.firstSeenAt.slice(0, 16).replace('T', ' ')} UTC</span>
+											<div
+												className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]"
+												style={{ color: ds.text.secondary }}
+											>
+												<span>
+													Event:{' '}
+													<BdiLtr mono>
+														{ev.eventTime.slice(0, 16).replace('T', ' ')} UTC
+													</BdiLtr>
+												</span>
 												<span>Source: {ev.attribution}</span>
-												<span>Revisions: {ev.revisions?.length ?? 1}</span>
 											</div>
 
-											{ev.revisions && ev.revisions.length > 1 && (
-												<div>
-													<button
-														type="button"
-														onClick={() => setExpandedRevId(expandedRevId === ev.id ? null : ev.id)}
-														className="text-[11px] underline"
-														style={{ color: ds.colors.accent.blueLight }}
-													>
-														{expandedRevId === ev.id ? 'Hide revision trail' : 'Show revision trail'}
-													</button>
-													{expandedRevId === ev.id && (
-														<ul className="mt-1.5 pl-3 border-l space-y-1 text-[11px]" style={{ borderColor: ds.surface.border }}>
+											<details
+												className="text-[11px] pt-1 border-t"
+												style={{ borderColor: ds.surface.borderSubtle }}
+											>
+												<summary
+													className="font-semibold select-none py-0.5"
+													style={{ color: ds.text.tertiary }}
+												>
+													Details & revisions ({ev.revisions?.length ?? 1})
+												</summary>
+												<div
+													className="mt-1.5 space-y-1"
+													style={{ color: ds.text.tertiary }}
+												>
+													<div>
+														First seen:{' '}
+														<BdiLtr mono>
+															{ev.firstSeenAt.slice(0, 16).replace('T', ' ')} UTC
+														</BdiLtr>
+													</div>
+													{ev.gdacsMatchId && (
+														<div>
+															GDACS match: <BdiLtr mono>#{ev.gdacsMatchId}</BdiLtr>
+														</div>
+													)}
+													{ev.revisions && ev.revisions.length > 0 && (
+														<ul
+															className="mt-1 ps-3 border-s space-y-1"
+															style={{ borderColor: ds.surface.border }}
+														>
 															{ev.revisions.map((rv) => (
-																<li key={`${ev.id}-rev-${rv.revisionNumber}`} style={{ color: ds.text.tertiary }}>
-																	v{rv.revisionNumber} ({rv.observedAt.slice(0, 16).replace('T', ' ')} UTC):{' '}
-																	{rv.title} · severity={rv.severity}
+																<li key={`${ev.id}-rev-${rv.revisionNumber}`}>
+																	<BdiLtr mono>
+																		v{rv.revisionNumber} (
+																		{rv.observedAt.slice(0, 16).replace('T', ' ')}{' '}
+																		UTC)
+																	</BdiLtr>
+																	: {rv.title} · severity={rv.severity}
 																</li>
 															))}
 														</ul>
 													)}
 												</div>
-											)}
+											</details>
 										</li>
-									))}
-								</ul>
-							</>
+									);
+								})}
+							</ul>
 						)
 					) : providers.length === 0 ? (
 						<p className="text-xs" style={{ color: ds.text.secondary }}>
 							No provider telemetry runs recorded in D1 yet.
 						</p>
 					) : (
-						<div className="overflow-x-auto">
-							<table className="w-full text-left text-xs border-collapse">
-								<thead>
-									<tr className="border-b" style={{ borderColor: ds.surface.border, color: ds.text.tertiary }}>
-										<th className="py-2 pr-3">Provider</th>
-										<th className="py-2 pr-3">OK / Total Runs</th>
-										<th className="py-2 pr-3">Avg Latency</th>
-										<th className="py-2 pr-3">Records / Rejected</th>
-										<th className="py-2 pr-3">Latest</th>
-									</tr>
-								</thead>
-								<tbody>
-									{providers.map((p) => (
-										<tr key={p.provider} className="border-b" style={{ borderColor: ds.surface.borderSubtle }}>
-											<td className="py-2 pr-3 font-bold uppercase">{p.provider}</td>
-											<td className="py-2 pr-3 font-mono">{p.okRuns} / {p.runs}</td>
-											<td className="py-2 pr-3 font-mono">{p.avgLatencyMs !== null ? `${p.avgLatencyMs} ms` : '—'}</td>
-											<td className="py-2 pr-3 font-mono">{p.totalRecords} / {p.totalRejected}</td>
-											<td className="py-2 pr-3">{p.lastStatus ?? '—'}</td>
+						<>
+							{/* Desktop/Tablet Table */}
+							<div className="hidden sm:block overflow-x-auto">
+								<table className="w-full text-start text-xs border-collapse">
+									<thead>
+										<tr
+											className="border-b"
+											style={{ borderColor: ds.surface.border, color: ds.text.tertiary }}
+										>
+											<th className="py-2 pe-3 text-start">Provider</th>
+											<th className="py-2 pe-3 text-start">OK / Runs</th>
+											<th className="py-2 pe-3 text-start">Avg Latency</th>
+											<th className="py-2 pe-3 text-start">Records / Rejected</th>
+											<th className="py-2 text-start">Latest</th>
 										</tr>
-									))}
-								</tbody>
-							</table>
-						</div>
+									</thead>
+									<tbody>
+										{providers.map((p) => (
+											<tr
+												key={p.provider}
+												className="border-b"
+												style={{ borderColor: ds.surface.borderSubtle }}
+											>
+												<td className="py-2 pe-3 font-bold uppercase">{p.provider}</td>
+												<td className="py-2 pe-3">
+													<BdiLtr mono>
+														{p.okRuns} / {p.runs}
+													</BdiLtr>
+												</td>
+												<td className="py-2 pe-3">
+													<BdiLtr mono>
+														{p.avgLatencyMs !== null ? `${p.avgLatencyMs} ms` : '—'}
+													</BdiLtr>
+												</td>
+												<td className="py-2 pe-3">
+													<BdiLtr mono>
+														{p.totalRecords} / {p.totalRejected}
+													</BdiLtr>
+												</td>
+												<td className="py-2">{p.lastStatus ?? '—'}</td>
+											</tr>
+										))}
+									</tbody>
+								</table>
+							</div>
+
+							{/* Phone Stacked Provider Cards */}
+							<div className="sm:hidden space-y-2">
+								{providers.map((p) => (
+									<div
+										key={`m-${p.provider}`}
+										className="rounded-xl p-3 border text-xs space-y-1"
+										style={{
+											background: ds.surface.overlay,
+											borderColor: ds.surface.borderSubtle,
+										}}
+									>
+										<div className="flex items-center justify-between">
+											<span className="font-bold uppercase">{p.provider}</span>
+											<span className="text-[11px]" style={{ color: ds.text.secondary }}>
+												{p.lastStatus ?? '—'}
+											</span>
+										</div>
+										<div
+											className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px]"
+											style={{ color: ds.text.tertiary }}
+										>
+											<span>
+												Runs:{' '}
+												<BdiLtr mono>
+													{p.okRuns}/{p.runs}
+												</BdiLtr>
+											</span>
+											<span>
+												Latency:{' '}
+												<BdiLtr mono>
+													{p.avgLatencyMs !== null ? `${p.avgLatencyMs} ms` : '—'}
+												</BdiLtr>
+											</span>
+											<span>
+												Records:{' '}
+												<BdiLtr mono>
+													{p.totalRecords} ({p.totalRejected} rej)
+												</BdiLtr>
+											</span>
+										</div>
+									</div>
+								))}
+							</div>
+						</>
 					)}
 				</div>
 			</div>

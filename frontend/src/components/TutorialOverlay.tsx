@@ -21,19 +21,15 @@ export default function TutorialOverlay({ onClose }: TutorialOverlayProps) {
     }, [onClose]);
 
     useEffect(() => {
-        setTimeout(() => setIsVisible(true), 50);
+        const timer = setTimeout(() => setIsVisible(true), 30);
+        const prevOverflow = document.body.style.overflow;
         document.body.style.overflow = 'hidden';
 
-        const handleEscape = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') handleClose();
-        };
-        window.addEventListener('keydown', handleEscape);
-
         return () => {
-            document.body.style.overflow = 'unset';
-            window.removeEventListener('keydown', handleEscape);
+            clearTimeout(timer);
+            document.body.style.overflow = prevOverflow;
         };
-    }, [handleClose]);
+    }, []);
 
     // Helper to add opacity to hex colors
     const addOpacity = (hex: string, opacity: number) => {
@@ -78,14 +74,16 @@ export default function TutorialOverlay({ onClose }: TutorialOverlayProps) {
             >
                 {/* Close Button */}
                 <button
+                    type="button"
+                    data-testid="close-tutorial-btn"
                     onClick={handleClose}
-                    className="absolute z-10 transition-all duration-200 hover:scale-110 hover:rotate-90"
+                    className="absolute z-10 transition-all duration-200 hover:scale-105"
                     style={{
-                        top: '16px',
-                        right: '16px',
-                        width: '32px',
-                        height: '32px',
-                        padding: '6px',
+                        top: '14px',
+                        insetInlineEnd: '14px',
+                        minWidth: '38px',
+                        minHeight: '38px',
+                        padding: '8px',
                         borderRadius: '10px',
                         background: ds.isDark ? 'rgba(239, 68, 68, 0.15)' : 'rgba(239, 68, 68, 0.2)',
                         border: ds.isDark ? '1px solid rgba(239, 68, 68, 0.4)' : '1px solid rgba(239, 68, 68, 0.5)',

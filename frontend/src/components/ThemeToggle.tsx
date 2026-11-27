@@ -8,24 +8,21 @@ export default function ThemeToggle() {
 
     return (
         <button
+            type="button"
+            data-testid="theme-toggle-btn"
             onClick={toggleTheme}
-            className="transition-all duration-200 hover:scale-105 active:scale-95"
+            className="min-h-[38px] min-w-[38px] sm:min-h-[40px] sm:min-w-[40px] rounded-lg border flex items-center justify-center transition-colors hover:opacity-90"
             style={{
-                padding: '10px',
-                borderRadius: '10px',
                 background: ds.surface.overlaySubtle,
-                border: `1px solid ${ds.surface.border}`,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
+                borderColor: ds.surface.border,
             }}
-            aria-label="Toggle theme"
+            aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
             title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
         >
             {theme === 'dark' ? (
-                <Sun size={18} style={{ color: '#fbbf24', strokeWidth: 2.5 }} />
+                <Sun size={17} style={{ color: '#fbbf24', strokeWidth: 2.5 }} />
             ) : (
-                <Moon size={18} style={{ color: '#374151', strokeWidth: 2.5 }} />
+                <Moon size={17} style={{ color: '#334155', strokeWidth: 2.5 }} />
             )}
         </button>
     );
