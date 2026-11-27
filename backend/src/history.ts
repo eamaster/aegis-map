@@ -38,17 +38,27 @@ const REQUIRED_D1_TABLES = [
 	'subscription_deliveries',
 ] as const;
 
+/**
+ * Objects created by migration 0002 (resumable subscription dispatch). The Worker only reports the
+ * schema as ready when they exist, so a production deploy that skipped `d1 migrations apply`
+ * fails the release gate (`services.d1 === 'ready'`) instead of silently running without them.
+ */
+const REQUIRED_D1_INDEXES = ['idx_subscriptions_dispatch_cursor', 'idx_deliveries_sub_status_alert'] as const;
+
 export type D1SchemaState = 'ready' | 'schema_missing' | 'unbound';
 
 export async function checkD1SchemaReady(db: D1Database | undefined): Promise<D1SchemaState> {
 	if (!db) return 'unbound';
 	try {
+		const names = [...REQUIRED_D1_TABLES, ...REQUIRED_D1_INDEXES];
 		const res = await db
-			.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (?, ?, ?, ?, ?, ?)`)
-			.bind(...REQUIRED_D1_TABLES)
+			.prepare(
+				`SELECT name FROM sqlite_master WHERE type IN ('table', 'index') AND name IN (${names.map(() => '?').join(', ')})`,
+			)
+			.bind(...names)
 			.all<{ name: string }>();
 		const present = new Set((res.results ?? []).map((r) => r.name));
-		return REQUIRED_D1_TABLES.every((t) => present.has(t)) ? 'ready' : 'schema_missing';
+		return names.every((n) => present.has(n)) ? 'ready' : 'schema_missing';
 	} catch {
 		return 'schema_missing';
 	}
