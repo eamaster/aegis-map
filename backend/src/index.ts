@@ -63,6 +63,8 @@ type Bindings = {
 	AI_MODEL?: string;
 	/** Optional comma-separated extra browser origins (merged with defaults). */
 	CORS_ORIGINS?: string;
+	/** Optional build/deploy git SHA passed via wrangler deploy --var GIT_SHA:... */
+	GIT_SHA?: string;
 };
 
 /** Metadata headers browsers may read cross-origin. */
@@ -95,7 +97,12 @@ app.use('/*', async (c, next) => {
 });
 
 app.get('/', (c) => {
-	return c.json({ status: 'AegisMap API Online', version: APP_VERSION, capabilities: API_CAPABILITIES });
+	return c.json({
+		status: 'AegisMap API Online',
+		version: APP_VERSION,
+		commitSha: c.env.GIT_SHA || 'unknown',
+		capabilities: API_CAPABILITIES,
+	});
 });
 
 interface DisastersCacheDocument {

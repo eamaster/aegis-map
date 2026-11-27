@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as satellite from 'satellite.js';
-import { getNextPass, predictPasses } from './orbitalEngine';
+import { createPassPredictionSession, getNextPass, predictPasses } from './orbitalEngine';
 
 const L8_LINE1 = '1 39084U 13008A   26282.90944219  .00000228  00000+0  60785-4 0  9995';
 const L8_LINE2 = '2 39084  98.2190 351.6114 0001302  94.7208 265.4139 14.57110728714606';
@@ -72,5 +72,41 @@ describe('Orbital Engine Pass Predictions', () => {
 
     it('getNextPass returns null when coordinates are invalid', () => {
         expect(getNextPass(sampleTle, 95, 0)).toBeNull();
+    });
+
+    it('consolidates 25°/15°/5° fallback into a single memoized session with exact parity', () => {
+        const start = new Date(L8_EPOCH.getTime() - 60 * 1000);
+        const observer = subSatellitePoint(L8_LINE1, L8_LINE2, L8_EPOCH);
+        const session = createPassPredictionSession(sampleTle, observer.lat, observer.lng, start);
+
+        for (const threshold of [25, 15, 5]) {
+            const legacy = predictPasses(sampleTle, observer.lat, observer.lng, threshold, start);
+            const fromSession = session.predictPassesAtThreshold(threshold);
+            expect(fromSession.map((p) => ({
+                satelliteName: p.satelliteName,
+                time: p.time.toISOString(),
+                elevation: p.elevation,
+                azimuth: p.azimuth,
+                maxElevationDeg: p.maxElevationDeg,
+            }))).toEqual(legacy.map((p) => ({
+                satelliteName: p.satelliteName,
+                time: p.time.toISOString(),
+                elevation: p.elevation,
+                azimuth: p.azimuth,
+                maxElevationDeg: p.maxElevationDeg,
+            })));
+        }
+
+        // 6-satellite no-pass fallback must not re-propagate 3x
+        const lowIncLine2Body = `${L8_LINE2.slice(0, 8)}  5.0000${L8_LINE2.slice(16, 68)}`;
+        const lowIncLine2 = lowIncLine2Body + tleChecksum(lowIncLine2Body);
+        const sixSatsNoPass = Array.from({ length: 6 }, (_, i) => `EQSAT ${i + 1}\n${L8_LINE1}\n${lowIncLine2}`).join('\n');
+        const noPassSession = createPassPredictionSession(sixSatsNoPass, 75, 15, start);
+        const res = noPassSession.resolveNextBestPass([25, 15, 5]);
+        expect(res.pass).toBeNull();
+        expect(res.threshold).toBeNull();
+        expect(res.allFleetPasses).toEqual([]);
+        // Single 24h coarse grid = 6 * 288 = 1,728 propagations (vs 5,184 previously)
+        expect(res.propagationCount).toBe(1728);
     });
 });

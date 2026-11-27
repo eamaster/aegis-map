@@ -1,18 +1,25 @@
 /**
  * Debug Panel Component
  * Shows real-time validation status of all features
- * Toggle with Ctrl+D or click "Debug" in header
+ * Toggle with Ctrl+D
  */
 
 import { useEffect, useState } from 'react';
 import { Activity, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
+
+interface DebugEventPayload {
+    category: string;
+    message: string;
+    status: 'success' | 'error' | 'warning' | 'info';
+    data?: Record<string, unknown>;
+}
 
 interface DebugInfo {
     timestamp: string;
     category: string;
     message: string;
     status: 'success' | 'error' | 'warning' | 'info';
-    data?: any;
+    data?: Record<string, unknown>;
 }
 
 interface DebugStats {
@@ -25,6 +32,19 @@ interface DebugStats {
     weatherCalls: number;
     cacheHits: number;
     cacheMisses: number;
+}
+
+function StatusIcon({ status }: { status: 'success' | 'error' | 'warning' | 'info' }) {
+    switch (status) {
+        case 'success':
+            return <CheckCircle size={16} className="text-green-400" />;
+        case 'error':
+            return <XCircle size={16} className="text-red-400" />;
+        case 'warning':
+            return <AlertCircle size={16} className="text-yellow-400" />;
+        default:
+            return <Activity size={16} className="text-blue-400" />;
+    }
 }
 
 export default function DebugPanel() {
@@ -45,8 +65,9 @@ export default function DebugPanel() {
 
     // Listen for debug events from window
     useEffect(() => {
-        const handleDebugEvent = (e: CustomEvent) => {
-            const { category, message, status, data } = e.detail;
+        const handleDebugEvent = (e: Event) => {
+            const custom = e as CustomEvent<DebugEventPayload>;
+            const { category, message, status, data } = custom.detail;
             const newLog: DebugInfo = {
                 timestamp: new Date().toLocaleTimeString(),
                 category,
@@ -54,20 +75,19 @@ export default function DebugPanel() {
                 status,
                 data,
             };
-            setLogs((prev) => [newLog, ...prev].slice(0, 100)); // Keep last 100
+            setLogs((prev) => [newLog, ...prev].slice(0, 100));
 
-            // Update stats
             if (category === 'backend' && status === 'success') {
                 setStats((prev) => ({ ...prev, backendOnline: true }));
             }
-            if (category === 'disasters' && data?.count) {
-                setStats((prev) => ({ ...prev, disastersLoaded: data.count }));
+            if (category === 'disasters' && typeof data?.count === 'number') {
+                setStats((prev) => ({ ...prev, disastersLoaded: data.count as number }));
             }
-            if (category === 'tles' && data?.satellites) {
+            if (category === 'tles' && typeof data?.satellites === 'number') {
                 setStats((prev) => ({
                     ...prev,
                     tlesLoaded: true,
-                    satellitesCount: data.satellites,
+                    satellitesCount: data.satellites as number,
                 }));
             }
             if (category === 'ai') {
@@ -82,9 +102,8 @@ export default function DebugPanel() {
             }
         };
 
-        window.addEventListener('aegis-debug' as any, handleDebugEvent);
+        window.addEventListener('aegis-debug', handleDebugEvent);
 
-        // Keyboard shortcut: Ctrl+D
         const handleKeyPress = (e: KeyboardEvent) => {
             if (e.ctrlKey && e.key === 'd') {
                 e.preventDefault();
@@ -93,13 +112,24 @@ export default function DebugPanel() {
         };
         window.addEventListener('keydown', handleKeyPress);
 
-        // Expose debug functions globally
-        (window as any).aegisDebug = {
-            log: (category: string, message: string, status: string, data?: any) => {
+        (window as Window & {
+            aegisDebug?: {
+                log: (category: string, message: string, level: string, data?: unknown) => void;
+                getStats: () => DebugStats;
+                getLogs: () => DebugInfo[];
+                clear: () => void;
+            };
+        }).aegisDebug = {
+            log: (category: string, message: string, status: string, data?: unknown) => {
                 window.dispatchEvent(
                     new CustomEvent('aegis-debug', {
-                        detail: { category, message, status, data },
-                    })
+                        detail: {
+                            category,
+                            message,
+                            status,
+                            data: typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : undefined,
+                        },
+                    }),
                 );
             },
             getStats: () => stats,
@@ -108,32 +138,17 @@ export default function DebugPanel() {
         };
 
         return () => {
-            window.removeEventListener('aegis-debug' as any, handleDebugEvent);
+            window.removeEventListener('aegis-debug', handleDebugEvent);
             window.removeEventListener('keydown', handleKeyPress);
         };
     }, [stats, logs]);
 
     if (!isOpen) {
-        // Completely hidden - only accessible via Ctrl+D
         return null;
     }
 
-    const StatusIcon = ({ status }: { status: 'success' | 'error' | 'warning' | 'info' }) => {
-        switch (status) {
-            case 'success':
-                return <CheckCircle size={16} className="text-green-400" />;
-            case 'error':
-                return <XCircle size={16} className="text-red-400" />;
-            case 'warning':
-                return <AlertCircle size={16} className="text-yellow-400" />;
-            default:
-                return <Activity size={16} className="text-blue-400" />;
-        }
-    };
-
     return (
         <div className="fixed bottom-0 right-0 w-full md:w-[600px] h-[400px] bg-gray-900/95 backdrop-blur-xl border-l border-t border-white/10 z-[9999] flex flex-col shadow-2xl">
-            {/* Header */}
             <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
                 <div className="flex items-center gap-2">
                     <Activity size={20} className="text-blue-400" />
@@ -143,12 +158,12 @@ export default function DebugPanel() {
                 <button
                     onClick={() => setIsOpen(false)}
                     className="text-gray-400 hover:text-white transition-colors"
+                    aria-label="Close debug panel"
                 >
                     ✕
                 </button>
             </div>
 
-            {/* Stats Grid */}
             <div className="grid grid-cols-4 gap-2 px-4 py-3 border-b border-white/10 bg-gray-800/50">
                 <div className="text-center">
                     <div className="text-xs text-gray-400 mb-1">Backend</div>
@@ -172,7 +187,6 @@ export default function DebugPanel() {
                 </div>
             </div>
 
-            {/* Logs */}
             <div className="flex-1 overflow-y-auto px-4 py-2 space-y-1 custom-scrollbar">
                 {logs.length === 0 && (
                     <div className="text-center text-gray-500 py-8">No debug logs yet...</div>
@@ -200,7 +214,6 @@ export default function DebugPanel() {
                 ))}
             </div>
 
-            {/* Footer */}
             <div className="px-4 py-2 border-t border-white/10 flex justify-between items-center bg-gray-800/50">
                 <span className="text-xs text-gray-400">{logs.length} logs</span>
                 <button

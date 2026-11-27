@@ -6,10 +6,12 @@ import {
 } from '../src/config';
 import {
 	calculateWindowRange,
+	cellsSnapshotKey,
 	computeCellBounds,
 	computeIntensity,
 	computeSnapshotStatus,
 	FirmsGlobalSnapshot,
+	fnv1a64Hex,
 	ingestGlobalFirms,
 	isValidSnapshot,
 	loadGlobalFirmsMeta,
@@ -17,6 +19,7 @@ import {
 	planWorldFirmsRequests,
 	saveGlobalFirmsSnapshot,
 	saveGlobalFirmsSnapshotSplit,
+	serializeGlobalFirmsSnapshotSplit,
 	WorldGridAggregator,
 } from '../src/firmsGlobal';
 import { csvResponse, memoryKv } from './helpers';
@@ -334,6 +337,77 @@ describe('firmsGlobal - Snapshot KV Persistence, Split Meta/Cells & Status', () 
 		expect(loaded).not.toBeNull();
 		expect(loaded!.status).toBe('partial');
 		expect(loaded!.meta.sensors.VIIRS_SNPP_NRT.status).toBe('no_data');
+	});
+
+	it('falls back to LKG on partial write or checksum mismatch, and resolves overlapping jobs via snapshotId', async () => {
+		const { kv, store } = memoryKv();
+		const oldTime = new Date('2026-10-13T10:00:00Z');
+		const newTime = new Date('2026-10-13T12:00:00Z');
+
+		const makeSnap = (generatedAt: string, lat: number, count: number): FirmsGlobalSnapshot => ({
+			version: 2,
+			window: '24h',
+			windowRange: calculateWindowRange('24h', new Date(generatedAt)),
+			generatedAt,
+			sensors: {
+				VIIRS_SNPP_NRT: { status: 'ok', rawRows: count, acceptedRows: count },
+				VIIRS_NOAA20_NRT: { status: 'ok', rawRows: 0, acceptedRows: 0 },
+				VIIRS_NOAA21_NRT: { status: 'ok', rawRows: 0, acceptedRows: 0 },
+			},
+			accounting: {
+				rawRows: count,
+				malformedRows: 0,
+				outOfWindowRows: 0,
+				duplicateRows: 0,
+				acceptedDetections: count,
+			},
+			totalDetections: count,
+			cells: [
+				{
+					cellId: `cell:${lat}:20.25`,
+					lat,
+					lng: 20.25,
+					bounds: [20.0, lat - 0.25, 20.5, lat + 0.25],
+					detectionCount: count,
+					maxFrp: 50,
+					avgFrp: 25,
+					maxBrightTi4: 330,
+					latestAcqTime: generatedAt,
+					confidenceCounts: { high: count, nominal: 0, low: 0, unknown: 0 },
+					dayNightCounts: { day: count, night: 0, unknown: 0 },
+					satelliteCounts: { NPP: count },
+					intensity: 'high',
+				},
+			],
+		});
+
+		const snapA = makeSnap(oldTime.toISOString(), 10.25, 10);
+		const snapB = makeSnap(newTime.toISOString(), 15.25, 25);
+
+		// Commit Job A cleanly (sets LKG to snapA)
+		await saveGlobalFirmsSnapshotSplit(kv, snapA);
+
+		// Simulate overlapping Job B overwriting rolling cells key while meta still points to snapA via snapshotId
+		const serB = serializeGlobalFirmsSnapshotSplit(snapB);
+		store.set('firms:global:cells:v2:24h', serB.cellsJson);
+		const readA = await loadGlobalFirmsMeta(kv, '24h', { now: new Date('2026-10-13T12:05:00Z') });
+		expect(readA).not.toBeNull();
+		expect(readA!.isLkg).toBe(false);
+		expect(readA!.meta.totalDetections).toBe(10);
+		expect(JSON.parse(readA!.cellsJson)[0].cellId).toBe('cell:10.25:20.25');
+
+		// Simulate partial/corrupt write: meta points to snapB, but snapshot-specific key is missing and rolling cells still hold snapA
+		const serA = serializeGlobalFirmsSnapshotSplit(snapA);
+		store.set('firms:global:meta:v2:24h', serB.metaJson);
+		store.set('firms:global:cells:v2:24h', serA.cellsJson);
+		store.delete(cellsSnapshotKey('24h', serB.meta.snapshotId!));
+		expect(fnv1a64Hex(serA.cellsJson)).not.toBe(serB.meta.cellsChecksum);
+
+		const fallbackLkg = await loadGlobalFirmsMeta(kv, '24h', { now: new Date('2026-10-13T12:05:00Z') });
+		expect(fallbackLkg).not.toBeNull();
+		expect(fallbackLkg!.isLkg).toBe(true);
+		expect(fallbackLkg!.status).toBe('stale');
+		expect(fallbackLkg!.meta.totalDetections).toBe(10);
 	});
 });
 

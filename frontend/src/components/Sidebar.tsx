@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { X, Sparkles, Cloud, Satellite } from 'lucide-react';
 import type { Disaster, WeatherData, AIAnalysisResponse } from '../types';
-import { getNextPass, predictPasses, type SatellitePass } from '../utils/orbitalEngine';
+import { createPassPredictionSession, type SatellitePass } from '../utils/orbitalEngine';
 import SatelliteImagery from './SatelliteImagery';
 import { useDesignSystem } from '../hooks/useDesignSystem';
 import { apiUrl } from '../config/api';
@@ -178,16 +178,14 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                     return;
                 }
 
-                let pass = getNextPass(responseText, latNum, lngNum);
-                let threshold: number = SATELLITE_ELEVATION_THRESHOLDS.OPTIMAL;
-                if (!pass) {
-                    const lower = predictPasses(responseText, latNum, lngNum, SATELLITE_ELEVATION_THRESHOLDS.ACCEPTABLE);
-                    if (lower.length > 0) [pass, threshold] = [lower[0], SATELLITE_ELEVATION_THRESHOLDS.ACCEPTABLE];
-                }
-                if (!pass) {
-                    const min = predictPasses(responseText, latNum, lngNum, SATELLITE_ELEVATION_THRESHOLDS.MINIMUM);
-                    if (min.length > 0) [pass, threshold] = [min[0], SATELLITE_ELEVATION_THRESHOLDS.MINIMUM];
-                }
+                const session = createPassPredictionSession(responseText, latNum, lngNum);
+                const resolved = session.resolveNextBestPass([
+                    SATELLITE_ELEVATION_THRESHOLDS.OPTIMAL,
+                    SATELLITE_ELEVATION_THRESHOLDS.ACCEPTABLE,
+                    SATELLITE_ELEVATION_THRESHOLDS.MINIMUM,
+                ]);
+                const pass = resolved.pass;
+                const threshold = resolved.threshold ?? SATELLITE_ELEVATION_THRESHOLDS.OPTIMAL;
                 if (!isCurrentGeneration(generation, selectionGenRef.current)) return;
 
                 if (!pass) {

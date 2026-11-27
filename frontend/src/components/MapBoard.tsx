@@ -3,7 +3,7 @@
  * Uses useRef to prevent unnecessary map re-renders
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { debugLog } from '../utils/debug';
@@ -46,6 +46,7 @@ interface MapBoardProps {
     onObservationWindowChange?: (window: ObservationWindow) => void;
     volcanoMode?: VolcanoMode;
     onVolcanoModeChange?: (mode: VolcanoMode) => void;
+    onOpenNearMe?: () => void;
 }
 
 const toPointFeatureCollection = (items: Disaster[]): GeoJSON.FeatureCollection<GeoJSON.Point> => ({
@@ -125,6 +126,7 @@ export default function MapBoard({
     onObservationWindowChange,
     volcanoMode = DEFAULT_VOLCANO_MODE,
     onVolcanoModeChange,
+    onOpenNearMe,
 }: MapBoardProps) {
     const mapContainerRef = useRef<HTMLDivElement>(null);
     const map = useRef<mapboxgl.Map | null>(null);
@@ -153,6 +155,10 @@ export default function MapBoard({
     const basemapFallbackAppliedRef = useRef(isSatelliteFallbackRemembered(accessToken));
     const disastersByIdRef = useRef<Map<string, Disaster>>(new Map());
     const pulseIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const activeFiltersRef = useRef(activeFilters);
+    useEffect(() => {
+        activeFiltersRef.current = activeFilters;
+    }, [activeFilters]);
 
     /** Resolve the single topmost rendered disaster feature at `point` in strict visual priority order. */
     const resolveTopFeature = (
@@ -178,17 +184,25 @@ export default function MapBoard({
     };
 
     // Add disaster data layers to map (bottom-to-top matching DISASTER_LAYER_PRIORITY)
-    const addDisasterLayers = (items: Disaster[]) => {
+    // Builds GeoJSON sources once per disaster dataset; filter toggles use setLayoutProperty visibility.
+    const addDisasterLayers = useCallback((items: Disaster[]) => {
         if (!map.current) return;
         const mapInstance = map.current;
 
         removeDisasterLayers(mapInstance, pulseIntervalRef);
 
-        const visible = items.filter((d) => activeFilters.has(d.type));
-        const fireDetections = visible.filter((d) => d.type === 'fire_detection');
-        const earthquakes = visible.filter((d) => d.type === 'earthquake');
-        const volcanoes = visible.filter((d) => d.type === 'volcano');
-        const fires = visible.filter((d) => d.type === 'fire');
+        const fireDetections: Disaster[] = [];
+        const earthquakes: Disaster[] = [];
+        const volcanoes: Disaster[] = [];
+        const fires: Disaster[] = [];
+        for (const d of items) {
+            if (d.type === 'fire_detection') fireDetections.push(d);
+            else if (d.type === 'earthquake') earthquakes.push(d);
+            else if (d.type === 'volcano') volcanoes.push(d);
+            else if (d.type === 'fire') fires.push(d);
+        }
+
+        const filters = activeFiltersRef.current;
 
         // 1. Satellite thermal cells (bottom of disaster stack so confirmed events stay clickable on top)
         if (fireDetections.length > 0) {
@@ -202,6 +216,9 @@ export default function MapBoard({
                 type: 'circle',
                 source: 'fire-cells',
                 slot: 'top',
+                layout: {
+                    visibility: filters.has('fire_detection') ? 'visible' : 'none',
+                },
                 paint: {
                     'circle-color': [
                         'match',
@@ -221,14 +238,15 @@ export default function MapBoard({
 
         // 2. Point disaster layers (earthquakes -> volcanoes -> confirmed wildfires on top)
         const pointSpecs: Array<{
+            type: Disaster['type'];
             sourceId: (typeof DISASTER_SOURCE_IDS)[number];
             layerId: (typeof DISASTER_LAYER_PRIORITY)[number];
             records: Disaster[];
             color: string;
         }> = [
-            { sourceId: 'earthquakes', layerId: 'earthquakes-layer', records: earthquakes, color: DESIGN_SYSTEM.colors.disaster.earthquake },
-            { sourceId: 'volcanoes', layerId: 'volcanoes-layer', records: volcanoes, color: DESIGN_SYSTEM.colors.disaster.volcano },
-            { sourceId: 'fires', layerId: 'fires-layer', records: fires, color: DESIGN_SYSTEM.colors.disaster.fire },
+            { type: 'earthquake', sourceId: 'earthquakes', layerId: 'earthquakes-layer', records: earthquakes, color: DESIGN_SYSTEM.colors.disaster.earthquake },
+            { type: 'volcano', sourceId: 'volcanoes', layerId: 'volcanoes-layer', records: volcanoes, color: DESIGN_SYSTEM.colors.disaster.volcano },
+            { type: 'fire', sourceId: 'fires', layerId: 'fires-layer', records: fires, color: DESIGN_SYSTEM.colors.disaster.fire },
         ];
 
         const animatedLayerIds: string[] = [];
@@ -243,6 +261,9 @@ export default function MapBoard({
                 type: 'circle',
                 source: spec.sourceId,
                 slot: 'top',
+                layout: {
+                    visibility: filters.has(spec.type) ? 'visible' : 'none',
+                },
                 paint: {
                     'circle-radius': ['case', ['==', ['get', 'severity'], 'high'], 10, 8],
                     'circle-color': spec.color,
@@ -257,12 +278,16 @@ export default function MapBoard({
             }
         }
 
-        // Single shared pulse animation for high-severity markers across active point layers
-        if (animatedLayerIds.length > 0) {
+        // Single shared pulse animation (250ms, paused when hidden or reduced-motion)
+        const prefersReducedMotion =
+            typeof window !== 'undefined' &&
+            typeof window.matchMedia === 'function' &&
+            window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        if (animatedLayerIds.length > 0 && !prefersReducedMotion) {
             pulseIntervalRef.current = setInterval(() => {
-                if (!map.current) return;
+                if (!map.current || (typeof document !== 'undefined' && document.hidden)) return;
                 const phase = (Date.now() % 2000) / 2000;
-                const radius = 10 + Math.sin(phase * Math.PI * 2) * 3;
+                const radius = 10 + Math.sin(phase * Math.PI * 2) * 2.5;
                 for (const layerId of animatedLayerIds) {
                     if (!map.current.getLayer(layerId)) continue;
                     try {
@@ -273,10 +298,10 @@ export default function MapBoard({
                             8,
                         ]);
                     } catch {
-                        // Layer may be torn down during filter update
+                        // Layer may be torn down during dataset update
                     }
                 }
-            }, 50);
+            }, 250);
         }
 
         // Keep selection ring layer on top of disaster layers when present
@@ -287,10 +312,10 @@ export default function MapBoard({
                 // Best-effort ordering
             }
         }
-    };
+    }, []);
 
     // Load disasters from backend
-    const loadDisasters = async () => {
+    const loadDisasters = useCallback(async () => {
         try {
             debugLog('backend', `Fetching disasters (${observationWindow}, ${volcanoMode})`, 'info');
 
@@ -346,7 +371,7 @@ export default function MapBoard({
                 duration: 5000,
             });
         }
-    };
+    }, [observationWindow, volcanoMode]);
 
     // Manual refresh handler
     const handleRefresh = async () => {
@@ -532,10 +557,6 @@ export default function MapBoard({
                 debugLog('map', `Non-fatal Mapbox tile/source error: ${action.detail}`, 'warning');
             });
 
-            // Load disaster data immediately in parallel with map
-            // eslint-disable-next-line react-hooks/set-state-in-effect
-            loadDisasters();
-
             mapInstance.on('load', () => {
                 styleLoadedRef.current = true;
                 debugLog('map', 'Map finished loading', 'success');
@@ -565,29 +586,53 @@ export default function MapBoard({
             };
         } catch (error) {
             console.error('Error creating map:', error);
-            setMapError(`Failed to create map: ${error}`);
-            setLoading(false);
+            queueMicrotask(() => {
+                setMapError(`Failed to create map: ${error}`);
+                setLoading(false);
+            });
         }
     }, []); // Empty dependency array = run once
 
-    // Reload when observation window or volcano mode changes
-    const isFirstMountRef = useRef(true);
+    // Load disasters on initial mount and whenever observation window or volcano mode changes
     useEffect(() => {
-        if (isFirstMountRef.current) {
-            isFirstMountRef.current = false;
-            return;
-        }
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        loadDisasters();
-    }, [observationWindow, volcanoMode]);
+        const timer = setTimeout(() => {
+            void loadDisasters();
+        }, 0);
+        return () => clearTimeout(timer);
+    }, [loadDisasters]);
 
-    // Re-render layers when map is loaded, filters change, or disasters update
+    // Build GeoJSON sources/layers when map loads or disaster dataset changes
     useEffect(() => {
         if (!map.current || !isMapLoaded) return;
 
         removeDisasterLayers(map.current, pulseIntervalRef);
         if (disasters.length > 0) addDisasterLayers(disasters);
-    }, [isMapLoaded, activeFilters, disasters]);
+    }, [isMapLoaded, disasters, addDisasterLayers]);
+
+    // Toggle layer visibility via Mapbox layout property without rebuilding GeoJSON sources
+    useEffect(() => {
+        if (!map.current || !isMapLoaded) return;
+        const mapInstance = map.current;
+        const mapping: Array<[string, string]> = [
+            ['fires-layer', 'fire'],
+            ['fire-cells-layer', 'fire_detection'],
+            ['volcanoes-layer', 'volcano'],
+            ['earthquakes-layer', 'earthquake'],
+        ];
+        for (const [layerId, type] of mapping) {
+            if (mapInstance.getLayer(layerId)) {
+                try {
+                    mapInstance.setLayoutProperty(
+                        layerId,
+                        'visibility',
+                        activeFilters.has(type) ? 'visible' : 'none',
+                    );
+                } catch {
+                    // Best-effort visibility update
+                }
+            }
+        }
+    }, [isMapLoaded, activeFilters]);
 
     // Pin a persistent highlight ring on the selected disaster without rebuilding disaster layers
     useEffect(() => {
@@ -632,29 +677,49 @@ export default function MapBoard({
         }
     }, [isMapLoaded, selectedDisaster]);
 
-    // Calculate disaster counts
-    const disasterCounts = {
-        fires: disasters.filter(d => d.type === 'fire').length,
-        fireDetections: detectionCountTotal,
-        fireCells: fireCells.length,
-        volcanoes: disasters.filter(d => d.type === 'volcano').length,
-        earthquakes: disasters.filter(d => d.type === 'earthquake').length,
-        total: disasters.length,
-    };
+    // Calculate disaster counts once per dataset change
+    const disasterCounts = useMemo(() => {
+        let fires = 0;
+        let volcanoes = 0;
+        let earthquakes = 0;
+        for (const d of disasters) {
+            if (d.type === 'fire') fires++;
+            else if (d.type === 'volcano') volcanoes++;
+            else if (d.type === 'earthquake') earthquakes++;
+        }
+        return {
+            fires,
+            fireDetections: detectionCountTotal,
+            fireCells: fireCells.length,
+            volcanoes,
+            earthquakes,
+            total: disasters.length,
+        };
+    }, [disasters, detectionCountTotal, fireCells.length]);
 
     return (
         <div className="relative w-full h-full">
             <div ref={mapContainerRef} className="absolute inset-0" />
 
-            {/* Error message */}
+            {/* Error message — keeps resident Near me text view accessible */}
             {mapError && (
-                <div className="absolute inset-0 flex items-center justify-center bg-red-900 bg-opacity-80 z-20">
-                    <div className="bg-red-800 px-8 py-6 rounded-lg shadowAegis-2xl max-w-md text-center">
-                        <h2 className="text-2xl font-bold text-white mb-2">Map Error</h2>
-                        <p className="text-white">{mapError}</p>
-                        <p className="text-gray-300 text-sm mt-4">
-                            Check browser console (F12) for more details.
+                <div className="absolute inset-0 flex items-center justify-center bg-slate-950/90 z-20 p-4">
+                    <div className="bg-slate-900 border border-red-500/40 px-8 py-6 rounded-xl shadow-2xl max-w-md text-center">
+                        <h2 className="text-xl font-bold text-white mb-2">Interactive Map Unavailable</h2>
+                        <p className="text-red-200 text-sm">{mapError}</p>
+                        <p className="text-gray-300 text-xs mt-3">
+                            Official local warnings, instructions, and emergency contact tools do not require the map.
                         </p>
+                        {onOpenNearMe && (
+                            <button
+                                type="button"
+                                onClick={onOpenNearMe}
+                                data-testid="map-error-open-near-me"
+                                className="mt-4 px-4 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold transition-colors"
+                            >
+                                Open Near Me (Text View)
+                            </button>
+                        )}
                     </div>
                 </div>
             )}

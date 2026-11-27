@@ -2,15 +2,15 @@ import { useState, useEffect, Suspense, lazy } from 'react';
 import { Globe, HelpCircle } from 'lucide-react';
 
 import { Toaster } from 'react-hot-toast';
-import MapBoard from './components/MapBoard';
-import Sidebar from './components/Sidebar';
 import DebugPanel from './components/DebugPanel';
 import ThemeToggle from './components/ThemeToggle';
 import type { Disaster, ObservationWindow, VolcanoMode } from './types';
 import { DEFAULT_OBSERVATION_WINDOW, DEFAULT_VOLCANO_MODE } from './config/disasters';
 import { useDesignSystem } from './hooks/useDesignSystem';
 
-// Lazy load rarely-used components
+// Lazy load heavy map/sidebar and rarely-used components so text-first views load fast
+const MapBoard = lazy(() => import('./components/MapBoard'));
+const Sidebar = lazy(() => import('./components/Sidebar'));
 const TutorialOverlay = lazy(() => import('./components/TutorialOverlay'));
 
 function App() {
@@ -175,25 +175,29 @@ function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 relative">
-        <MapBoard
-          selectedDisaster={selectedDisaster}
-          onDisasterSelect={handleDisasterSelect}
-          activeFilters={activeFilters}
-          onFilterToggle={handleFilterToggle}
-          observationWindow={observationWindow}
-          onObservationWindowChange={setObservationWindow}
-          volcanoMode={volcanoMode}
-          onVolcanoModeChange={setVolcanoMode}
-        />
+        <Suspense fallback={<div className="w-full h-full flex items-center justify-center text-sm opacity-75">Loading map view…</div>}>
+          <MapBoard
+            selectedDisaster={selectedDisaster}
+            onDisasterSelect={handleDisasterSelect}
+            activeFilters={activeFilters}
+            onFilterToggle={handleFilterToggle}
+            observationWindow={observationWindow}
+            onObservationWindowChange={setObservationWindow}
+            volcanoMode={volcanoMode}
+            onVolcanoModeChange={setVolcanoMode}
+          />
+        </Suspense>
       </main>
 
       {/* Sidebar - outside main container for proper positioning */}
       {selectedDisaster && (
-        <Sidebar
-          disaster={selectedDisaster}
-          onClose={handleSidebarClose}
-          isOpen={isSidebarOpen}
-        />
+        <Suspense fallback={null}>
+          <Sidebar
+            disaster={selectedDisaster}
+            onClose={handleSidebarClose}
+            isOpen={isSidebarOpen}
+          />
+        </Suspense>
       )}
 
       {/* Debug Panel */}

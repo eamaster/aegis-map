@@ -6,7 +6,7 @@ export const debugLog = (
     category: string,
     message: string,
     level: string = 'info',
-    data?: any
+    data?: unknown,
 ) => {
     if (import.meta.env.DEV && window.aegisDebug) {
         window.aegisDebug.log(category, message, level, data);

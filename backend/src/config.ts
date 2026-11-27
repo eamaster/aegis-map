@@ -4,20 +4,44 @@
  * version are kept here but semantically separate.
  */
 
-/** Public API / health-check version (independent of AI provider). */
-export const APP_VERSION = '1.4.0';
+import {
+	API_CAPABILITIES,
+	APP_VERSION,
+	DEFAULT_OBSERVATION_WINDOW,
+	DEFAULT_VOLCANO_MODE,
+	DISASTER_TYPES,
+	isDisasterType,
+	isObservationWindow,
+	isVolcanoMode,
+	OBSERVATION_WINDOWS,
+	SUN_ELEVATION_DAY_MIN_DEG,
+	SUN_ELEVATION_TWILIGHT_MIN_DEG,
+	VOLCANO_MODES,
+	type ApiCapability,
+	type DisasterType,
+	type ObservationWindow,
+	type VolcanoMode,
+} from '../../shared/contracts';
 
-/**
- * Capabilities reported by the health route. The Pages release gate
- * (.github/workflows/deploy.yml) refuses to publish a frontend unless the
- * production backend reports every capability that frontend relies on.
- * - workers-ai-analyze-v1: /api/analyze success responses carry source "workers-ai".
- * - provider-status-v1: FIRMS coverage windows/unavailable (502), disaster
- *   source headers, and TLE status headers.
- * - firms-global-v2: Global FIRMS VIIRS ingestion, spatial grid aggregation,
- *   and /api/v2/disasters endpoints.
- */
-export const API_CAPABILITIES = ['workers-ai-analyze-v1', 'provider-status-v1', 'firms-global-v2'] as const;
+/** Public API / health-check version and capabilities (re-exported from shared/contracts.ts). */
+export {
+	API_CAPABILITIES,
+	APP_VERSION,
+	DEFAULT_OBSERVATION_WINDOW,
+	DEFAULT_VOLCANO_MODE,
+	DISASTER_TYPES,
+	isDisasterType,
+	isObservationWindow,
+	isVolcanoMode,
+	OBSERVATION_WINDOWS,
+	SUN_ELEVATION_DAY_MIN_DEG,
+	SUN_ELEVATION_TWILIGHT_MIN_DEG,
+	VOLCANO_MODES,
+	type ApiCapability,
+	type DisasterType,
+	type ObservationWindow,
+	type VolcanoMode,
+};
 
 /**
  * Analysis cache + prompt schema version.
@@ -40,13 +64,7 @@ export const ANALYZE_LIMITS = {
 	maxElevationDeg: { min: 0, max: 90 },
 } as const;
 
-/**
- * Illumination classes from geometric solar elevation at the event location:
- * day: sun > DAY_MIN; twilight: TWILIGHT_MIN <= sun <= DAY_MIN; night: below.
- * -6° is the end of civil twilight.
- */
-export const SUN_ELEVATION_DAY_MIN_DEG = 0;
-export const SUN_ELEVATION_TWILIGHT_MIN_DEG = -6;
+// Illumination thresholds imported & re-exported from shared/contracts.ts above.
 
 /**
  * Analysis cache identity (and, deliberately, the prompt) only sees these
@@ -169,12 +187,7 @@ export function reflectCorsOrigin(
 	return allowed.includes(requestOrigin) ? requestOrigin : undefined;
 }
 
-export const DISASTER_TYPES = ['fire', 'volcano', 'earthquake'] as const;
-export type DisasterType = (typeof DISASTER_TYPES)[number];
-
-export function isDisasterType(value: unknown): value is DisasterType {
-	return typeof value === 'string' && (DISASTER_TYPES as readonly string[]).includes(value);
-}
+// DISASTER_TYPES, OBSERVATION_WINDOWS, and VOLCANO_MODES imported & re-exported from shared/contracts.ts above.
 
 /**
  * Severity thresholds (disasters.ts). A value at a threshold takes the higher
@@ -225,24 +238,6 @@ export function isGlobalFirmsProduct(value: unknown): value is GlobalFirmsProduc
 
 /** Localized /api/fire-hotspots primary sensor. */
 export const LOCAL_FIRMS_SOURCE: GlobalFirmsProduct = 'VIIRS_SNPP_NRT';
-
-/** Supported rolling observation windows. */
-export const OBSERVATION_WINDOWS = ['24h', '7d'] as const;
-export type ObservationWindow = (typeof OBSERVATION_WINDOWS)[number];
-export const DEFAULT_OBSERVATION_WINDOW: ObservationWindow = '24h';
-
-export function isObservationWindow(value: unknown): value is ObservationWindow {
-	return typeof value === 'string' && (OBSERVATION_WINDOWS as readonly string[]).includes(value);
-}
-
-/** Supported volcano context modes. */
-export const VOLCANO_MODES = ['context', 'strict'] as const;
-export type VolcanoMode = (typeof VOLCANO_MODES)[number];
-export const DEFAULT_VOLCANO_MODE: VolcanoMode = 'context';
-
-export function isVolcanoMode(value: unknown): value is VolcanoMode {
-	return typeof value === 'string' && (VOLCANO_MODES as readonly string[]).includes(value);
-}
 
 /** Derived route validation error messages. */
 export const INVALID_WINDOW_ERROR = `Invalid window parameter. Supported: ${OBSERVATION_WINDOWS.join(', ')}`;
