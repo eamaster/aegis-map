@@ -165,6 +165,9 @@ async function main() {
 		});
 
 		const tWarnStart = Date.now();
+		if (!(await page.locator('[data-testid="manual-coords-input"]').isVisible())) {
+			await page.locator('[data-testid="manual-coords-disclosure"]').click();
+		}
 		await page.locator('[data-testid="manual-coords-input"]').fill('59.9139, 10.7522');
 		await page.locator('[data-testid="apply-coords-btn"]').click();
 		await page.locator('[data-testid="warnings-coverage-banner"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
@@ -256,8 +259,9 @@ async function main() {
 			checks.record(true, 'subscription UI rendered status cleanly');
 		}
 
-		// Local wipe clears storage
+		// Local wipe clears storage (two-step confirmation)
 		await page.locator('[data-testid="clear-local-data-btn"]').click();
+		await page.locator('[data-testid="confirm-clear-local-data-btn"]').click();
 		await page.locator('[data-testid="wipe-status-notice"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
 		const remainingKeys = await page.evaluate(() => ({
 			saved: localStorage.getItem('aegis:saved-places:v1'),
@@ -286,6 +290,9 @@ async function main() {
 			route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(makeNorwayFixture('checked_no_warnings', 'ok')) }),
 		);
 		await up.goto(`${FRONTEND_URL}?view=near-me`, { waitUntil: 'domcontentloaded', timeout: STEP_TIMEOUT });
+		if (!(await up.locator('[data-testid="manual-coords-input"]').isVisible())) {
+			await up.locator('[data-testid="manual-coords-disclosure"]').click();
+		}
 		await up.locator('[data-testid="manual-coords-input"]').fill('59.9139, 10.7522');
 		await up.locator('[data-testid="apply-coords-btn"]').click();
 		await up.locator('[data-testid="subscription-unavailable-banner"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
@@ -352,11 +359,14 @@ async function main() {
 			const selectElapsedMs = Date.now() - tSelectStart;
 			checks.record(true, '4x throttled event selection opened Sidebar', `${selectElapsedMs}ms`);
 
-			// Check 3-part epistemic separation: Derived AI Insight, Confirmed Acquisition (SAR panel + GIBS), Predicted Overpass comparison
+			// Check 3-part epistemic separation across Overview, Imagery, and Passes tabs
+			await ep.locator('[data-testid="inspector-tab-imagery"]').click();
 			await ep.locator('[data-testid="sar-scenes-panel"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
+			const sarBadge = (await ep.locator('[data-testid="sar-scenes-panel"]').innerText()).toLowerCase();
+
+			await ep.locator('[data-testid="inspector-tab-passes"]').click();
 			await ep.locator('[data-testid="pass-comparison-panel"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
 			const passBadge = (await ep.locator('[data-testid="pass-comparison-panel"]').innerText()).toLowerCase();
-			const sarBadge = (await ep.locator('[data-testid="sar-scenes-panel"]').innerText()).toLowerCase();
 			checks.record(
 				passBadge.includes('predicted overpass') && sarBadge.includes('confirmed acquisition'),
 				'Sidebar clearly distinguishes Predicted Overpass from Confirmed Acquisition',
