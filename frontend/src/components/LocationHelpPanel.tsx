@@ -1,0 +1,336 @@
+import { useState } from 'react';
+import { Copy, ExternalLink, MessageSquare, Phone, Share2, ShieldAlert } from 'lucide-react';
+import { resolveEmergencyProfile } from '../../../shared/emergencyContacts';
+import { useLocale } from '../hooks/useLocale';
+import { useDesignSystem } from '../hooks/useDesignSystem';
+import { formatCoordinatesLtr, parseFlexibleCoordinates, type SelectedPlace } from '../utils/places';
+import { BdiLtr } from './BdiLtr';
+
+interface LocationHelpPanelProps {
+	monitoredPlace: SelectedPlace | null;
+	presentJurisdiction: string;
+	onPresentJurisdictionChange: (code: string) => void;
+}
+
+const PRESENT_JURISDICTION_CHOICES: ReadonlyArray<{ code: string; label: string }> = [
+	{ code: '', label: 'Select confirmed present country…' },
+	{ code: 'MY', label: 'Malaysia (MY — 999 / 112)' },
+	{ code: 'NO', label: 'Norway (NO — 110 / 112 / 113)' },
+	{ code: 'SJ', label: 'Svalbard, Norway (SJ — 112 / 110 / 113)' },
+	{ code: 'IR', label: 'Iran (IR — 115 / 125 / 110 / 112)' },
+	{ code: 'IN', label: 'India (IN — 112 / 1078)' },
+	{ code: 'US', label: 'United States (US — 911)' },
+	{ code: 'GB', label: 'United Kingdom (GB — 999 / 112)' },
+	{ code: 'AU', label: 'Australia (AU — 000 / 112)' },
+	{ code: 'SG', label: 'Singapore (SG — 999 / 995)' },
+];
+
+export default function LocationHelpPanel({
+	monitoredPlace,
+	presentJurisdiction,
+	onPresentJurisdictionChange,
+}: LocationHelpPanelProps) {
+	const { t } = useLocale();
+	const ds = useDesignSystem();
+	const [editableCoord, setEditableCoord] = useState('');
+	const [note, setNote] = useState('');
+	const [handoffNotice, setHandoffNotice] = useState<string | null>(null);
+
+	const effectiveCoord = (() => {
+		if (editableCoord.trim()) {
+			const p = parseFlexibleCoordinates(editableCoord);
+			if (p.ok) return { lat: p.lat, lng: p.lng, valid: true };
+		}
+		if (monitoredPlace) return { lat: monitoredPlace.lat, lng: monitoredPlace.lng, valid: true };
+		return { lat: 0, lng: 0, valid: false };
+	})();
+
+	const profile = resolveEmergencyProfile(presentJurisdiction);
+
+	const shareCardText = effectiveCoord.valid
+		? [
+				`AegisMap Location Card`,
+				`Place: ${monitoredPlace?.label ?? 'Manual coordinates'}`,
+				`Coordinates: ${effectiveCoord.lat.toFixed(5)}, ${effectiveCoord.lng.toFixed(5)} (${formatCoordinatesLtr(effectiveCoord.lat, effectiveCoord.lng)})`,
+				monitoredPlace?.accuracyMeters != null ? `GPS accuracy: ±${monitoredPlace.accuracyMeters} m` : 'Coordinates entered/selected manually',
+				monitoredPlace?.capturedAt ? `Timestamp (UTC): ${monitoredPlace.capturedAt}` : `Timestamp (UTC): ${new Date().toISOString()}`,
+				note.trim() ? `Note: ${note.trim()}` : null,
+			]
+				.filter(Boolean)
+				.join('\n')
+		: '';
+
+	const handleCopy = async () => {
+		if (!shareCardText) return;
+		try {
+			await navigator.clipboard.writeText(shareCardText);
+			setHandoffNotice('Location card copied to clipboard. Your device did not transmit it automatically.');
+		} catch {
+			setHandoffNotice('Clipboard unavailable — select and copy the location card text manually.');
+		}
+	};
+
+	const handleShare = async () => {
+		if (!shareCardText) return;
+		if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+			try {
+				await navigator.share({ title: 'My Location (AegisMap)', text: shareCardText });
+				setHandoffNotice('Device share sheet opened. Verify recipient delivery in your chosen app.');
+			} catch {
+				setHandoffNotice('Share cancelled or unavailable.');
+			}
+		} else {
+			await handleCopy();
+		}
+	};
+
+	return (
+		<section
+			aria-labelledby="help-panel-heading"
+			data-testid="location-help-panel"
+			className="rounded-xl p-4 sm:p-5 space-y-4"
+			style={{
+				background: ds.surface.elevated,
+				border: `1px solid ${ds.surface.border}`,
+			}}
+		>
+			<div>
+				<h2 id="help-panel-heading" className="text-base font-bold flex items-center gap-2" style={{ color: ds.text.primary }}>
+					<Phone size={18} className="text-emerald-400" aria-hidden="true" />
+					<span>{t.helpSectionTitle}</span>
+				</h2>
+				<p className="text-xs mt-1" style={{ color: ds.text.secondary }}>
+					{t.presentJurisdictionHint}
+				</p>
+			</div>
+
+			<div>
+				<label htmlFor="present-jurisdiction-select" className="block text-xs font-semibold mb-1" style={{ color: ds.text.secondary }}>
+					{t.presentJurisdictionLabel}
+				</label>
+				<select
+					id="present-jurisdiction-select"
+					data-testid="present-jurisdiction-select"
+					value={presentJurisdiction}
+					onChange={(e) => onPresentJurisdictionChange(e.target.value)}
+					className="w-full sm:w-auto min-w-[260px] px-3 py-2 rounded-lg text-xs border focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
+					style={{
+						background: ds.surface.overlay,
+						borderColor: ds.surface.border,
+						color: ds.text.primary,
+					}}
+				>
+					{PRESENT_JURISDICTION_CHOICES.map((opt) => (
+						<option key={opt.code || 'unset'} value={opt.code} style={{ background: '#111827', color: '#fff' }}>
+							{opt.label}
+						</option>
+					))}
+				</select>
+			</div>
+
+			{!profile.verified && (
+				<div
+					role="status"
+					data-testid="unverified-contacts-notice"
+					className="flex items-start gap-2 text-xs p-3 rounded-lg border border-amber-500/40 bg-amber-500/10"
+					style={{ color: ds.text.primary }}
+				>
+					<ShieldAlert size={15} className="shrink-0 text-amber-400 mt-0.5" aria-hidden="true" />
+					<div>
+						<div className="font-semibold">{profile.countryName}</div>
+						<div>{profile.guidanceNote}</div>
+					</div>
+				</div>
+			)}
+
+			<div className="grid grid-cols-1 sm:grid-cols-2 gap-2" data-testid="emergency-numbers-list">
+				{profile.numbers.map((svc) => (
+					<div
+						key={`${svc.label}-${svc.number}`}
+						className="rounded-lg p-3 border flex items-center justify-between gap-2"
+						style={{
+							background: ds.surface.overlay,
+							borderColor: ds.surface.border,
+						}}
+					>
+						<div>
+							<div className="text-xs font-bold" style={{ color: ds.text.primary }}>
+								{svc.label}
+							</div>
+							<div className="text-[11px]" style={{ color: ds.text.tertiary }}>
+								{svc.notes}
+							</div>
+						</div>
+						<a
+							href={`tel:${svc.number}`}
+							onClick={() =>
+								setHandoffNotice(`Handed off ${svc.number} to your device dialer. AegisMap cannot confirm call connection.`)
+							}
+							data-testid={`dial-${svc.number}`}
+							className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shrink-0 focus-visible:outline focus-visible:outline-2 focus-visible:outline-emerald-300"
+						>
+							<Phone size={13} aria-hidden="true" />
+							<BdiLtr mono>{svc.number}</BdiLtr>
+						</a>
+					</div>
+				))}
+			</div>
+
+			<div className="text-[11px]" style={{ color: ds.text.tertiary }}>
+				Source: {profile.verificationSource}
+			</div>
+
+			{/* Readable, Editable Location Card */}
+			<div
+				className="rounded-lg p-3 border space-y-2.5"
+				style={{
+					background: ds.surface.overlay,
+					borderColor: ds.surface.border,
+				}}
+			>
+				<div className="text-xs font-bold" style={{ color: ds.text.primary }}>
+					Editable Location Card (User-Controlled Sharing Only)
+				</div>
+				<div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+					<div>
+						<label htmlFor="help-coord-edit" className="block text-[11px] mb-1" style={{ color: ds.text.secondary }}>
+							Edit coordinates if needed
+						</label>
+						<input
+							id="help-coord-edit"
+							data-testid="help-coord-edit"
+							type="text"
+							dir="ltr"
+							value={editableCoord}
+							onChange={(e) => setEditableCoord(e.target.value)}
+							placeholder={
+								monitoredPlace
+									? `${monitoredPlace.lat.toFixed(5)}, ${monitoredPlace.lng.toFixed(5)}`
+									: 'e.g. 5.9804, 116.0735'
+							}
+							className="w-full px-2.5 py-1.5 rounded border text-xs font-mono"
+							style={{
+								background: ds.surface.elevated,
+								borderColor: ds.surface.border,
+								color: ds.text.primary,
+							}}
+						/>
+					</div>
+					<div>
+						<label htmlFor="help-note-input" className="block text-[11px] mb-1" style={{ color: ds.text.secondary }}>
+							Optional short note for contact
+						</label>
+						<input
+							id="help-note-input"
+							type="text"
+							maxLength={140}
+							value={note}
+							onChange={(e) => setNote(e.target.value)}
+							placeholder="e.g., Need assistance at…"
+							className="w-full px-2.5 py-1.5 rounded border text-xs"
+							style={{
+								background: ds.surface.elevated,
+								borderColor: ds.surface.border,
+								color: ds.text.primary,
+							}}
+						/>
+					</div>
+				</div>
+
+				{effectiveCoord.valid ? (
+					<pre
+						data-testid="location-card-preview"
+						dir="ltr"
+						className="text-xs font-mono p-2.5 rounded border whitespace-pre-wrap"
+						style={{
+							background: ds.surface.elevated,
+							borderColor: ds.surface.borderSubtle,
+							color: ds.text.secondary,
+						}}
+					>
+						{shareCardText}
+					</pre>
+				) : (
+					<p className="text-xs" style={{ color: ds.text.tertiary }}>
+						Select a place or enter coordinates above to prepare a shareable location card.
+					</p>
+				)}
+
+				<div className="flex flex-wrap gap-2">
+					<button
+						type="button"
+						disabled={!effectiveCoord.valid}
+						onClick={handleCopy}
+						data-testid="copy-location-btn"
+						className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border disabled:opacity-50"
+						style={{
+							background: ds.surface.elevated,
+							borderColor: ds.surface.border,
+							color: ds.text.primary,
+						}}
+					>
+						<Copy size={13} aria-hidden="true" />
+						<span>{t.copyLocationButton}</span>
+					</button>
+					<button
+						type="button"
+						disabled={!effectiveCoord.valid}
+						onClick={handleShare}
+						data-testid="share-location-btn"
+						className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50"
+					>
+						<Share2 size={13} aria-hidden="true" />
+						<span>{t.shareLocationButton}</span>
+					</button>
+					{effectiveCoord.valid && (
+						<a
+							href={`sms:?&body=${encodeURIComponent(shareCardText)}`}
+							onClick={() =>
+								setHandoffNotice('Opened SMS composer on your device. Verify message delivery in your messaging app.')
+							}
+							className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border"
+							style={{
+								background: ds.surface.elevated,
+								borderColor: ds.surface.border,
+								color: ds.text.primary,
+							}}
+						>
+							<MessageSquare size={13} aria-hidden="true" />
+							<span>SMS</span>
+						</a>
+					)}
+				</div>
+
+				<p className="text-[11px]" style={{ color: ds.text.tertiary }}>
+					{t.handoffDisclaimer}
+				</p>
+				{handoffNotice && (
+					<p role="status" data-testid="handoff-status-note" className="text-xs text-emerald-400">
+						{handoffNotice}
+					</p>
+				)}
+			</div>
+
+			<div className="space-y-1">
+				<div className="text-xs font-semibold" style={{ color: ds.text.secondary }}>
+					Verified Authority & Shelter Guidance Links:
+				</div>
+				<ul className="flex flex-wrap gap-2">
+					{profile.authorityLinks.map((lnk) => (
+						<li key={lnk.url}>
+							<a
+								href={lnk.url}
+								target="_blank"
+								rel="noopener noreferrer"
+								className="inline-flex items-center gap-1 text-xs text-blue-400 hover:underline"
+							>
+								<span>{lnk.label}</span>
+								<ExternalLink size={12} aria-hidden="true" />
+							</a>
+						</li>
+					))}
+				</ul>
+			</div>
+		</section>
+	);
+}

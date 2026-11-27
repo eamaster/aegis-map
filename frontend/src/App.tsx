@@ -1,37 +1,62 @@
 import { useState, useEffect, Suspense, lazy } from 'react';
-import { Globe, HelpCircle } from 'lucide-react';
-
+import { Globe, HelpCircle, MapPin, Compass } from 'lucide-react';
 import { Toaster } from 'react-hot-toast';
 import DebugPanel from './components/DebugPanel';
 import ThemeToggle from './components/ThemeToggle';
 import type { Disaster, ObservationWindow, VolcanoMode } from './types';
 import { DEFAULT_OBSERVATION_WINDOW, DEFAULT_VOLCANO_MODE } from './config/disasters';
 import { useDesignSystem } from './hooks/useDesignSystem';
+import { useLocale } from './hooks/useLocale';
+import { SUPPORTED_LOCALES, type AppLocale } from './i18n/translations';
 
-// Lazy load heavy map/sidebar and rarely-used components so text-first views load fast
+// Lazy load routes and heavy map/sidebar so text-first Near me loads without Mapbox GL
 const MapBoard = lazy(() => import('./components/MapBoard'));
 const Sidebar = lazy(() => import('./components/Sidebar'));
+const NearMeView = lazy(() => import('./components/NearMeView'));
 const TutorialOverlay = lazy(() => import('./components/TutorialOverlay'));
+
+type ActiveView = 'explore' | 'near-me';
+
+function resolveInitialView(): ActiveView {
+  if (typeof window === 'undefined') return 'explore';
+  const view = new URLSearchParams(window.location.search).get('view');
+  return view === 'near-me' ? 'near-me' : 'explore';
+}
 
 function App() {
   const ds = useDesignSystem();
+  const { locale, t, setLocale } = useLocale();
+  const [activeView, setActiveView] = useState<ActiveView>(resolveInitialView);
   const [selectedDisaster, setSelectedDisaster] = useState<Disaster | null>(null);
   const [showTutorial, setShowTutorial] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [observationWindow, setObservationWindow] = useState<ObservationWindow>(DEFAULT_OBSERVATION_WINDOW);
   const [volcanoMode, setVolcanoMode] = useState<VolcanoMode>(DEFAULT_VOLCANO_MODE);
 
-  // Filter state - all disaster and detection types visible by default
   const [activeFilters, setActiveFilters] = useState<Set<string>>(
     new Set(['fire', 'fire_detection', 'earthquake', 'volcano'])
   );
 
-  // Filter toggle handler
+  const switchView = (nextView: ActiveView) => {
+    setActiveView(nextView);
+    if (nextView === 'near-me') {
+      setIsSidebarOpen(false);
+    }
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (nextView === 'near-me') {
+        url.searchParams.set('view', 'near-me');
+      } else {
+        url.searchParams.delete('view');
+      }
+      window.history.replaceState({}, '', url.toString());
+    }
+  };
+
   const handleFilterToggle = (type: string) => {
     setActiveFilters(prev => {
       const newFilters = new Set(prev);
       if (newFilters.has(type)) {
-        // Don't allow turning off all filters
         if (newFilters.size > 1) {
           newFilters.delete(type);
         }
@@ -42,25 +67,23 @@ function App() {
     });
   };
 
-  // Handle disaster selection - open sidebar on both mobile and desktop
   const handleDisasterSelect = (disaster: Disaster | null) => {
     setSelectedDisaster(disaster);
-    // Open sidebar whenever a disaster is selected (mobile + desktop)
     if (disaster) {
       setIsSidebarOpen(true);
     }
   };
 
-  // Handle sidebar close
   const handleSidebarClose = () => {
     setSelectedDisaster(null);
     setIsSidebarOpen(false);
   };
 
-  // Keyboard shortcut to show tutorial (? key)
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
-      if (e.key === '?' || (e.shiftKey && e.key === '/')) {
+      const target = e.target as HTMLElement | null;
+      const isInput = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.tagName === 'SELECT';
+      if (!isInput && (e.key === '?' || (e.shiftKey && e.key === '/'))) {
         setShowTutorial(true);
       }
     };
@@ -76,27 +99,33 @@ function App() {
         color: 'var(--color-text-primary)',
       }}
     >
-      {/* Professional Header - Enterprise Design */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[250] focus:px-3 focus:py-2 focus:rounded-lg focus:bg-blue-600 focus:text-white focus:text-xs focus:font-bold"
+      >
+        {t.skipToMain}
+      </a>
+
+      {/* Header */}
       <header
-        className="relative flex items-center justify-between py-3.5 border-b z-50 transition-all duration-300"
+        className="relative flex items-center justify-between py-2.5 border-b z-50 transition-all duration-300"
         style={{
           height: ds.dimensions.header.height.desktop,
-          paddingLeft: '24px',
-          paddingRight: '24px',
+          paddingLeft: '16px',
+          paddingRight: '16px',
           background: ds.accentGradient,
           ...ds.glass.panel,
           borderColor: ds.headerBorderColor,
           boxShadow: `0 4px 24px rgba(0, 0, 0, ${ds.isDark ? '0.5' : '0.15'}), 0 0 1px ${ds.colors.accent.blue}33`
         }}
       >
-        {/* Logo - Professional Brand Identity */}
-        <div className="relative flex items-center" style={{ gap: '14px' }}>
-          {/* Globe Icon Badge */}
+        {/* Brand Identity */}
+        <div className="relative flex items-center" style={{ gap: '12px' }}>
           <div
             className="flex items-center justify-center relative overflow-hidden group transition-all duration-300 hover:scale-105"
             style={{
-              width: '44px',
-              height: '44px',
+              width: '40px',
+              height: '40px',
               borderRadius: ds.borderRadius.lg,
               background: `linear-gradient(135deg, ${ds.colors.accent.blueDim}, rgba(37, 99, 235, 0.15))`,
               border: `2px solid ${ds.colors.accent.blue}66`,
@@ -104,37 +133,28 @@ function App() {
             }}
           >
             <Globe
-              size={26}
-              className="relative z-10 transition-transform group-hover:rotate-12 duration-500"
+              size={22}
+              className="relative z-10"
               style={{
                 color: ds.colors.accent.blueLight,
                 strokeWidth: 2.5,
-                filter: `drop-shadow(0 0 8px ${ds.colors.accent.blue}80)`
-              }}
-            />
-            <div
-              className="absolute inset-0 rounded-[16px] opacity-0 group-hover:opacity-100 transition-opacity duration-500"
-              style={{
-                background: `radial-gradient(circle at center, ${ds.colors.accent.blue}4D, transparent 70%)`
               }}
             />
           </div>
 
-          {/* Brand Text */}
           <div className="flex flex-col">
-            <h1
+            <span
               className="font-black tracking-tight leading-none"
               style={{
-                fontSize: '1.5rem',
+                fontSize: '1.25rem',
                 color: ds.isDark ? '#ffffff' : '#111827',
                 letterSpacing: '-0.03em',
-                textShadow: ds.isDark ? `0 2px 8px ${ds.colors.accent.blue}4D` : 'none'
               }}
             >
               AegisMap
-            </h1>
+            </span>
             <p
-              className="text-[10px] md:text-xs font-semibold leading-none mt-1 hidden sm:block"
+              className="text-[10px] font-semibold leading-none mt-1 hidden md:block"
               style={{
                 color: ds.isDark ? 'rgb(156, 163, 175)' : 'rgb(107, 114, 128)',
                 letterSpacing: '0.05em',
@@ -146,11 +166,71 @@ function App() {
           </div>
         </div>
 
+        {/* Route Navigation: Near me vs Explore events */}
+        <nav aria-label="Primary views" className="flex items-center gap-1.5">
+          <button
+            type="button"
+            data-testid="nav-near-me"
+            onClick={() => switchView('near-me')}
+            aria-current={activeView === 'near-me' ? 'page' : undefined}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400 ${
+              activeView === 'near-me' ? 'bg-blue-600 text-white' : ''
+            }`}
+            style={
+              activeView === 'near-me'
+                ? undefined
+                : { background: ds.surface.overlaySubtle, color: ds.text.secondary, border: `1px solid ${ds.surface.border}` }
+            }
+          >
+            <MapPin size={14} aria-hidden="true" />
+            <span>{t.navNearMe}</span>
+          </button>
+          <button
+            type="button"
+            data-testid="nav-explore-events"
+            onClick={() => switchView('explore')}
+            aria-current={activeView === 'explore' ? 'page' : undefined}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400 ${
+              activeView === 'explore' ? 'bg-blue-600 text-white' : ''
+            }`}
+            style={
+              activeView === 'explore'
+                ? undefined
+                : { background: ds.surface.overlaySubtle, color: ds.text.secondary, border: `1px solid ${ds.surface.border}` }
+            }
+          >
+            <Compass size={14} aria-hidden="true" />
+            <span>{t.navExploreEvents}</span>
+          </button>
+        </nav>
+
         {/* Right Controls */}
-        <div className="relative flex items-center" style={{ gap: '10px' }}>
+        <div className="relative flex items-center" style={{ gap: '8px' }}>
+          <label htmlFor="ui-locale-select" className="sr-only">
+            {t.languageLabel}
+          </label>
+          <select
+            id="ui-locale-select"
+            data-testid="ui-locale-select"
+            value={locale}
+            onChange={(e) => setLocale(e.target.value as AppLocale)}
+            className="px-2 py-2 rounded-lg text-xs font-bold border focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-400"
+            style={{
+              background: ds.surface.overlaySubtle,
+              borderColor: ds.surface.border,
+              color: ds.text.primary,
+            }}
+            aria-label={t.languageLabel}
+          >
+            {SUPPORTED_LOCALES.map((loc) => (
+              <option key={loc} value={loc} style={{ background: '#111827', color: '#fff' }}>
+                {loc === 'en' ? 'EN' : loc === 'fa' ? 'FA (فارسی)' : 'MS'}
+              </option>
+            ))}
+          </select>
+
           <ThemeToggle />
 
-          {/* Help Button */}
           <button
             onClick={() => setShowTutorial(true)}
             className="transition-all duration-200 hover:scale-105 active:scale-95"
@@ -164,7 +244,7 @@ function App() {
               alignItems: 'center',
               justifyContent: 'center',
             }}
-            title="Help (Press Esc)"
+            title="Help (?)"
             aria-label="Show help"
           >
             <HelpCircle size={18} strokeWidth={2.5} />
@@ -172,25 +252,31 @@ function App() {
         </div>
       </header>
 
-
       {/* Main Content Area */}
-      <main className="flex-1 relative">
-        <Suspense fallback={<div className="w-full h-full flex items-center justify-center text-sm opacity-75">Loading map view…</div>}>
-          <MapBoard
-            selectedDisaster={selectedDisaster}
-            onDisasterSelect={handleDisasterSelect}
-            activeFilters={activeFilters}
-            onFilterToggle={handleFilterToggle}
-            observationWindow={observationWindow}
-            onObservationWindowChange={setObservationWindow}
-            volcanoMode={volcanoMode}
-            onVolcanoModeChange={setVolcanoMode}
-          />
-        </Suspense>
+      <main id="main-content" className="flex-1 relative overflow-hidden">
+        {activeView === 'near-me' ? (
+          <Suspense fallback={<div className="p-6 text-sm">Loading resident view…</div>}>
+            <NearMeView onOpenExploreEvents={() => switchView('explore')} />
+          </Suspense>
+        ) : (
+          <Suspense fallback={<div className="w-full h-full flex items-center justify-center text-sm opacity-75">Loading map view…</div>}>
+            <MapBoard
+              selectedDisaster={selectedDisaster}
+              onDisasterSelect={handleDisasterSelect}
+              activeFilters={activeFilters}
+              onFilterToggle={handleFilterToggle}
+              observationWindow={observationWindow}
+              onObservationWindowChange={setObservationWindow}
+              volcanoMode={volcanoMode}
+              onVolcanoModeChange={setVolcanoMode}
+              onOpenNearMe={() => switchView('near-me')}
+            />
+          </Suspense>
+        )}
       </main>
 
-      {/* Sidebar - outside main container for proper positioning */}
-      {selectedDisaster && (
+      {/* Sidebar */}
+      {activeView === 'explore' && selectedDisaster && (
         <Suspense fallback={null}>
           <Sidebar
             disaster={selectedDisaster}
@@ -200,15 +286,12 @@ function App() {
         </Suspense>
       )}
 
-      {/* Debug Panel */}
       <DebugPanel />
 
-      {/* Tutorial Overlay - Lazy Loaded */}
       <Suspense fallback={null}>
         {showTutorial && <TutorialOverlay onClose={() => setShowTutorial(false)} />}
       </Suspense>
 
-      {/* Toast Notifications */}
       <Toaster
         position="bottom-right"
         toastOptions={{
