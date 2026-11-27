@@ -3,15 +3,16 @@
  * Defines types for window globals and debugging utilities
  */
 
-interface AegisDebug {
-    log: (category: string, message: string, level: string, data?: any) => void;
+export interface AegisDebug {
+    log: (category: string, message: string, level: string, data?: unknown) => void;
 }
 
 declare global {
     interface Window {
         aegisDebug?: AegisDebug;
-        mapDebug?: any;
+        mapDebug?: unknown;
+        selectDisasterDebug?: (disaster: unknown) => void;
     }
 }
 
-export { };
+export {};

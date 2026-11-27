@@ -1,6 +1,3 @@
-/* Mapbox GL JS CSS - MUST BE FIRST */
-@import 'mapbox-gl/dist/mapbox-gl.css';
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

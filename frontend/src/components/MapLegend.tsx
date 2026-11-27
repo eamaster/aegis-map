@@ -7,7 +7,7 @@
  * ✅ ALL INLINE STYLES (zero Tailwind className padding)
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Flame, Mountain, Waves, RefreshCw, ChevronUp, ChevronDown, Clock, Radio } from 'lucide-react';
 import { useDesignSystem } from '../hooks/useDesignSystem';
 import { DEFAULT_OBSERVATION_WINDOW, DEFAULT_VOLCANO_MODE, OBSERVATION_WINDOWS } from '../config/disasters';
@@ -71,11 +71,11 @@ export default function MapLegend({
     const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
     // Track viewport size for responsive chevron direction
-    useState(() => {
+    useEffect(() => {
         const handleResize = () => setIsMobile(window.innerWidth < 768);
         window.addEventListener('resize', handleResize);
         return () => window.removeEventListener('resize', handleResize);
-    });
+    }, []);
 
     const formatTime = (date: Date) => {
         const now = new Date();

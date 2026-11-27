@@ -3,7 +3,7 @@
  * Provides theme-aware access to the centralized design system
  */
 
-import { useTheme } from '../contexts/ThemeContext';
+import { useTheme } from './useTheme';
 import {
     getGlassStyle,
     getResponsiveTextSize,

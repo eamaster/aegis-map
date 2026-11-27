@@ -6,8 +6,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { X, Sparkles, Cloud, Satellite } from 'lucide-react';
 import type { Disaster, WeatherData, AIAnalysisResponse } from '../types';
-import { getNextPass, predictPasses, type SatellitePass } from '../utils/orbitalEngine';
+import { createPassPredictionSession, type EnrichedSatellitePass, type SatellitePass } from '../utils/orbitalEngine';
 import SatelliteImagery from './SatelliteImagery';
+import PassComparisonPanel from './PassComparisonPanel';
+import SarScenesPanel from './SarScenesPanel';
 import { useDesignSystem } from '../hooks/useDesignSystem';
 import { apiUrl } from '../config/api';
 import { debugLog } from '../utils/debug';
@@ -52,6 +54,8 @@ function describeTleHeaders(headers: Headers): string | null {
 export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarProps) {
     const ds = useDesignSystem();
     const [nextPass, setNextPass] = useState<SatellitePass | null>(null);
+    const [allFleetPasses, setAllFleetPasses] = useState<EnrichedSatellitePass[]>([]);
+    const [hourlyWeather, setHourlyWeather] = useState<WeatherData['hourly'] | null>(null);
     const [passState, setPassState] = useState<PassState>('loading');
     const [tleNotice, setTleNotice] = useState<string | null>(null);
     const [tleOldestEpoch, setTleOldestEpoch] = useState<string | null>(null);
@@ -80,6 +84,8 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
         analyzeAbortRef.current = null;
 
         setNextPass(null);
+        setAllFleetPasses([]);
+        setHourlyWeather(null);
         setPassState('loading');
         setTleNotice(null);
         setTleOldestEpoch(null);
@@ -105,9 +111,11 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                 const data: WeatherData = await response.json();
                 if (!isCurrentGeneration(generation, selectionGenRef.current)) return;
                 if (!data.hourly || !Array.isArray(data.hourly.cloud_cover) || !Array.isArray(data.hourly.time) || data.hourly.time.length === 0) {
+                    setHourlyWeather(null);
                     setCloudCover(null);
                     return;
                 }
+                setHourlyWeather(data.hourly);
 
                 // Match nearest hour to predicted pass time (within 2-hour window)
                 let nearestIdx = -1;
@@ -178,18 +186,17 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                     return;
                 }
 
-                let pass = getNextPass(responseText, latNum, lngNum);
-                let threshold: number = SATELLITE_ELEVATION_THRESHOLDS.OPTIMAL;
-                if (!pass) {
-                    const lower = predictPasses(responseText, latNum, lngNum, SATELLITE_ELEVATION_THRESHOLDS.ACCEPTABLE);
-                    if (lower.length > 0) [pass, threshold] = [lower[0], SATELLITE_ELEVATION_THRESHOLDS.ACCEPTABLE];
-                }
-                if (!pass) {
-                    const min = predictPasses(responseText, latNum, lngNum, SATELLITE_ELEVATION_THRESHOLDS.MINIMUM);
-                    if (min.length > 0) [pass, threshold] = [min[0], SATELLITE_ELEVATION_THRESHOLDS.MINIMUM];
-                }
+                const session = createPassPredictionSession(responseText, latNum, lngNum);
+                const resolved = session.resolveNextBestPass([
+                    SATELLITE_ELEVATION_THRESHOLDS.OPTIMAL,
+                    SATELLITE_ELEVATION_THRESHOLDS.ACCEPTABLE,
+                    SATELLITE_ELEVATION_THRESHOLDS.MINIMUM,
+                ]);
+                const pass = resolved.pass;
+                const threshold = resolved.threshold ?? SATELLITE_ELEVATION_THRESHOLDS.OPTIMAL;
                 if (!isCurrentGeneration(generation, selectionGenRef.current)) return;
 
+                setAllFleetPasses(resolved.allFleetPasses);
                 if (!pass) {
                     setNextPass(null);
                     setPassState('no-pass');
@@ -595,7 +602,7 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                                     color: ds.text.primary,
                                 }}
                             >
-                                AI Insight
+                                Derived AI Insight
                             </h3>
                         </div>
                         <span
@@ -681,15 +688,22 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                     )}
                 </div>
 
-                {/* Satellite Imagery */}
+                {/* 2. Confirmed Acquisitions: Optical/Thermal (GIBS) + Sentinel-1 SAR (Copernicus STAC) */}
                 {disaster && (
-                    <SatelliteImagery
-                        lat={disaster.lat}
-                        lng={disaster.lng}
-                        disasterType={disaster.type === 'fire_detection' ? 'fire' : disaster.type}
-                        date={disaster.date}
-                        title={disaster.title}
-                    />
+                    <div className="space-y-3" style={{ marginBottom: '14px' }}>
+                        <SatelliteImagery
+                            lat={disaster.lat}
+                            lng={disaster.lng}
+                            disasterType={disaster.type === 'fire_detection' ? 'fire' : disaster.type}
+                            date={disaster.date}
+                            title={disaster.title}
+                        />
+                        <SarScenesPanel
+                            lat={disaster.lat}
+                            lng={disaster.lng}
+                            eventDateIso={disaster.date}
+                        />
+                    </div>
                 )}
 
                 {tleNotice && (
@@ -929,6 +943,20 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
                         )}
                     </div>
                 </div>
+
+                {/* 3. Multi-Satellite Predicted Overpasses Comparison & .ics Snapshot Export */}
+                {disaster && allFleetPasses.length > 0 && (
+                    <div style={{ marginTop: '14px' }}>
+                        <PassComparisonPanel
+                            eventTitle={disaster.title}
+                            lat={disaster.lat}
+                            lng={disaster.lng}
+                            passes={allFleetPasses}
+                            hourlyWeather={hourlyWeather}
+                            tleOldestEpoch={tleOldestEpoch}
+                        />
+                    </div>
+                )}
             </div>
         </div>
     );

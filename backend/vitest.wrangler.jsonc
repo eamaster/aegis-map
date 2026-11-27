@@ -17,11 +17,20 @@
 			"id": "7f6c89c7faa84c288f31941bef51b14c"
 		}
 	],
+	"d1_databases": [
+		{
+			"binding": "AEGIS_DB",
+			"database_name": "aegis-map-db-test",
+			"database_id": "00000000-0000-0000-0000-000000000001",
+			"migrations_dir": "migrations"
+		}
+	],
 	"ai": {
 		"binding": "AI",
 		"remote": true
 	},
 	"vars": {
-		"CORS_ORIGINS": "https://hesam.me,https://www.hesam.me"
+		"CORS_ORIGINS": "https://hesam.me,https://www.hesam.me",
+		"ALLOW_SANDBOX_EMAIL": "true"
 	}
 }

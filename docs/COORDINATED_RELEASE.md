@@ -1,88 +1,70 @@
-# Coordinated Workers AI release gate
+# Coordinated Workers AI & v1.5 Release Gate
 
 ## Problem
 
-Merging `frontend/**` to `main` triggers GitHub Pages deploy
-(`.github/workflows/deploy.yml`). The new Sidebar requires
-`source: "workers-ai"` on successful `/api/analyze` responses. The baseline
-Worker on `main` does not provide that field.
+Merging changes to `main` triggers GitHub Pages deploy (`.github/workflows/deploy.yml`).
+Each release of AegisMap depends on strict contract parity between the Cloudflare Worker backend and the Vite + React frontend:
+- Publishing an updated frontend against an older Worker would break `/api/v2/disasters`, `/api/v1/warnings`, `/api/v1/sar-scenes`, `/api/v1/history`, `/api/v1/analytics/sources`, or `/api/v1/subscriptions`.
+- All Worker routes preserve strict backward compatibility for `/api/disasters`, `/api/tles`, `/api/fire-hotspots`, `/api/analyze`, and `/api/v2/disasters`.
 
-Publishing the new frontend against an unverified legacy backend would leave
-analysis permanently unavailable or misfail — never mislabel legacy text as
-Workers AI.
+## Enforceable Gate (in Workflow)
 
-## Enforceable gate (in workflow)
+Before building or publishing Pages on `main`, CI polls `GET /` on `VITE_API_BASE_URL` and verifies:
+- `body.commitSha === GITHUB_SHA` (immutable deployed Worker identity — prevents skipped deploys or stale Workers advertising identical capability strings from passing).
+- `body.services?.d1 === "ready"` (confirming all 6 required D1 tables exist on the bound production database `aegis-map-db`).
+- `capabilities` includes all 7 items of `API_CAPABILITIES` (`shared/contracts.ts`).
 
-Before building Pages, CI calls the configured production API health endpoint
-and requires its `capabilities` array to contain every capability the
-frontend relies on (`API_CAPABILITIES` in `backend/src/config.ts`):
+CI also executes non-mutating smoke checks on `GET /api/v2/disasters?window=24h`, `GET /api/v2/disasters?window=7d`, `GET /api/v1/warnings?lat=59.9139&lng=10.7522&country=NO`, `GET /api/v1/history?limit=5`, `GET /api/v1/analytics/sources`, and `GET /api/v1/subscriptions/status`.
 
-- `workers-ai-analyze-v1`: analyze successes carry `source: "workers-ai"`.
-- `provider-status-v1`: FIRMS coverage windows and `firms_unavailable` 502,
-  `X-Disaster-*` source headers, `X-TLE-*` headers.
-- `firms-global-v2`: Worldwide FIRMS VIIRS ingestion, spatial grid aggregation,
-  and `/api/v2/disasters` endpoint.
+`ALLOW_SANDBOX_EMAIL` is intentionally enabled only in `vitest.wrangler.jsonc` and `env.preview`. Production omits both `ALLOW_SANDBOX_EMAIL` and `RESEND_API_KEY` unless email sending is explicitly configured, causing `/api/v1/subscriptions/status` and `/api/v1/subscriptions` to report `available: false` / `503 delivery_unavailable` honestly without issuing fake preview tokens.
 
-Additionally, CI executes automated smoke checks verifying that both
-`GET /api/v2/disasters?window=24h` and `GET /api/v2/disasters?window=7d`
-return HTTP 200 with `version: 2` on the live Worker before building and
-publishing the frontend.
+1. `workers-ai-analyze-v1`: analyze successes carry `source: "workers-ai"`.
+2. `provider-status-v1`: FIRMS coverage windows and `firms_unavailable` 502, `X-Disaster-*` source headers, `X-TLE-*` headers.
+3. `firms-global-v2`: Worldwide FIRMS VIIRS ingestion, split-KV atomic pairing (checksum + length + LKG), and `/api/v2/disasters`.
+4. `official-warnings-v1`: `GET /api/v1/warnings` CAP v1.2 + pilot authority adapters.
+5. `sar-stac-v1`: `GET /api/v1/sar-scenes` Copernicus Data Space Sentinel-1 GRD search.
+6. `disaster-history-v1`: `GET /api/v1/history` & `GET /api/v1/analytics/sources` backed by D1 (`AEGIS_DB`).
+7. `warning-subscriptions-v1`: `POST /api/v1/subscriptions*` opt-in email confirmation & durable outbox (`sms_deferred` 501).
 
-## Deployment pipeline and secrets
+CI also executes smoke checks on `GET /api/v2/disasters?window=24h`, `GET /api/v2/disasters?window=7d`, and `GET /api/v1/warnings?lat=59.9139&lng=10.7522&country=NO`.
 
-The GitHub Actions workflow (`.github/workflows/deploy.yml`) coordinates deployment
-in a strict backend-first sequence using Node 22:
+## Deployment Pipeline & Secrets
+
+The GitHub Actions workflow (`.github/workflows/deploy.yml`) runs checks on `pull_request` and executes coordinated backend-first deployment on `push` to `main`:
 
 1. **`deploy-backend` job**:
-   - Validates that `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are set (fails fast with actionable setup instructions if missing).
-   - Runs backend typecheck (`npm run typecheck`) and Vitest test suite (`npm test`).
-   - Executes `npx wrangler deploy` to Cloudflare.
-   - Requires repository secrets:
-     - `CLOUDFLARE_API_TOKEN`: Cloudflare API token with `Workers Scripts: Edit` and `Workers KV Storage: Edit` permissions.
-     - `CLOUDFLARE_ACCOUNT_ID`: Cloudflare account identifier.
-   - **Important**: `FIRMS_MAP_KEY` is configured both as a GitHub Actions secret (for the scheduled off-Worker ingestion workflow `.github/workflows/firms-ingest.yml`) and as a Cloudflare Worker secret (for local bbox `/api/fire-hotspots`). The deploy job preserves existing Worker secrets and never overwrites them. Never commit tokens, and do not set `VITE_FIRMS_API_KEY` (any `VITE_*` variable is embedded into the public client bundle).
-
+   - Runs `cd backend && npm run typecheck && npm test`.
+   - On `push` to `main`, deploys the Worker via `npx wrangler deploy --var GIT_SHA:${GITHUB_SHA}`.
+   - Required secrets: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`.
+   - **Important**: Before deploying production v1.5 Worker code, apply D1 migrations cleanly via `npx wrangler d1 migrations apply AEGIS_DB --remote` and run bounded backfill (`node scripts/backfill-history.mjs --days 14 --limit 100 --remote`).
 2. **`build-frontend` job** (`needs: [deploy-backend]`):
-   - Verifies the backend contract (`firms-global-v2` capability).
-   - Runs smoke checks on `GET /api/v2/disasters?window=24h` and `GET /api/v2/disasters?window=7d`, asserting HTTP 200 and `version: 2`.
-   - If the live Worker reports `sources.firms.status === "unavailable"` (no snapshot seeded yet), automatically dispatches `.github/workflows/firms-ingest.yml`.
-   - Builds frontend with Vite (`npm run build`).
-   - Requires repository secrets:
-     - `VITE_API_BASE_URL`: Live Worker URL (e.g. `https://aegis-map-backend.smah0085.workers.dev`).
-     - `VITE_MAPBOX_TOKEN`: Mapbox public access token.
-
+   - Runs `cd frontend && npm run lint && npm test`.
+   - On `push` to `main`, verifies live Worker `/` capabilities and runs `/api/v2/disasters` + `/api/v1/warnings` smoke checks.
+   - Builds `frontend/dist` (`VITE_MAPBOX_TOKEN`, `VITE_API_BASE_URL`).
 3. **`deploy-frontend` job** (`needs: [build-frontend]`):
-   - Publishes build artifacts to GitHub Pages.
+   - Publishes `frontend/dist` to GitHub Pages.
 
-## Why worldwide FIRMS ingestion runs off-Worker
+## Isolated Preview Staging & Rollback Procedure
 
-Worldwide VIIRS thermal hotspot CSVs across 3 sensors (`VIIRS_SNPP_NRT`, `VIIRS_NOAA20_NRT`, `VIIRS_NOAA21_NRT`) span ~17 MB / 200k+ rows for `24h` (~127 s download wall time, ~3.4 s parse + grid-aggregation CPU) and several times more for `7d`.
+Never test migrations, backfill, or sandbox subscriptions directly against production `AEGIS_CACHE` (`7f6c89c7faa84c288f31941bef51b14c`). Use `--env preview` in `backend/wrangler.jsonc`:
 
-Running that ingestion inside a Cloudflare Worker collides with platform limits:
-- **Workers Free CPU limit (10 ms per HTTP/cron invocation)**: CSV parsing + spatial aggregation (~3.4 s) and even `JSON.parse` on a monolithic 2.65 MB snapshot (~31 ms per GET) exceed the limit.
-- **`ctx.waitUntil` wall-clock cap (~30 s after response)**: On-demand warm-up in a GET handler cannot finish a 120+ second NASA FIRMS download.
-- **128 MB isolate memory cap**: Buffering multi-day global CSVs and deduplicating rows in-isolate risks OOM on `7d`.
+```bash
+cd backend
+npx wrangler d1 migrations apply AEGIS_DB --remote --env preview
+node scripts/backfill-history.mjs --days 7 --limit 40 --remote --env preview
+npx wrangler deploy --env preview --var GIT_SHA:$(git rev-parse HEAD)
+```
 
-### Off-Worker architecture (`.github/workflows/firms-ingest.yml` + `backend/scripts/ingest-firms.mjs`)
+To roll back a problematic Worker deployment without touching Pages or re-building:
 
-- **Scheduled GitHub Actions job (`17 */3 * * *`, every 3 hours)** runs `node backend/scripts/ingest-firms.mjs` on Node 22 (no 10 ms CPU or 30 s wall-clock cap).
-- Reuses `ingestGlobalFirms` in `backend/src/firmsGlobal.ts`, verifies accounting invariants (`rawRows == malformedRows + outOfWindowRows + duplicateRows + acceptedDetections`), and writes split keys to Cloudflare KV via `wrangler kv bulk put --remote`:
-  - `firms:global:meta:v2:<window>` (~400 B metadata + sensor coverage + accounting)
-  - `firms:global:cells:v2:<window>` (pre-serialized JSON array of `FireDetectionCell[]`)
-  - `firms:global:lkg:meta:v2:<window>` & `firms:global:lkg:cells:v2:<window>` (7-day Last-Known-Good fallback)
-- **Zero-parse Worker read path**: `GET /api/v2/disasters` parses only the ~400 B `meta` key, splices the raw `cells` JSON string directly into the response body without `JSON.parse`, and caches the assembled response in the Cloudflare Edge Cache API (`caches.default`) for 5 minutes.
-- **Upstream rate & KV write bounds**:
-  - NASA FIRMS allows 5,000 requests per 10-minute window.
-  - 3 sensors × 2 windows = 6 requests per 3-hour run (48 FIRMS requests/day).
-  - 2 bulk KV operations × 8 runs/day = 16 KV bulk operations/day (64 keys written/day), well within Cloudflare KV Free tier (1,000 writes/day).
+```bash
+cd backend
+npx wrangler deployments list --env preview
+npx wrangler rollback --env preview -y
+```
 
-## Verification levels (do not conflate)
+And if a D1 schema regression occurred in a migration, do **not** drop production tables mid-flight; revert Worker traffic with `wrangler rollback` first (all additive v1.5 tables are backward-compatible with v1.4/v1.5 read queries), verify `GET /` `commitSha`, and fix forward with a new numbered migration.
 
-| Level | Meaning |
-| --- | --- |
-| Locally verified | Unit/integration tests + typecheck/build on this branch |
-| Model-probe verified | Bounded `env.AI.run` probe only (not the app route) |
-| Application-route verified | Live `POST /api/analyze` with `source: "workers-ai"` |
-| Deployed | Worker + Pages published after the coordinated sequence above |
+## Why Worldwide FIRMS Ingestion Runs Off-Worker
 
-A passing model probe alone is **not** live application acceptance.
+Worldwide VIIRS thermal hotspot CSVs across 3 sensors (`VIIRS_SNPP_NRT`, `VIIRS_NOAA20_NRT`, `VIIRS_NOAA21_NRT`) span ~17 MB / 200k+ rows for `24h` and exceed Cloudflare Workers Free 10 ms CPU / 128 MB memory / 30 s `waitUntil` bounds. `.github/workflows/firms-ingest.yml` (`17 */3 * * *`) executes `backend/scripts/ingest-firms.mjs` on Node 22 and writes split `cells` (first) then `meta` (second) keys with `cellsChecksum` (FNV-1a 64-bit) + `cellsCharLength` + `snapshotId` into KV so Workers serve `GET /api/v2/disasters` with zero multi-MB `JSON.parse`.

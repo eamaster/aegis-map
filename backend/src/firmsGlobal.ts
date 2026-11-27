@@ -110,6 +110,26 @@ export interface FirmsGlobalMeta {
 	accounting: FirmsAccounting;
 	totalDetections: number;
 	cellCount: number;
+	/** Deterministic snapshot ID, byte/char length, and FNV-1a 64-bit checksum for split-KV pairing. */
+	snapshotId?: string;
+	cellsCharLength?: number;
+	cellsChecksum?: string;
+}
+
+/** Fast non-cryptographic 64-bit FNV-1a hex digest over UTF-16 code units (zero-parse pairing verification). */
+export function fnv1a64Hex(input: string): string {
+	let hash = 0xcbf29ce484222325n;
+	const prime = 0x100000001b3n;
+	const mask = 0xffffffffffffffffn;
+	for (let i = 0; i < input.length; i++) {
+		hash ^= BigInt(input.charCodeAt(i));
+		hash = (hash * prime) & mask;
+	}
+	return hash.toString(16).padStart(16, '0');
+}
+
+export function cellsSnapshotKey(window: ObservationWindow, snapshotId: string): string {
+	return `${FIRMS_GLOBAL_CELLS_PREFIX}:${window}:${snapshotId}`;
 }
 
 export interface CellBounds {
@@ -657,7 +677,11 @@ export function computeSnapshotStatus(
 	return 'partial';
 }
 
-export function extractFirmsMeta(snapshot: FirmsGlobalSnapshot): FirmsGlobalMeta {
+export function extractFirmsMeta(snapshot: FirmsGlobalSnapshot, cellsJson?: string): FirmsGlobalMeta {
+	const rawCells = cellsJson ?? JSON.stringify(snapshot.cells);
+	const cellsChecksum = fnv1a64Hex(rawCells);
+	const parsedGenMs = Date.parse(snapshot.generatedAt);
+	const tsPart = Number.isFinite(parsedGenMs) ? String(parsedGenMs) : '0';
 	return {
 		version: snapshot.version,
 		window: snapshot.window,
@@ -667,6 +691,9 @@ export function extractFirmsMeta(snapshot: FirmsGlobalSnapshot): FirmsGlobalMeta
 		accounting: snapshot.accounting,
 		totalDetections: snapshot.totalDetections,
 		cellCount: snapshot.cells.length,
+		snapshotId: `${snapshot.window}-${tsPart}-${cellsChecksum.slice(0, 8)}`,
+		cellsCharLength: rawCells.length,
+		cellsChecksum,
 	};
 }
 
@@ -675,11 +702,12 @@ export function serializeGlobalFirmsSnapshotSplit(snapshot: FirmsGlobalSnapshot)
 	metaJson: string;
 	cellsJson: string;
 } {
-	const meta = extractFirmsMeta(snapshot);
+	const cellsJson = JSON.stringify(snapshot.cells);
+	const meta = extractFirmsMeta(snapshot, cellsJson);
 	return {
 		meta,
 		metaJson: JSON.stringify(meta),
-		cellsJson: JSON.stringify(snapshot.cells),
+		cellsJson,
 	};
 }
 
@@ -707,12 +735,19 @@ export function isValidFirmsMeta(doc: unknown): doc is FirmsGlobalMeta {
 	);
 }
 
-export function isValidRawCellsJson(raw: string | null | undefined, expectedCellCount?: number): raw is string {
+export function isValidRawCellsJson(
+	raw: string | null | undefined,
+	expectedCellCount?: number,
+	expectedCharLength?: number,
+	expectedChecksum?: string,
+): raw is string {
 	if (typeof raw !== 'string') return false;
 	const trimmed = raw.trim();
 	if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) return false;
-	if (expectedCellCount === 0) return trimmed === '[]';
-	if (typeof expectedCellCount === 'number' && expectedCellCount > 0) return trimmed.length > 2;
+	if (expectedCellCount === 0 && trimmed !== '[]') return false;
+	if (typeof expectedCellCount === 'number' && expectedCellCount > 0 && trimmed.length <= 2) return false;
+	if (typeof expectedCharLength === 'number' && trimmed.length !== expectedCharLength) return false;
+	if (typeof expectedChecksum === 'string' && fnv1a64Hex(trimmed) !== expectedChecksum) return false;
 	return true;
 }
 
@@ -745,21 +780,34 @@ export function buildFallbackFirmsReport(status: 'unavailable' | 'warming' = 'un
 }
 
 /**
- * Persist split global snapshot to KV storage: writes separate small `meta` and raw `cells`
- * keys (plus LKG backups) so Worker GET handlers never parse the multi-MB cells array.
+ * Persist split global snapshot to KV storage in strict two-phase order:
+ * Phase A (Data): write snapshot-addressed cells, rolling cells, and LKG cells.
+ * Phase B (Pointer): commit rolling meta and LKG meta only after Phase A completes.
+ * Worker GET handlers never parse the multi-MB cells array; they verify length + checksum.
  */
 export async function saveGlobalFirmsSnapshotSplit(kv: KVNamespace, snapshot: FirmsGlobalSnapshot): Promise<void> {
-	const { metaJson, cellsJson } = serializeGlobalFirmsSnapshotSplit(snapshot);
+	const { meta, metaJson, cellsJson } = serializeGlobalFirmsSnapshotSplit(snapshot);
 	const metaKey = cacheKeyForWindow(snapshot.window, FIRMS_GLOBAL_META_PREFIX);
 	const cellsKey = cacheKeyForWindow(snapshot.window, FIRMS_GLOBAL_CELLS_PREFIX);
 	const lkgMetaKey = cacheKeyForWindow(snapshot.window, FIRMS_GLOBAL_LKG_META_PREFIX);
 	const lkgCellsKey = cacheKeyForWindow(snapshot.window, FIRMS_GLOBAL_LKG_CELLS_PREFIX);
 
+	const phaseAPuts: Promise<void>[] = [
+		kv.put(cellsKey, cellsJson, { expirationTtl: FIRMS_GLOBAL_CACHE_TTL_SECONDS }),
+		kv.put(lkgCellsKey, cellsJson, { expirationTtl: FIRMS_GLOBAL_LKG_TTL_SECONDS }),
+	];
+	if (meta.snapshotId) {
+		phaseAPuts.push(
+			kv.put(cellsSnapshotKey(snapshot.window, meta.snapshotId), cellsJson, {
+				expirationTtl: FIRMS_GLOBAL_CACHE_TTL_SECONDS + 3600,
+			}),
+		);
+	}
+	await Promise.all(phaseAPuts);
+
 	await Promise.all([
 		kv.put(metaKey, metaJson, { expirationTtl: FIRMS_GLOBAL_CACHE_TTL_SECONDS }),
-		kv.put(cellsKey, cellsJson, { expirationTtl: FIRMS_GLOBAL_CACHE_TTL_SECONDS }),
 		kv.put(lkgMetaKey, metaJson, { expirationTtl: FIRMS_GLOBAL_LKG_TTL_SECONDS }),
-		kv.put(lkgCellsKey, cellsJson, { expirationTtl: FIRMS_GLOBAL_LKG_TTL_SECONDS }),
 	]);
 }
 
@@ -772,7 +820,8 @@ export interface ReadSplitSnapshotResult {
 
 /**
  * Retrieve split global FIRMS metadata (parsed) and raw cells JSON string (unparsed) from KV.
- * Falls back to LKG split keys if active keys are missing or corrupted.
+ * Prefers snapshot-addressed cells when `snapshotId` is present, verifies length & checksum
+ * when present, and falls back to LKG split keys if active keys are missing, partial, or mismatched.
  */
 export async function loadGlobalFirmsMeta(
 	kv: KVNamespace | undefined,
@@ -784,18 +833,29 @@ export async function loadGlobalFirmsMeta(
 	const metaKey = cacheKeyForWindow(window, FIRMS_GLOBAL_META_PREFIX);
 	const cellsKey = cacheKeyForWindow(window, FIRMS_GLOBAL_CELLS_PREFIX);
 	try {
-		const [rawMeta, rawCells] = await Promise.all([kv.get(metaKey), kv.get(cellsKey)]);
-		if (rawMeta && rawCells) {
+		const rawMeta = await kv.get(metaKey);
+		if (rawMeta) {
 			const parsedMeta: unknown = JSON.parse(rawMeta);
-			if (
-				isValidFirmsMeta(parsedMeta) &&
-				parsedMeta.window === window &&
-				isSnapshotUsable(parsedMeta) &&
-				isValidRawCellsJson(rawCells, parsedMeta.cellCount)
-			) {
-				const status = computeSnapshotStatus(parsedMeta, { isLkg: false, now: options.now });
-				if (status !== 'unavailable') {
-					return { meta: parsedMeta, cellsJson: rawCells.trim(), isLkg: false, status };
+			if (isValidFirmsMeta(parsedMeta) && parsedMeta.window === window && isSnapshotUsable(parsedMeta)) {
+				let rawCells: string | null = null;
+				if (parsedMeta.snapshotId) {
+					rawCells = await kv.get(cellsSnapshotKey(window, parsedMeta.snapshotId));
+				}
+				if (!rawCells) {
+					rawCells = await kv.get(cellsKey);
+				}
+				if (
+					isValidRawCellsJson(
+						rawCells,
+						parsedMeta.cellCount,
+						parsedMeta.cellsCharLength,
+						parsedMeta.cellsChecksum,
+					)
+				) {
+					const status = computeSnapshotStatus(parsedMeta, { isLkg: false, now: options.now });
+					if (status !== 'unavailable') {
+						return { meta: parsedMeta, cellsJson: rawCells.trim(), isLkg: false, status };
+					}
 				}
 			}
 		}
@@ -814,7 +874,12 @@ export async function loadGlobalFirmsMeta(
 				isValidFirmsMeta(parsedLkgMeta) &&
 				parsedLkgMeta.window === window &&
 				isSnapshotUsable(parsedLkgMeta) &&
-				isValidRawCellsJson(rawLkgCells, parsedLkgMeta.cellCount)
+				isValidRawCellsJson(
+					rawLkgCells,
+					parsedLkgMeta.cellCount,
+					parsedLkgMeta.cellsCharLength,
+					parsedLkgMeta.cellsChecksum,
+				)
 			) {
 				return { meta: parsedLkgMeta, cellsJson: rawLkgCells.trim(), isLkg: true, status: 'stale' };
 			}

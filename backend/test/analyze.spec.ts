@@ -12,7 +12,7 @@ import {
 	parseAnalyzeRequest,
 	runAnalyze,
 } from '../src/analyze';
-import { AI_GENERATION, ANALYSIS_CACHE_VERSION, DEFAULT_AI_MODEL, resolveAiModel } from '../src/config';
+import { AI_GENERATION, ANALYSIS_CACHE_VERSION, API_CAPABILITIES, APP_VERSION, DEFAULT_AI_MODEL, resolveAiModel } from '../src/config';
 import { resolveSatelliteCapabilities } from '../src/satellites';
 
 /** Retired on 2026-11-20 (HTTP 410 / code 5028); kept only as a retirement regression fixture. */
@@ -958,11 +958,12 @@ describe('HTTP /api/analyze', () => {
 });
 
 describe('health', () => {
-	it('reports app version and release-gate capabilities from central config', async () => {
+	it('reports app version, commitSha, and release-gate capabilities from central config', async () => {
 		const response = await SELF.fetch('http://example.com/');
 		expect(response.status).toBe(200);
-		const body = (await response.json()) as { version: string; capabilities: string[] };
-		expect(body.version).toBe('1.4.0');
-		expect(body.capabilities).toEqual(['workers-ai-analyze-v1', 'provider-status-v1', 'firms-global-v2']);
+		const body = (await response.json()) as { version: string; commitSha: string; capabilities: string[] };
+		expect(body.version).toBe(APP_VERSION);
+		expect(typeof body.commitSha).toBe('string');
+		expect(body.capabilities).toEqual([...API_CAPABILITIES]);
 	});
 });

@@ -54,15 +54,41 @@ import {
 	WindowRange,
 } from './firmsGlobal';
 import { loadMonitoredTles, serializeTles, TLE_SCHEDULED_REFRESH_AFTER_MS } from './satellites';
+import { queryOfficialWarnings } from './warnings/service';
+import { searchSentinel1GrdScenes } from './sarStac';
+import {
+	checkD1SchemaReady,
+	queryArchivedHistory,
+	querySourceAnalytics,
+	recordLiveDisastersToArchive,
+} from './history';
+import {
+	confirmSubscription,
+	createEmailTransport,
+	createSubscription,
+	dispatchVerifiedWarningAlerts,
+	getSubscriptionServiceStatus,
+	unsubscribeSubscription,
+} from './subscriptions';
+import type { SubscriptionCreateRequest } from '../../shared/contracts';
 
 type Bindings = {
 	AEGIS_CACHE: KVNamespace;
+	AEGIS_DB?: D1Database;
 	AI: Ai;
 	FIRMS_MAP_KEY: string;
 	/** Optional server-side model override (must be in SUPPORTED_AI_MODELS). */
 	AI_MODEL?: string;
 	/** Optional comma-separated extra browser origins (merged with defaults). */
 	CORS_ORIGINS?: string;
+	/** Optional build/deploy git SHA passed via wrangler deploy --var GIT_SHA:... */
+	GIT_SHA?: string;
+	/** Optional server-only Resend email API key (omit in local/preview to keep sandbox mode). */
+	RESEND_API_KEY?: string;
+	/** Optional sender address for Resend alerts. */
+	ALERT_FROM_EMAIL?: string;
+	/** Explicit opt-in for isolated test/preview sandbox email transport (never enable in production). */
+	ALLOW_SANDBOX_EMAIL?: string;
 };
 
 /** Metadata headers browsers may read cross-origin. */
@@ -94,8 +120,32 @@ app.use('/*', async (c, next) => {
 	return middleware(c, next);
 });
 
-app.get('/', (c) => {
-	return c.json({ status: 'AegisMap API Online', version: APP_VERSION, capabilities: API_CAPABILITIES });
+function resolveEmailTransport(env: Pick<Bindings, 'RESEND_API_KEY' | 'ALERT_FROM_EMAIL' | 'ALLOW_SANDBOX_EMAIL'>) {
+	return createEmailTransport({
+		resendApiKey: env.RESEND_API_KEY,
+		fromAddress: env.ALERT_FROM_EMAIL,
+		allowSandbox: env.ALLOW_SANDBOX_EMAIL === 'true',
+	});
+}
+
+app.get('/', async (c) => {
+	const d1State = await checkD1SchemaReady(c.env.AEGIS_DB);
+	const transport = resolveEmailTransport(c.env);
+	const capabilities = API_CAPABILITIES.filter((cap) => {
+		if (cap === 'disaster-history-v1' && d1State !== 'ready') return false;
+		return true;
+	});
+
+	return c.json({
+		status: 'AegisMap API Online',
+		version: APP_VERSION,
+		commitSha: c.env.GIT_SHA || 'unknown',
+		capabilities,
+		services: {
+			d1: d1State,
+			emailDelivery: transport.mode,
+		},
+	});
 });
 
 interface DisastersCacheDocument {
@@ -167,7 +217,9 @@ app.get('/api/disasters', async (c) => {
 	}
 
 	try {
+		const t0 = Date.now();
 		const result = await fetchDisasters();
+		const latencyMs = Date.now() - t0;
 		const doc: DisastersCacheDocument = {
 			version: 2,
 			disasters: result.disasters,
@@ -187,6 +239,18 @@ app.get('/api/disasters', async (c) => {
 			} catch (putErr) {
 				console.warn('Cache write error for disasters:', putErr instanceof Error ? putErr.name : 'Error');
 			}
+		}
+
+		if (c.env.AEGIS_DB) {
+			const archivePromise = recordLiveDisastersToArchive(c.env.AEGIS_DB, result.disasters, result.sources, latencyMs);
+			let waitUntil: ((p: Promise<unknown>) => void) | undefined;
+			try {
+				waitUntil = c.executionCtx.waitUntil.bind(c.executionCtx);
+			} catch {
+				waitUntil = undefined;
+			}
+			if (waitUntil) waitUntil(archivePromise);
+			else await archivePromise;
 		}
 
 		return c.json(doc.disasters, 200, disasterHeaders(doc));
@@ -299,7 +363,9 @@ app.get('/api/v2/disasters', async (c) => {
 
 	if (!disasterResult) {
 		try {
+			const t0 = Date.now();
 			disasterResult = await fetchDisastersV2Categorized({ window, volcanoMode });
+			const latencyMs = Date.now() - t0;
 			if (c.env.AEGIS_CACHE) {
 				try {
 					await c.env.AEGIS_CACHE.put(disastersCacheKey, JSON.stringify(disasterResult), {
@@ -308,6 +374,27 @@ app.get('/api/v2/disasters', async (c) => {
 				} catch (putErr) {
 					console.warn('Cache write error for v2 disasters:', putErr instanceof Error ? putErr.name : 'Error');
 				}
+			}
+			if (c.env.AEGIS_DB) {
+				const allRecords = [
+					...disasterResult.wildfires,
+					...disasterResult.earthquakes,
+					...disasterResult.volcanoes,
+				];
+				const archivePromise = recordLiveDisastersToArchive(
+					c.env.AEGIS_DB,
+					allRecords,
+					disasterResult.sources,
+					latencyMs,
+				);
+				let waitUntil: ((p: Promise<unknown>) => void) | undefined;
+				try {
+					waitUntil = c.executionCtx.waitUntil.bind(c.executionCtx);
+				} catch {
+					waitUntil = undefined;
+				}
+				if (waitUntil) waitUntil(archivePromise);
+				else await archivePromise;
 			}
 		} catch (error) {
 			if (error instanceof DisasterUpstreamError) {
@@ -519,6 +606,152 @@ app.post('/api/analyze', async (c) => {
 	}
 });
 
+// Route 4: GET /api/v1/warnings — Official warnings for a location (never logs or caches user coords)
+app.get('/api/v1/warnings', async (c) => {
+	const parsed = parseCoordinateQuery(c.req.query('lat'), c.req.query('lng'));
+	if (!parsed.ok) {
+		return c.json({ error: parsed.reason }, 400);
+	}
+	const countryRaw = c.req.query('country');
+	const countryCode = countryRaw && /^[A-Za-z]{2}$/.test(countryRaw.trim()) ? countryRaw.trim().toUpperCase() : null;
+
+	const result = await queryOfficialWarnings({
+		lat: parsed.lat,
+		lng: parsed.lng,
+		countryCode,
+		kv: c.env.AEGIS_CACHE,
+	});
+
+	return c.json(result, 200, {
+		'Cache-Control': 'private, no-store',
+	});
+});
+
+// Route 5: GET /api/v1/sar-scenes — Confirmed Sentinel-1 GRD scenes via Copernicus STAC
+app.get('/api/v1/sar-scenes', async (c) => {
+	const parsed = parseCoordinateQuery(c.req.query('lat'), c.req.query('lng'));
+	if (!parsed.ok) {
+		return c.json({ error: parsed.reason, code: 'invalid_coordinates' }, 400);
+	}
+	const startIso = c.req.query('start');
+	const endIso = c.req.query('end');
+	const rawLimit = Number(c.req.query('limit'));
+	const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 8;
+	const token = c.req.query('token');
+
+	try {
+		const res = await searchSentinel1GrdScenes({
+			lat: parsed.lat,
+			lng: parsed.lng,
+			startIso,
+			endIso,
+			limit,
+			token,
+			kv: c.env.AEGIS_CACHE,
+		});
+		return c.json(res, 200);
+	} catch (err) {
+		return c.json(
+			{
+				error: 'Copernicus STAC Sentinel-1 search failed',
+				code: 'sar_stac_unavailable',
+				detail: err instanceof Error ? err.message : 'Upstream error',
+			},
+			502,
+		);
+	}
+});
+
+// Route 6: GET /api/v1/history — D1 historical disaster archive + revisions
+app.get('/api/v1/history', async (c) => {
+	const rawLimit = Number(c.req.query('limit'));
+	const res = await queryArchivedHistory({
+		db: c.env.AEGIS_DB,
+		from: c.req.query('from'),
+		to: c.req.query('to'),
+		type: c.req.query('type'),
+		limit: Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 50,
+	});
+	return c.json(res, 200);
+});
+
+// Route 7: GET /api/v1/analytics/sources — D1 source health metrics
+app.get('/api/v1/analytics/sources', async (c) => {
+	const res = await querySourceAnalytics(c.env.AEGIS_DB);
+	return c.json(res, 200);
+});
+
+// Route 8: Subscriptions (opt-in verified warning email alerts; SMS deferred 501)
+app.get('/api/v1/subscriptions/status', async (c) => {
+	const transport = resolveEmailTransport(c.env);
+	const status = await getSubscriptionServiceStatus(c.env.AEGIS_DB, transport);
+	return c.json(status, 200, {
+		'Cache-Control': 'private, no-store',
+	});
+});
+
+app.post('/api/v1/subscriptions', async (c) => {
+	let body: SubscriptionCreateRequest;
+	try {
+		body = (await c.req.json()) as SubscriptionCreateRequest;
+	} catch {
+		return c.json({ ok: false, code: 'invalid_request', message: 'Malformed JSON body' }, 400, {
+			'Cache-Control': 'private, no-store',
+		});
+	}
+	const transport = resolveEmailTransport(c.env);
+	const result = await createSubscription({ db: c.env.AEGIS_DB, req: body, transport });
+	return c.json(result.body, result.status as 200 | 201 | 400 | 501 | 502 | 503, {
+		'Cache-Control': 'private, no-store',
+	});
+});
+
+app.post('/api/v1/subscriptions/confirm', async (c) => {
+	let token = c.req.query('token') ?? '';
+	if (!token) {
+		try {
+			const body = (await c.req.json()) as { token?: string };
+			token = body.token ?? '';
+		} catch {
+			// query fallback already checked
+		}
+	}
+	const result = await confirmSubscription(c.env.AEGIS_DB, token);
+	return c.json(result.body, result.status as 200 | 400 | 404 | 409 | 503, {
+		'Cache-Control': 'private, no-store',
+	});
+});
+
+app.get('/api/v1/subscriptions/confirm', async (c) => {
+	const result = await confirmSubscription(c.env.AEGIS_DB, c.req.query('token') ?? '');
+	return c.json(result.body, result.status as 200 | 400 | 404 | 409 | 503, {
+		'Cache-Control': 'private, no-store',
+	});
+});
+
+app.post('/api/v1/subscriptions/unsubscribe', async (c) => {
+	let token = c.req.query('token') ?? '';
+	if (!token) {
+		try {
+			const body = (await c.req.json()) as { token?: string };
+			token = body.token ?? '';
+		} catch {
+			// query fallback already checked
+		}
+	}
+	const result = await unsubscribeSubscription(c.env.AEGIS_DB, token);
+	return c.json(result.body, result.status as 200 | 400 | 404 | 503, {
+		'Cache-Control': 'private, no-store',
+	});
+});
+
+app.get('/api/v1/subscriptions/unsubscribe', async (c) => {
+	const result = await unsubscribeSubscription(c.env.AEGIS_DB, c.req.query('token') ?? '');
+	return c.json(result.body, result.status as 200 | 400 | 404 | 503, {
+		'Cache-Control': 'private, no-store',
+	});
+});
+
 /** Cron Trigger: refresh orbital elements outside user requests (same cache policy). */
 export async function refreshTlesScheduled(env: Pick<Bindings, 'AEGIS_CACHE'>): Promise<void> {
 	const result = await loadMonitoredTles(env.AEGIS_CACHE, { refreshAfterMs: TLE_SCHEDULED_REFRESH_AFTER_MS });
@@ -527,9 +760,26 @@ export async function refreshTlesScheduled(env: Pick<Bindings, 'AEGIS_CACHE'>): 
 	);
 }
 
+/** Cron Trigger helper: evaluate active verified warnings for confirmed opt-in subscribers. */
+export async function dispatchSubscriptionsScheduled(
+	env: Pick<Bindings, 'AEGIS_DB' | 'AEGIS_CACHE' | 'RESEND_API_KEY' | 'ALERT_FROM_EMAIL' | 'ALLOW_SANDBOX_EMAIL'>,
+): Promise<void> {
+	if (!env.AEGIS_DB) return;
+	const transport = resolveEmailTransport(env);
+	if (transport.mode === 'disabled') return;
+	const summary = await dispatchVerifiedWarningAlerts({
+		db: env.AEGIS_DB,
+		kv: env.AEGIS_CACHE,
+		transport,
+	});
+	console.log(
+		`Scheduled warning dispatch (${transport.mode}): processed=${summary.processed} sent=${summary.sent} deduplicated=${summary.deduplicated} failed=${summary.failed}`,
+	);
+}
+
 export default {
 	fetch: app.fetch,
 	async scheduled(_controller: ScheduledController, env: Bindings, ctx: ExecutionContext) {
-		ctx.waitUntil(refreshTlesScheduled(env));
+		ctx.waitUntil(Promise.all([refreshTlesScheduled(env), dispatchSubscriptionsScheduled(env)]));
 	},
 } satisfies ExportedHandler<Bindings>;

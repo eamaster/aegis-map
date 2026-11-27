@@ -68,7 +68,7 @@ async function main() {
     logSection('🚀 Launching Browser');
     browser = await chromium.launch({ 
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']
     });
     const context = await browser.newContext();
     const page = await context.newPage();
@@ -89,8 +89,8 @@ async function main() {
     await page.route('**/*', async (route) => {
       const url = route.request().url();
       
-      // Intercept /api/disasters request
-      if (url.includes('/api/disasters')) {
+      // Intercept /api/v2/disasters or legacy /api/disasters request
+      if (url.includes('/api/v2/disasters') || url.includes('/api/disasters')) {
         log(`Intercepted: ${url}`, 'blue');
         
         // Verify API_BASE_URL if provided
@@ -104,9 +104,17 @@ async function main() {
           // Continue the request and capture response with timeout
           const response = await route.fetch({ timeout: 60000 }); // 60 second timeout
           const body = await response.json();
-          capturedApiResponse = body;
-          
-          log(`Captured ${body.length} disaster records from API`, 'green');
+          if (body && body.version === 2) {
+            capturedApiResponse = [
+              ...(body.wildfires ?? []),
+              ...(body.volcanoes ?? []),
+              ...(body.earthquakes ?? []),
+            ];
+            log(`Captured v2 disaster envelope: ${capturedApiResponse.length} named events, ${(body.fireCells ?? []).length} FIRMS cells`, 'green');
+          } else {
+            capturedApiResponse = body;
+            log(`Captured ${Array.isArray(body) ? body.length : 0} disaster records from legacy API`, 'green');
+          }
           
           // Fulfill the request with the captured response
           await route.fulfill({ response });

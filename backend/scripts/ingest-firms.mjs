@@ -94,6 +94,7 @@ async function main() {
 	const mod = await loadFirmsModules();
 	const {
 		cacheKeyForWindow,
+		cellsSnapshotKey,
 		computeSnapshotStatus,
 		FIRMS_GLOBAL_CACHE_TTL_SECONDS,
 		FIRMS_GLOBAL_CELLS_PREFIX,
@@ -160,12 +161,15 @@ async function main() {
 			}
 
 			const { meta, metaJson, cellsJson } = serializeGlobalFirmsSnapshotSplit(snapshot);
-			if (!isValidFirmsMeta(meta) || !isValidRawCellsJson(cellsJson, meta.cellCount)) {
+			if (
+				!isValidFirmsMeta(meta) ||
+				!isValidRawCellsJson(cellsJson, meta.cellCount, meta.cellsCharLength, meta.cellsChecksum)
+			) {
 				throw new Error(`Split serialization validation failed for window ${window}`);
 			}
 
 			console.log(
-				`[${window}] Payload sizes: meta=${Buffer.byteLength(metaJson)} B, cells=${(Buffer.byteLength(cellsJson) / (1024 * 1024)).toFixed(2)} MB`,
+				`[${window}] Payload sizes: meta=${Buffer.byteLength(metaJson)} B, cells=${(Buffer.byteLength(cellsJson) / (1024 * 1024)).toFixed(2)} MB, snapshotId=${meta.snapshotId}`,
 			);
 
 			if (dryRun) {
@@ -174,15 +178,33 @@ async function main() {
 				continue;
 			}
 
-			const bulkEntries = [
-				{
-					key: cacheKeyForWindow(window, FIRMS_GLOBAL_META_PREFIX),
-					value: metaJson,
-					expiration_ttl: FIRMS_GLOBAL_CACHE_TTL_SECONDS,
-				},
+			// Two-phase publication: write cells (data) BEFORE meta (pointer) so concurrent reads
+			// never splice new metadata with old cells.
+			const phaseACells = [
 				{
 					key: cacheKeyForWindow(window, FIRMS_GLOBAL_CELLS_PREFIX),
 					value: cellsJson,
+					expiration_ttl: FIRMS_GLOBAL_CACHE_TTL_SECONDS,
+				},
+				{
+					key: cacheKeyForWindow(window, FIRMS_GLOBAL_LKG_CELLS_PREFIX),
+					value: cellsJson,
+					expiration_ttl: FIRMS_GLOBAL_LKG_TTL_SECONDS,
+				},
+				...(meta.snapshotId
+					? [
+							{
+								key: cellsSnapshotKey(window, meta.snapshotId),
+								value: cellsJson,
+								expiration_ttl: FIRMS_GLOBAL_CACHE_TTL_SECONDS + 3600,
+							},
+						]
+					: []),
+			];
+			const phaseBMeta = [
+				{
+					key: cacheKeyForWindow(window, FIRMS_GLOBAL_META_PREFIX),
+					value: metaJson,
 					expiration_ttl: FIRMS_GLOBAL_CACHE_TTL_SECONDS,
 				},
 				{
@@ -190,41 +212,41 @@ async function main() {
 					value: metaJson,
 					expiration_ttl: FIRMS_GLOBAL_LKG_TTL_SECONDS,
 				},
-				{
-					key: cacheKeyForWindow(window, FIRMS_GLOBAL_LKG_CELLS_PREFIX),
-					value: cellsJson,
-					expiration_ttl: FIRMS_GLOBAL_LKG_TTL_SECONDS,
-				},
 			];
 
-			const tmpFile = path.join(os.tmpdir(), `aegis-firms-bulk-${window}-${ process.pid }-${Date.now()}.json`);
-			try {
-				fs.writeFileSync(tmpFile, JSON.stringify(bulkEntries), 'utf-8');
-				const wranglerBin = process.platform === 'win32' ? 'npx.cmd' : 'npx';
-				const args = [
-					'wrangler',
-					'kv',
-					'bulk',
-					'put',
-					tmpFile,
-					'--binding',
-					'AEGIS_CACHE',
-					local ? '--local' : '--remote',
-				];
-				execFileSync(wranglerBin, args, {
-					cwd: BACKEND_ROOT,
-					stdio: 'inherit',
-					shell: process.platform === 'win32',
-				});
-				console.log(`[${window}] Uploaded 4 KV keys (meta, cells, lkg:meta, lkg:cells) via bulk put.`);
-				usableCount++;
-			} finally {
+			const runBulkPut = (entries, phaseLabel) => {
+				const tmpFile = path.join(os.tmpdir(), `aegis-firms-${phaseLabel}-${window}-${process.pid}-${Date.now()}.json`);
 				try {
-					if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
-				} catch {
-					// ignore temp file cleanup error
+					fs.writeFileSync(tmpFile, JSON.stringify(entries), 'utf-8');
+					const wranglerBin = process.platform === 'win32' ? 'npx.cmd' : 'npx';
+					const args = [
+						'wrangler',
+						'kv',
+						'bulk',
+						'put',
+						tmpFile,
+						'--binding',
+						'AEGIS_CACHE',
+						local ? '--local' : '--remote',
+					];
+					execFileSync(wranglerBin, args, {
+						cwd: BACKEND_ROOT,
+						stdio: 'inherit',
+						shell: process.platform === 'win32',
+					});
+				} finally {
+					try {
+						if (fs.existsSync(tmpFile)) fs.unlinkSync(tmpFile);
+					} catch {
+						// ignore temp file cleanup error
+					}
 				}
-			}
+			};
+
+			runBulkPut(phaseACells, 'cells');
+			runBulkPut(phaseBMeta, 'meta');
+			console.log(`[${window}] Uploaded ${phaseACells.length} cell keys then ${phaseBMeta.length} meta keys (two-phase).`);
+			usableCount++;
 		} catch (err) {
 			const rawMsg = err instanceof Error ? err.stack || err.message : String(err);
 			console.error(`[${window}] Ingestion error:`, redactSecret(rawMsg, mapKey));
