@@ -103,6 +103,37 @@ describe('CAP v1.2 parser & security', () => {
 		expect(resA2.clockSkewFlag).toBe(true);
 		expect(resA2.lifecycleState).toBe('active');
 	});
+
+	it('carries transitive CAP references and inherits parent geometry when Update/Cancel omits areas', () => {
+		const a1 = parseCapAlertXml(SAMPLE_CAP_ALERT({ id: 'A1', sent: '2026-11-27T08:00:00Z' }))!;
+		const u1 = parseCapAlertXml(
+			SAMPLE_CAP_ALERT({
+				id: 'A2',
+				msgType: 'Update',
+				sent: '2026-11-27T09:00:00Z',
+				refs: 'meteorologi@met.no,A1,2026-11-27T08:00:00Z',
+			}).replace(/<cap:area>[\s\S]*?<\/cap:area>/, ''),
+		)!;
+		const u2 = parseCapAlertXml(
+			SAMPLE_CAP_ALERT({
+				id: 'A3',
+				msgType: 'Update',
+				sent: '2026-11-27T10:00:00Z',
+				refs: 'meteorologi@met.no,A2,2026-11-27T09:00:00Z',
+			}).replace(/<cap:area>[\s\S]*?<\/cap:area>/, ''),
+		)!;
+
+		const resolved = resolveCapLifecycle([u2, a1, u1], new Date('2026-11-27T12:00:00Z'));
+		const resA3 = resolved.find((r) => r.alert.identifier === 'A3')!;
+		expect(resA3.lifecycleState).toBe('active');
+		expect(resA3.referencedIdentifiers).toEqual(['A2', 'A1']);
+		expect(resA3.alert.infos[0].areas[0].polygons.length).toBeGreaterThan(0);
+
+		const resA1 = resolved.find((r) => r.alert.identifier === 'A1')!;
+		const resA2 = resolved.find((r) => r.alert.identifier === 'A2')!;
+		expect(resA1.lifecycleState).toBe('superseded');
+		expect(resA2.lifecycleState).toBe('superseded');
+	});
 });
 
 describe('Geographic matching (polygons, circles, antimeridian, East Malaysia)', () => {
@@ -215,5 +246,68 @@ describe('GET /api/v1/warnings route and provider lifecycle states', () => {
 		expect(res.status).toBe(200);
 		const body = (await res.json()) as any;
 		expect(body.coverageStatus).toBe('unsupported_jurisdiction');
+	});
+
+	it('marks partial_coverage (never checked_no_warnings) on failed detail, budget exhaustion, malformed sibling, or unresolved SACHET polygon', async () => {
+		const rssWrap = (links: string[]) =>
+			`<?xml version="1.0"?><rss version="2.0"><channel>${links
+				.map((l, i) => `<item><title>Alert ${i}</title><link>${l}</link></item>`)
+				.join('')}</channel></rss>`;
+
+		// 1. Partial CAP feed: first CAP XML succeeds for TEH, second fails 500, third is malformed, SACHET polygon fails 503
+		const kvPartial = memoryKv();
+		const sachetRss = rssWrap([
+			'https://sachet.ndma.gov.in/cap/a1.xml',
+			'https://sachet.ndma.gov.in/cap/a2-fail.xml',
+			'https://sachet.ndma.gov.in/cap/a3-bad.xml',
+		]);
+		const capA1WithPolyUrl = SAMPLE_CAP_ALERT({
+			id: 'IN-A1',
+			sent: '2026-11-27T08:00:00Z',
+			polygon: '',
+		})
+			.replace('<cap:polygon></cap:polygon>', '')
+			.replace(
+				'<cap:area>',
+				`<cap:parameter><cap:valueName>polygon url</cap:valueName><cap:value>https://sachet.ndma.gov.in/cap/a1-poly.xml</cap:value></cap:parameter><cap:area>`,
+			);
+
+		const partialRes = await queryOfficialWarnings({
+			lat: 28.6139,
+			lng: 77.209,
+			countryCode: 'IN',
+			kv: kvPartial.kv,
+			now: new Date('2026-11-27T12:00:00Z'),
+			fetchImpl: async (url) => {
+				if (url.includes('rss_india.xml')) return new Response(sachetRss, { status: 200 });
+				if (url.endsWith('a1.xml')) return new Response(capA1WithPolyUrl, { status: 200 });
+				if (url.endsWith('a2-fail.xml')) return new Response('err', { status: 500 });
+				if (url.endsWith('a3-bad.xml')) return new Response('<!DOCTYPE evil><bad', { status: 200 });
+				if (url.endsWith('a1-poly.xml')) return new Response('err', { status: 503 });
+				return new Response('', { status: 404 });
+			},
+		});
+		expect(partialRes.coverageStatus).toBe('partial_coverage');
+		expect(partialRes.sources[0].status).toBe('partial');
+
+		// 2. Budget exhaustion (> 15 RSS items)
+		const kvBudget = memoryKv();
+		const manyLinks = Array.from({ length: 18 }, (_, i) => `https://sachet.ndma.gov.in/cap/item-${i}.xml`);
+		const budgetRes = await queryOfficialWarnings({
+			lat: 28.6139,
+			lng: 77.209,
+			countryCode: 'IN',
+			kv: kvBudget.kv,
+			now: new Date('2026-11-27T12:00:00Z'),
+			fetchImpl: async (url) => {
+				if (url.includes('rss_india.xml')) return new Response(rssWrap(manyLinks), { status: 200 });
+				return new Response(
+					SAMPLE_CAP_ALERT({ id: `M-${url}`, polygon: '28.0,77.0 28.0,78.0 29.0,78.0 29.0,77.0 28.0,77.0' }),
+					{ status: 200 },
+				);
+			},
+		});
+		expect(budgetRes.coverageStatus).toBe('partial_coverage');
+		expect(budgetRes.sources[0].errorReason).toContain('rss_feed_truncated');
 	});
 });

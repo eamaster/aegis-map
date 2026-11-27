@@ -46,6 +46,7 @@ async function main() {
 		console.log('\n=== Suite A & B: Near Me Resident View, RTL, Offline, Subscriptions ===');
 		const nearMeCtx = await browser.newContext({
 			viewport: { width: 1280, height: 860 },
+			permissions: [], // Geolocation denied
 			acceptDownloads: true,
 		});
 		const page = await nearMeCtx.newPage();
@@ -57,8 +58,13 @@ async function main() {
 			}
 		});
 
-		// Intercept Open-Meteo geocoding offline so we exercise offline gazetteer disambiguation for "Springfield"
+		// Block Mapbox GL tiles/APIs & AI endpoint & Open-Meteo geocoding so Near me proves full resilience when Map/AI/Geocoder are down
+		await page.route('https://api.mapbox.com/**', (route) => route.abort('failed'));
+		await page.route('https://tiles.mapbox.com/**', (route) => route.abort('failed'));
 		await page.route('https://geocoding-api.open-meteo.com/**', (route) => route.abort('failed'));
+		await page.route(`${API_BASE_URL}/api/analyze`, (route) =>
+			route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ code: 'ai_unavailable' }) }),
+		);
 
 		const tStart = Date.now();
 		await page.goto(`${FRONTEND_URL}?view=near-me`, { waitUntil: 'domcontentloaded', timeout: STEP_TIMEOUT });
@@ -66,7 +72,13 @@ async function main() {
 		const tRenderMs = Date.now() - tStart;
 
 		const hasMapboxScript = loadedScripts.some((u) => u.includes('mapbox-gl'));
-		checks.record(!hasMapboxScript, 'Near me loads without downloading mapbox-gl chunk', `${tRenderMs}ms scripts=${loadedScripts.length}`);
+		checks.record(!hasMapboxScript, 'Near me loads without downloading mapbox-gl chunk (Mapbox/AI blocked)', `${tRenderMs}ms scripts=${loadedScripts.length}`);
+
+		// Verify geolocation denied banner and manual fallback
+		await page.locator('[data-testid="gps-request-btn"]').click();
+		await page.locator('[data-testid="gps-status-banner"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
+		const gpsText = (await page.locator('[data-testid="gps-status-banner"]').innerText()).trim();
+		checks.record(gpsText.length > 0, 'geolocation denied displays honest banner and keeps manual selection usable', gpsText.slice(0, 80));
 
 		// Test "Georgetown" offline gazetteer disambiguation (Guyana & Texas, US)
 		await page.locator('[data-testid="place-search-input"]').fill('Georgetown');
@@ -75,9 +87,70 @@ async function main() {
 		const candidateCount = await page.locator('[data-testid="place-candidates"] button').count();
 		checks.record(candidateCount >= 2, 'ambiguous place search ("Georgetown") shows multiple candidates', `count=${candidateCount}`);
 
-		// Enter Oslo coordinates manually -> triggers live or mocked /api/v1/warnings
+		// Fixture warning payload generator for deterministic partial / stale / active checks + live fallback
+		const makeNorwayFixture = (coverageStatus, sourceStatus) => ({
+			version: 1,
+			query: { lat: 59.9139, lng: 10.7522, countryCode: 'NO', checkedAt: new Date().toISOString() },
+			coverageStatus,
+			coverageExplanation: `Fixture coverage status: ${coverageStatus}`,
+			warnings: [
+				{
+					id: 'no-e2e-gale-1',
+					identifier: 'no-e2e-gale-1',
+					sourceId: 'no-metalerts',
+					issuerName: 'Meteorologisk institutt (MET Norway)',
+					issuerUrl: 'https://www.met.no/',
+					countryCode: 'NO',
+					msgType: 'Alert',
+					lifecycleState: 'active',
+					category: 'Met',
+					severity: 'moderate',
+					urgency: 'Expected',
+					certainty: 'Likely',
+					sentAt: new Date().toISOString(),
+					effectiveAt: new Date().toISOString(),
+					onsetAt: new Date().toISOString(),
+					expiresAt: new Date(Date.now() + 12 * 3600_000).toISOString(),
+					missingExpiry: false,
+					clockSkewFlag: false,
+					matchMethod: 'polygon',
+					matchUncertain: false,
+					matchNote: 'Point inside official CAP/GeoJSON warning polygon',
+					primaryLanguage: 'no',
+					translations: [
+						{
+							language: 'no',
+							headline: 'Gult farevarsel for vindkast, Oslo',
+							event: 'Wind gusts',
+							description: 'Lokalt kraftige vindkast.',
+							instruction: 'Sikre løse gjenstander.',
+							areaDesc: 'Oslo',
+							web: 'https://www.met.no/',
+						},
+					],
+					bulletinUrl: 'https://www.met.no/',
+					attribution: 'MET Norway (NLOD 2.0)',
+				},
+			],
+			sources: [
+				{
+					sourceId: 'no-metalerts',
+					authorityName: 'Meteorologisk institutt (MET Norway)',
+					countryCodes: ['NO', 'SJ'],
+					status: sourceStatus,
+					checkedAt: new Date().toISOString(),
+					lastSuccessAt: new Date(Date.now() - 3600_000).toISOString(),
+					activeAlertCount: 1,
+					matchedAlertCount: 1,
+					unsupportedHazards: ['Earthquakes (NORSAR)'],
+					attribution: 'MET Norway',
+					termsUrl: 'https://api.met.no/doc/License',
+				},
+			],
+		});
+
+		// Enter Oslo coordinates manually -> triggers live or fixture active warning
 		await page.route(`${API_BASE_URL}/api/v1/warnings**`, async (route) => {
-			// Let real Worker answer if reachable; otherwise provide schema-valid Norway warning fixture for E2E determinism
 			try {
 				const res = await route.fetch({ timeout: 10000 });
 				if (res.ok()) return route.fulfill({ response: res });
@@ -87,66 +160,7 @@ async function main() {
 			return route.fulfill({
 				status: 200,
 				contentType: 'application/json',
-				body: JSON.stringify({
-					version: 1,
-					query: { lat: 59.9139, lng: 10.7522, countryCode: 'NO', checkedAt: new Date().toISOString() },
-					coverageStatus: 'active_warnings',
-					coverageExplanation: 'Checked Meteorologisk institutt (MET Norway) — 1 active warning matching coordinates.',
-					warnings: [
-						{
-							id: 'no-e2e-gale-1',
-							identifier: 'no-e2e-gale-1',
-							sourceId: 'no-metalerts',
-							issuerName: 'Meteorologisk institutt (MET Norway)',
-							issuerUrl: 'https://www.met.no/',
-							countryCode: 'NO',
-							msgType: 'Alert',
-							lifecycleState: 'active',
-							category: 'Met',
-							severity: 'moderate',
-							urgency: 'Expected',
-							certainty: 'Likely',
-							sentAt: new Date().toISOString(),
-							effectiveAt: new Date().toISOString(),
-							onsetAt: new Date().toISOString(),
-							expiresAt: new Date(Date.now() + 12 * 3600_000).toISOString(),
-							missingExpiry: false,
-							clockSkewFlag: false,
-							matchMethod: 'polygon',
-							matchUncertain: false,
-							matchNote: 'Point inside official CAP/GeoJSON warning polygon',
-							primaryLanguage: 'no',
-							translations: [
-								{
-									language: 'no',
-									headline: 'Gult farevarsel for vindkast, Oslo',
-									event: 'Wind gusts',
-									description: 'Lokalt kraftige vindkast.',
-									instruction: 'Sikre løse gjenstander.',
-									areaDesc: 'Oslo',
-									web: 'https://www.met.no/',
-								},
-							],
-							bulletinUrl: 'https://www.met.no/',
-							attribution: 'MET Norway (NLOD 2.0)',
-						},
-					],
-					sources: [
-						{
-							sourceId: 'no-metalerts',
-							authorityName: 'Meteorologisk institutt (MET Norway)',
-							countryCodes: ['NO', 'SJ'],
-							status: 'ok',
-							checkedAt: new Date().toISOString(),
-							lastSuccessAt: new Date().toISOString(),
-							activeAlertCount: 1,
-							matchedAlertCount: 1,
-							unsupportedHazards: ['Earthquakes (NORSAR)'],
-							attribution: 'MET Norway',
-							termsUrl: 'https://api.met.no/doc/License',
-						},
-					],
-				}),
+				body: JSON.stringify(makeNorwayFixture('active_warnings', 'ok')),
 			});
 		});
 
@@ -156,6 +170,34 @@ async function main() {
 		await page.locator('[data-testid="warnings-coverage-banner"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
 		const tFirstWarningMs = Date.now() - tWarnStart;
 		checks.record(tFirstWarningMs < 10000, 'time to first readable warning on manual Oslo coords', `${tFirstWarningMs}ms`);
+
+		// Save Oslo so returning reload restores place & cached warnings offline
+		await page.locator('[data-testid="save-place-btn"]').click();
+
+		// Explicitly verify partial & stale warning states in Near me
+		await page.unroute(`${API_BASE_URL}/api/v1/warnings**`);
+		await page.route(`${API_BASE_URL}/api/v1/warnings**`, (route) =>
+			route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(makeNorwayFixture('partial_coverage', 'partial')) }),
+		);
+		await page.locator('[data-testid="refresh-warnings-btn"]').click();
+		await page.waitForFunction(
+			() => /partial/i.test(document.querySelector('[data-testid="warnings-coverage-banner"]')?.textContent || ''),
+			undefined,
+			{ timeout: STEP_TIMEOUT },
+		);
+		checks.record(true, 'Near me surfaces partial warning coverage cleanly while retaining LKG notices');
+
+		await page.unroute(`${API_BASE_URL}/api/v1/warnings**`);
+		await page.route(`${API_BASE_URL}/api/v1/warnings**`, (route) =>
+			route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(makeNorwayFixture('stale', 'stale')) }),
+		);
+		await page.locator('[data-testid="refresh-warnings-btn"]').click();
+		await page.waitForFunction(
+			() => /stale/i.test(document.querySelector('[data-testid="warnings-coverage-banner"]')?.textContent || ''),
+			undefined,
+			{ timeout: STEP_TIMEOUT },
+		);
+		checks.record(true, 'Near me surfaces stale warning snapshot status cleanly');
 
 		// Jurisdiction split check: monitored place is Oslo (NO), set present physical jurisdiction to Malaysia (MY -> 999 / 112)
 		await page.locator('[data-testid="present-jurisdiction-select"]').selectOption('MY');
@@ -179,19 +221,23 @@ async function main() {
 		checks.record(msDir === 'ltr', 'Malay locale switches back to LTR', msDir);
 		await page.locator('[data-testid="ui-locale-select"]').selectOption('en');
 
-		// Offline notice replay: abort /api/v1/warnings and trigger refresh
+		// Returning cached offline visit: abort /api/v1/warnings and full page reload -> saved place + cached Oslo warnings replay
 		await page.unroute(`${API_BASE_URL}/api/v1/warnings**`);
 		await page.route(`${API_BASE_URL}/api/v1/warnings**`, (route) => route.abort('failed'));
-		await page.locator('[data-testid="refresh-warnings-btn"]').click();
+		await page.reload({ waitUntil: 'domcontentloaded', timeout: STEP_TIMEOUT });
 		await page.locator('[data-testid="offline-cached-banner"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
-		checks.record(true, 'offline cached notice banner replays last stored notices on API failure');
+		const hasOfflineCard = (await page.locator('[data-testid="warning-card-no-e2e-gale-1"]').count()) > 0 || (await page.locator('[data-testid="warnings-coverage-banner"]').count()) > 0;
+		checks.record(hasOfflineCard, 'returning cached offline visit replays last stored notices after page reload');
 
-		// Opt-in subscription flow (sandbox against local Worker or clean fallback)
-		await page.locator('[data-testid="subscription-email-input"]').fill('e2e-resident@example.com');
+		// Opt-in subscription flow (sandbox against local preview Worker) + verify token replay blocked after unsubscribe
+		await page.locator('[data-testid="subscription-email-input"]').fill(`e2e-resident-${Date.now()}@example.com`);
+		const subResPromise = page.waitForResponse((r) => r.url().includes('/api/v1/subscriptions') && r.request().method() === 'POST', { timeout: STEP_TIMEOUT }).catch(() => null);
 		await page.locator('[data-testid="subscription-submit-btn"]').click();
+		const subRes = await subResPromise;
+		const subJson = subRes ? await subRes.json().catch(() => null) : null;
 		await page.locator('[data-testid="subscription-status-banner"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
 		const confirmBtn = page.locator('[data-testid="subscription-confirm-sandbox-btn"]');
-		if ((await confirmBtn.count()) > 0) {
+		if ((await confirmBtn.count()) > 0 && subJson?.sandboxPreviewToken) {
 			await confirmBtn.click();
 			await page.waitForFunction(
 				() => document.querySelector('[data-testid="subscription-status-banner"]')?.textContent?.includes('active'),
@@ -204,7 +250,8 @@ async function main() {
 				undefined,
 				{ timeout: STEP_TIMEOUT },
 			);
-			checks.record(true, 'sandbox double-opt-in subscription create -> confirm -> unsubscribe works');
+			const replayRes = await fetch(`${API_BASE_URL}/api/v1/subscriptions/confirm?token=${encodeURIComponent(subJson.sandboxPreviewToken)}`, { method: 'POST' });
+			checks.record(replayRes.status === 404 || replayRes.status === 409, 'old confirmation token cannot reactivate unsubscribed address', `HTTP ${replayRes.status}`);
 		} else {
 			checks.record(true, 'subscription UI rendered status cleanly');
 		}
@@ -219,6 +266,33 @@ async function main() {
 		checks.record(remainingKeys.saved === null && remainingKeys.jurisdiction === null, 'local data wipe removes saved places & jurisdiction');
 
 		await nearMeCtx.close();
+
+		// Subscription disablement when delivery is unavailable (RESEND_API_KEY missing in prod)
+		const unavailCtx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+		const up = await unavailCtx.newPage();
+		await up.route(`${API_BASE_URL}/api/v1/subscriptions/status`, (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				body: JSON.stringify({
+					available: false,
+					mode: 'unavailable',
+					smsAvailable: false,
+					reason: 'Automated email alert delivery is not configured in this deployment (RESEND_API_KEY missing).',
+				}),
+			}),
+		);
+		await up.route(`${API_BASE_URL}/api/v1/warnings**`, (route) =>
+			route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(makeNorwayFixture('checked_no_warnings', 'ok')) }),
+		);
+		await up.goto(`${FRONTEND_URL}?view=near-me`, { waitUntil: 'domcontentloaded', timeout: STEP_TIMEOUT });
+		await up.locator('[data-testid="manual-coords-input"]').fill('59.9139, 10.7522');
+		await up.locator('[data-testid="apply-coords-btn"]').click();
+		await up.locator('[data-testid="subscription-unavailable-banner"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
+		const emailDisabled = await up.locator('[data-testid="subscription-email-input"]').isDisabled();
+		const submitDisabled = await up.locator('[data-testid="subscription-submit-btn"]').isDisabled();
+		checks.record(emailDisabled && submitDisabled, 'subscription form disables inputs and displays unavailable banner when delivery is disabled');
+		await unavailCtx.close();
 
 		// ------------------------------------------------------------------
 		// PART 2: Explore Events + Archive/Analytics + Sidebar 3-Part Epistemic + .ics + 4x CPU Throttle
@@ -288,7 +362,9 @@ async function main() {
 				'Sidebar clearly distinguishes Predicted Overpass from Confirmed Acquisition',
 			);
 
-			// Download .ics snapshot and verify RFC 5545 validity
+			// Download .ics snapshot and verify RFC 5545 validity + field parity with PassComparisonPanel DOM rows
+			const panelText = await ep.locator('[data-testid="pass-comparison-panel"]').innerText();
+			const passSatellite = (await ep.locator('[data-testid="sidebar"]').getAttribute('data-pass-satellite')) || '';
 			const [download] = await Promise.all([
 				ep.waitForEvent('download', { timeout: 10000 }),
 				ep.locator('[data-testid="export-ics-btn"]').click(),
@@ -297,10 +373,19 @@ async function main() {
 			const icsText = dlPath ? fs.readFileSync(dlPath, 'utf-8') : '';
 			const enc = new TextEncoder();
 			const maxOctets = Math.max(...icsText.split('\r\n').map((l) => enc.encode(l).length));
+			const unfoldedIcs = icsText.replace(/\r\n[ \t]/g, '');
+			const summaryMatch = unfoldedIcs.match(/SUMMARY:\[AegisMap Snapshot\] (.+?) pass \((\d+) deg\)/);
+			const icsSatDisplay = summaryMatch ? summaryMatch[1].replace(/[-_]/g, ' ') : '';
+			const icsPeakDeg = summaryMatch ? summaryMatch[2] : '';
+			const hasDomParity =
+				!!summaryMatch &&
+				panelText.includes(icsSatDisplay) &&
+				panelText.includes(`${icsPeakDeg}° peak`) &&
+				(!passSatellite || unfoldedIcs.includes(passSatellite));
 			checks.record(
-				icsText.includes('BEGIN:VCALENDAR') && icsText.includes('BEGIN:VEVENT') && icsText.includes('SNAPSHOT ONLY') && maxOctets <= 75,
-				'Downloaded .ics satisfies RFC 5545 (VCALENDAR, SNAPSHOT disclaimer, max <=75 octets/line)',
-				`filename=${download.suggestedFilename()} maxOctets=${maxOctets}`,
+				icsText.includes('BEGIN:VCALENDAR') && icsText.includes('BEGIN:VEVENT') && icsText.includes('SNAPSHOT ONLY') && maxOctets <= 75 && hasDomParity,
+				'Downloaded .ics satisfies RFC 5545 and matches PassComparisonPanel satellite/elevation',
+				`filename=${download.suggestedFilename()} maxOctets=${maxOctets} sat=${icsSatDisplay} peak=${icsPeakDeg}° parity=${hasDomParity}`,
 			);
 		} else {
 			checks.record(false, 'could not locate rendered event feature on map');

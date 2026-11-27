@@ -9,7 +9,14 @@ Each release of AegisMap depends on strict contract parity between the Cloudflar
 
 ## Enforceable Gate (in Workflow)
 
-Before building or publishing Pages on `main`, CI calls `GET /` on `VITE_API_BASE_URL`, checks `version` + `commitSha`, and requires `capabilities` to include all 7 items of `API_CAPABILITIES` (`shared/contracts.ts`):
+Before building or publishing Pages on `main`, CI polls `GET /` on `VITE_API_BASE_URL` and verifies:
+- `body.commitSha === GITHUB_SHA` (immutable deployed Worker identity — prevents skipped deploys or stale Workers advertising identical capability strings from passing).
+- `body.services?.d1 === "ready"` (confirming all 6 required D1 tables exist on the bound production database `aegis-map-db`).
+- `capabilities` includes all 7 items of `API_CAPABILITIES` (`shared/contracts.ts`).
+
+CI also executes non-mutating smoke checks on `GET /api/v2/disasters?window=24h`, `GET /api/v2/disasters?window=7d`, `GET /api/v1/warnings?lat=59.9139&lng=10.7522&country=NO`, `GET /api/v1/history?limit=5`, `GET /api/v1/analytics/sources`, and `GET /api/v1/subscriptions/status`.
+
+`ALLOW_SANDBOX_EMAIL` is intentionally enabled only in `vitest.wrangler.jsonc` and `env.preview`. Production omits both `ALLOW_SANDBOX_EMAIL` and `RESEND_API_KEY` unless email sending is explicitly configured, causing `/api/v1/subscriptions/status` and `/api/v1/subscriptions` to report `available: false` / `503 delivery_unavailable` honestly without issuing fake preview tokens.
 
 1. `workers-ai-analyze-v1`: analyze successes carry `source: "workers-ai"`.
 2. `provider-status-v1`: FIRMS coverage windows and `firms_unavailable` 502, `X-Disaster-*` source headers, `X-TLE-*` headers.

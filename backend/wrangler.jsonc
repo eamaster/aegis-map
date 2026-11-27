@@ -36,6 +36,17 @@
 		}
 	],
 	/**
+	 * Production Cloudflare D1 archive & subscriptions database (separate from preview)
+	 */
+	"d1_databases": [
+		{
+			"binding": "AEGIS_DB",
+			"database_name": "aegis-map-db",
+			"database_id": "a09535fa-cd71-467c-ab29-a8f1e7545d5d",
+			"migrations_dir": "migrations"
+		}
+	],
+	/**
 	 * Workers AI binding (native env.AI.run).
 	 * remote: true is required for local wrangler dev to reach Workers AI.
 	 * Usage counts against the account free Neurons allocation even in local dev.
@@ -48,6 +59,8 @@
 	 * Optional server-side model override (must be a supported Workers AI model ID).
 	 * Prefer leaving unset to use the default in src/config.ts.
 	 * Secrets: use .dev.vars for local FIRMS_MAP_KEY; wrangler secret put FIRMS_MAP_KEY for production.
+	 * ALLOW_SANDBOX_EMAIL is intentionally omitted in production so email alerts report unavailable
+	 * unless RESEND_API_KEY is configured.
 	 * CORS_ORIGINS: comma-separated extra browser origins merged with defaults in src/config.ts.
 	 */
 	"vars": {
@@ -79,7 +92,8 @@
 				"remote": true
 			},
 			"vars": {
-				"CORS_ORIGINS": "https://hesam.me,https://www.hesam.me,http://localhost:4173,http://127.0.0.1:4173,http://localhost:5173"
+				"CORS_ORIGINS": "https://hesam.me,https://www.hesam.me,http://localhost:4173,http://127.0.0.1:4173,http://localhost:5173",
+				"ALLOW_SANDBOX_EMAIL": "true"
 			}
 		}
 	}

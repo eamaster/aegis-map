@@ -4,6 +4,7 @@ import type {
 	SourceAnalyticsApiResponse,
 	SubscriptionCreateRequest,
 	SubscriptionResponse,
+	SubscriptionServiceStatus,
 } from '../../../shared/contracts';
 import { apiUrl } from '../config/api';
 
@@ -63,6 +64,19 @@ export async function fetchSourceAnalytics(signal?: AbortSignal): Promise<Source
 		throw new Error(`Source analytics API returned HTTP ${res.status}`);
 	}
 	return (await res.json()) as SourceAnalyticsApiResponse;
+}
+
+export async function fetchSubscriptionStatus(signal?: AbortSignal): Promise<SubscriptionServiceStatus> {
+	const res = await fetch(apiUrl('/api/v1/subscriptions/status'), { signal });
+	if (!res.ok) {
+		return {
+			available: false,
+			mode: 'unavailable',
+			smsAvailable: false,
+			reason: `Subscription status check failed (HTTP ${res.status}).`,
+		};
+	}
+	return (await res.json()) as SubscriptionServiceStatus;
 }
 
 export async function submitSubscription(req: SubscriptionCreateRequest): Promise<SubscriptionResponse> {

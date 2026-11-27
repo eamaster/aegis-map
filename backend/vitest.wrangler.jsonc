@@ -30,6 +30,7 @@
 		"remote": true
 	},
 	"vars": {
-		"CORS_ORIGINS": "https://hesam.me,https://www.hesam.me"
+		"CORS_ORIGINS": "https://hesam.me,https://www.hesam.me",
+		"ALLOW_SANDBOX_EMAIL": "true"
 	}
 }

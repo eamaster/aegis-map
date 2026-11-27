@@ -1,5 +1,6 @@
-import { useState, type FormEvent } from 'react';
-import { Bell, CheckCircle2, Mail, MessageSquareOff, Trash2 } from 'lucide-react';
+import { useEffect, useState, type FormEvent } from 'react';
+import { Bell, BellOff, CheckCircle2, Mail, MessageSquareOff, Trash2 } from 'lucide-react';
+import type { SubscriptionServiceStatus } from '../../../shared/contracts';
 import {
 	getAuthoritiesForCountry,
 	WARNING_AUTHORITY_REGISTRY,
@@ -8,6 +9,7 @@ import {
 import type { SelectedPlace } from '../utils/places';
 import {
 	confirmSubscriptionToken,
+	fetchSubscriptionStatus,
 	submitSubscription,
 	unsubscribeSubscriptionToken,
 } from '../utils/researchClient';
@@ -25,23 +27,42 @@ export default function SubscriptionOptIn({ monitoredPlace }: SubscriptionOptInP
 	const availableAuthorities: readonly WarningAuthoritySpec[] =
 		countryAuthorities.length > 0 ? countryAuthorities : WARNING_AUTHORITY_REGISTRY;
 
+	const [serviceStatus, setServiceStatus] = useState<SubscriptionServiceStatus | null>(null);
 	const [email, setEmail] = useState('');
 	const [selectedSourceId, setSelectedSourceId] = useState<string>(availableAuthorities[0]?.sourceId ?? 'no-metalerts');
 	const [minSeverity, setMinSeverity] = useState<'moderate' | 'severe' | 'extreme'>('moderate');
 	const [submitting, setSubmitting] = useState(false);
 	const [statusMsg, setStatusMsg] = useState<string | null>(null);
 	const [errorMsg, setErrorMsg] = useState<string | null>(null);
-	const [subId, setSubId] = useState<string | null>(null);
 	const [previewToken, setPreviewToken] = useState<string | null>(null);
+	const [unsubscribeToken, setUnsubscribeToken] = useState<string | null>(null);
 	const [subStatus, setSubStatus] = useState<'pending_confirmation' | 'active' | 'unsubscribed' | null>(null);
+
+	useEffect(() => {
+		const controller = new AbortController();
+		const timer = window.setTimeout(async () => {
+			try {
+				const st = await fetchSubscriptionStatus(controller.signal);
+				setServiceStatus(st);
+			} catch {
+				// Leave null on abort/network glitch so submit still surfaces server truth
+			}
+		}, 0);
+		return () => {
+			window.clearTimeout(timer);
+			controller.abort();
+		};
+	}, []);
 
 	const effectiveSourceId = availableAuthorities.some((a) => a.sourceId === selectedSourceId)
 		? selectedSourceId
 		: availableAuthorities[0]?.sourceId ?? 'no-metalerts';
 
+	const deliveryUnavailable = serviceStatus !== null && !serviceStatus.available;
+
 	const handleSubmit = async (e: FormEvent) => {
 		e.preventDefault();
-		if (!monitoredPlace) return;
+		if (!monitoredPlace || deliveryUnavailable) return;
 		setSubmitting(true);
 		setErrorMsg(null);
 		setStatusMsg(null);
@@ -58,9 +79,17 @@ export default function SubscriptionOptIn({ monitoredPlace }: SubscriptionOptInP
 			});
 			if (!res.ok) {
 				setErrorMsg(res.message);
+				if (res.code === 'delivery_unavailable' || res.code === 'db_unavailable') {
+					setServiceStatus({
+						available: false,
+						mode: 'unavailable',
+						smsAvailable: false,
+						reason: res.message,
+					});
+				}
 			} else {
-				setSubId(res.subscriptionId ?? null);
 				setPreviewToken(res.sandboxPreviewToken ?? null);
+				setUnsubscribeToken(res.sandboxUnsubscribeToken ?? null);
 				setSubStatus(res.status ?? 'pending_confirmation');
 				setStatusMsg(res.message);
 			}
@@ -91,11 +120,11 @@ export default function SubscriptionOptIn({ monitoredPlace }: SubscriptionOptInP
 	};
 
 	const handleUnsubscribe = async () => {
-		if (!subId) return;
+		if (!unsubscribeToken) return;
 		setSubmitting(true);
 		setErrorMsg(null);
 		try {
-			const res = await unsubscribeSubscriptionToken(subId);
+			const res = await unsubscribeSubscriptionToken(unsubscribeToken);
 			if (!res.ok) setErrorMsg(res.message);
 			else {
 				setSubStatus(res.status ?? 'unsubscribed');
@@ -120,19 +149,44 @@ export default function SubscriptionOptIn({ monitoredPlace }: SubscriptionOptInP
 		>
 			<div className="flex flex-wrap items-center justify-between gap-2">
 				<h2 id="subscription-optin-heading" className="text-sm font-bold flex items-center gap-2">
-					<Bell size={16} className="text-blue-400" aria-hidden="true" />
+					{deliveryUnavailable ? (
+						<BellOff size={16} className="text-amber-400" aria-hidden="true" />
+					) : (
+						<Bell size={16} className="text-blue-400" aria-hidden="true" />
+					)}
 					<span>Opt-In Warning Alerts (Double Opt-In Email)</span>
 				</h2>
-				<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] border border-slate-600 text-slate-300">
-					<MessageSquareOff size={11} aria-hidden="true" />
-					<span>Regional SMS Deferred</span>
-				</span>
+				<div className="flex flex-wrap items-center gap-1.5">
+					{serviceStatus?.mode === 'sandbox' && (
+						<span
+							data-testid="subscription-sandbox-badge"
+							className="inline-flex items-center px-2 py-0.5 rounded text-[11px] border border-amber-500/40 bg-amber-500/10 text-amber-200"
+						>
+							Sandbox Test Mode
+						</span>
+					)}
+					<span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] border border-slate-600 text-slate-300">
+						<MessageSquareOff size={11} aria-hidden="true" />
+						<span>Regional SMS Deferred</span>
+					</span>
+				</div>
 			</div>
 
-			<p className="text-xs leading-relaxed" style={{ color: ds.text.secondary }}>
-				Receive alerts only for verified warnings from supported official authorities matching your monitored coordinates.
-				Regional SMS delivery is explicitly deferred (<code className="font-mono">501 sms_deferred</code>) until carrier delivery receipts and cost guardrails are enabled.
-			</p>
+			{deliveryUnavailable ? (
+				<div
+					role="status"
+					data-testid="subscription-unavailable-banner"
+					className="rounded-lg p-3 border border-amber-500/40 bg-amber-500/10 text-xs text-amber-200 space-y-1"
+				>
+					<div className="font-bold">Email alert delivery is not enabled on this deployment</div>
+					<p>{serviceStatus?.reason ?? 'No email delivery provider is configured.'}</p>
+				</div>
+			) : (
+				<p className="text-xs leading-relaxed" style={{ color: ds.text.secondary }}>
+					Receive alerts only for verified warnings from supported official authorities matching your monitored coordinates.
+					Regional SMS delivery is explicitly deferred (<code className="font-mono">501 sms_deferred</code>) until carrier delivery receipts and cost guardrails are enabled.
+				</p>
+			)}
 
 			{!monitoredPlace ? (
 				<p className="text-xs" style={{ color: ds.text.tertiary }}>
@@ -145,11 +199,12 @@ export default function SubscriptionOptIn({ monitoredPlace }: SubscriptionOptInP
 						<input
 							type="email"
 							required
+							disabled={deliveryUnavailable || submitting}
 							value={email}
 							onChange={(e) => setEmail(e.target.value)}
 							placeholder="resident@example.com"
 							data-testid="subscription-email-input"
-							className="px-3 py-2 rounded-lg border bg-transparent"
+							className="px-3 py-2 rounded-lg border bg-transparent disabled:opacity-50"
 							style={{ borderColor: ds.surface.border, color: ds.text.primary }}
 						/>
 					</label>
@@ -157,9 +212,10 @@ export default function SubscriptionOptIn({ monitoredPlace }: SubscriptionOptInP
 					<label className="flex flex-col gap-1">
 						<span style={{ color: ds.text.secondary }}>Official Authority</span>
 						<select
+							disabled={deliveryUnavailable || submitting}
 							value={effectiveSourceId}
 							onChange={(e) => setSelectedSourceId(e.target.value)}
-							className="px-3 py-2 rounded-lg border"
+							className="px-3 py-2 rounded-lg border disabled:opacity-50"
 							style={{
 								background: ds.surface.overlaySubtle,
 								borderColor: ds.surface.border,
@@ -178,9 +234,10 @@ export default function SubscriptionOptIn({ monitoredPlace }: SubscriptionOptInP
 						<span style={{ color: ds.text.secondary }}>Minimum Severity</span>
 						<div className="flex gap-2">
 							<select
+								disabled={deliveryUnavailable || submitting}
 								value={minSeverity}
 								onChange={(e) => setMinSeverity(e.target.value as typeof minSeverity)}
-								className="flex-1 px-2.5 py-2 rounded-lg border"
+								className="flex-1 px-2.5 py-2 rounded-lg border disabled:opacity-50"
 								style={{
 									background: ds.surface.overlaySubtle,
 									borderColor: ds.surface.border,
@@ -193,9 +250,9 @@ export default function SubscriptionOptIn({ monitoredPlace }: SubscriptionOptInP
 							</select>
 							<button
 								type="submit"
-								disabled={submitting}
+								disabled={deliveryUnavailable || submitting}
 								data-testid="subscription-submit-btn"
-								className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg font-bold bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-60"
+								className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg font-bold bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50"
 							>
 								<Mail size={13} aria-hidden="true" />
 								<span>Subscribe</span>
@@ -220,7 +277,7 @@ export default function SubscriptionOptIn({ monitoredPlace }: SubscriptionOptInP
 						<span className="font-semibold text-blue-200">
 							Status: <code className="font-mono">{subStatus}</code>
 						</span>
-						{subStatus && subStatus !== 'unsubscribed' && subId && (
+						{subStatus && subStatus !== 'unsubscribed' && unsubscribeToken && (
 							<button
 								type="button"
 								data-testid="subscription-unsub-btn"

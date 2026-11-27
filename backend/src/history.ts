@@ -29,6 +29,31 @@ const USGS_FDSN_EVENT_URL = 'https://earthquake.usgs.gov/fdsnws/event/1/query';
 const EONET_V3_EVENTS_URL = 'https://eonet.gsfc.nasa.gov/api/v3/events';
 const GDACS_MAP_URL = 'https://www.gdacs.org/gdacsapi/api/events/geteventlist/MAP';
 
+const REQUIRED_D1_TABLES = [
+	'disaster_events',
+	'disaster_revisions',
+	'ingestion_checkpoints',
+	'provider_health_runs',
+	'subscriptions',
+	'subscription_deliveries',
+] as const;
+
+export type D1SchemaState = 'ready' | 'schema_missing' | 'unbound';
+
+export async function checkD1SchemaReady(db: D1Database | undefined): Promise<D1SchemaState> {
+	if (!db) return 'unbound';
+	try {
+		const res = await db
+			.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (?, ?, ?, ?, ?, ?)`)
+			.bind(...REQUIRED_D1_TABLES)
+			.all<{ name: string }>();
+		const present = new Set((res.results ?? []).map((r) => r.name));
+		return REQUIRED_D1_TABLES.every((t) => present.has(t)) ? 'ready' : 'schema_missing';
+	} catch {
+		return 'schema_missing';
+	}
+}
+
 function computeRevisionHash(rec: Pick<DisasterRecord, 'title' | 'severity' | 'lat' | 'lng' | 'date'>): string {
 	const str = `${rec.title}|${rec.severity}|${rec.lat.toFixed(4)}|${rec.lng.toFixed(4)}|${rec.date}`;
 	let h = 2166136261;

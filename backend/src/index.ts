@@ -56,12 +56,18 @@ import {
 import { loadMonitoredTles, serializeTles, TLE_SCHEDULED_REFRESH_AFTER_MS } from './satellites';
 import { queryOfficialWarnings } from './warnings/service';
 import { searchSentinel1GrdScenes } from './sarStac';
-import { queryArchivedHistory, querySourceAnalytics, recordLiveDisastersToArchive } from './history';
+import {
+	checkD1SchemaReady,
+	queryArchivedHistory,
+	querySourceAnalytics,
+	recordLiveDisastersToArchive,
+} from './history';
 import {
 	confirmSubscription,
 	createEmailTransport,
 	createSubscription,
 	dispatchVerifiedWarningAlerts,
+	getSubscriptionServiceStatus,
 	unsubscribeSubscription,
 } from './subscriptions';
 import type { SubscriptionCreateRequest } from '../../shared/contracts';
@@ -81,6 +87,8 @@ type Bindings = {
 	RESEND_API_KEY?: string;
 	/** Optional sender address for Resend alerts. */
 	ALERT_FROM_EMAIL?: string;
+	/** Explicit opt-in for isolated test/preview sandbox email transport (never enable in production). */
+	ALLOW_SANDBOX_EMAIL?: string;
 };
 
 /** Metadata headers browsers may read cross-origin. */
@@ -112,12 +120,31 @@ app.use('/*', async (c, next) => {
 	return middleware(c, next);
 });
 
-app.get('/', (c) => {
+function resolveEmailTransport(env: Pick<Bindings, 'RESEND_API_KEY' | 'ALERT_FROM_EMAIL' | 'ALLOW_SANDBOX_EMAIL'>) {
+	return createEmailTransport({
+		resendApiKey: env.RESEND_API_KEY,
+		fromAddress: env.ALERT_FROM_EMAIL,
+		allowSandbox: env.ALLOW_SANDBOX_EMAIL === 'true',
+	});
+}
+
+app.get('/', async (c) => {
+	const d1State = await checkD1SchemaReady(c.env.AEGIS_DB);
+	const transport = resolveEmailTransport(c.env);
+	const capabilities = API_CAPABILITIES.filter((cap) => {
+		if (cap === 'disaster-history-v1' && d1State !== 'ready') return false;
+		return true;
+	});
+
 	return c.json({
 		status: 'AegisMap API Online',
 		version: APP_VERSION,
 		commitSha: c.env.GIT_SHA || 'unknown',
-		capabilities: API_CAPABILITIES,
+		capabilities,
+		services: {
+			d1: d1State,
+			emailDelivery: transport.mode,
+		},
 	});
 });
 
@@ -655,6 +682,14 @@ app.get('/api/v1/analytics/sources', async (c) => {
 });
 
 // Route 8: Subscriptions (opt-in verified warning email alerts; SMS deferred 501)
+app.get('/api/v1/subscriptions/status', async (c) => {
+	const transport = resolveEmailTransport(c.env);
+	const status = await getSubscriptionServiceStatus(c.env.AEGIS_DB, transport);
+	return c.json(status, 200, {
+		'Cache-Control': 'private, no-store',
+	});
+});
+
 app.post('/api/v1/subscriptions', async (c) => {
 	let body: SubscriptionCreateRequest;
 	try {
@@ -664,12 +699,9 @@ app.post('/api/v1/subscriptions', async (c) => {
 			'Cache-Control': 'private, no-store',
 		});
 	}
-	const transport = createEmailTransport({
-		resendApiKey: c.env.RESEND_API_KEY,
-		fromAddress: c.env.ALERT_FROM_EMAIL,
-	});
+	const transport = resolveEmailTransport(c.env);
 	const result = await createSubscription({ db: c.env.AEGIS_DB, req: body, transport });
-	return c.json(result.body, result.status as 200 | 201 | 400 | 501 | 503, {
+	return c.json(result.body, result.status as 200 | 201 | 400 | 501 | 502 | 503, {
 		'Cache-Control': 'private, no-store',
 	});
 });
@@ -685,14 +717,14 @@ app.post('/api/v1/subscriptions/confirm', async (c) => {
 		}
 	}
 	const result = await confirmSubscription(c.env.AEGIS_DB, token);
-	return c.json(result.body, result.status as 200 | 400 | 404 | 503, {
+	return c.json(result.body, result.status as 200 | 400 | 404 | 409 | 503, {
 		'Cache-Control': 'private, no-store',
 	});
 });
 
 app.get('/api/v1/subscriptions/confirm', async (c) => {
 	const result = await confirmSubscription(c.env.AEGIS_DB, c.req.query('token') ?? '');
-	return c.json(result.body, result.status as 200 | 400 | 404 | 503, {
+	return c.json(result.body, result.status as 200 | 400 | 404 | 409 | 503, {
 		'Cache-Control': 'private, no-store',
 	});
 });
@@ -713,6 +745,13 @@ app.post('/api/v1/subscriptions/unsubscribe', async (c) => {
 	});
 });
 
+app.get('/api/v1/subscriptions/unsubscribe', async (c) => {
+	const result = await unsubscribeSubscription(c.env.AEGIS_DB, c.req.query('token') ?? '');
+	return c.json(result.body, result.status as 200 | 400 | 404 | 503, {
+		'Cache-Control': 'private, no-store',
+	});
+});
+
 /** Cron Trigger: refresh orbital elements outside user requests (same cache policy). */
 export async function refreshTlesScheduled(env: Pick<Bindings, 'AEGIS_CACHE'>): Promise<void> {
 	const result = await loadMonitoredTles(env.AEGIS_CACHE, { refreshAfterMs: TLE_SCHEDULED_REFRESH_AFTER_MS });
@@ -723,13 +762,11 @@ export async function refreshTlesScheduled(env: Pick<Bindings, 'AEGIS_CACHE'>): 
 
 /** Cron Trigger helper: evaluate active verified warnings for confirmed opt-in subscribers. */
 export async function dispatchSubscriptionsScheduled(
-	env: Pick<Bindings, 'AEGIS_DB' | 'AEGIS_CACHE' | 'RESEND_API_KEY' | 'ALERT_FROM_EMAIL'>,
+	env: Pick<Bindings, 'AEGIS_DB' | 'AEGIS_CACHE' | 'RESEND_API_KEY' | 'ALERT_FROM_EMAIL' | 'ALLOW_SANDBOX_EMAIL'>,
 ): Promise<void> {
 	if (!env.AEGIS_DB) return;
-	const transport = createEmailTransport({
-		resendApiKey: env.RESEND_API_KEY,
-		fromAddress: env.ALERT_FROM_EMAIL,
-	});
+	const transport = resolveEmailTransport(env);
+	if (transport.mode === 'disabled') return;
 	const summary = await dispatchVerifiedWarningAlerts({
 		db: env.AEGIS_DB,
 		kv: env.AEGIS_CACHE,

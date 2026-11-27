@@ -238,7 +238,7 @@ export type WarningCoverageStatus =
 	| 'source_unavailable'
 	| 'unsupported_jurisdiction';
 
-export type WarningSourceHealthStatus = 'ok' | 'stale' | 'unavailable' | 'not_modified' | 'unsupported';
+export type WarningSourceHealthStatus = 'ok' | 'partial' | 'stale' | 'unavailable' | 'not_modified' | 'unsupported';
 
 export type WarningLifecycleState = 'active' | 'upcoming' | 'expired' | 'cancelled' | 'superseded';
 
@@ -280,6 +280,7 @@ export interface OfficialWarningItem {
 	translations: WarningLocalizedBlock[];
 	bulletinUrl: string | null;
 	attribution: string;
+	references?: string[];
 }
 
 export interface WarningSourceReport {
@@ -443,8 +444,16 @@ export interface SubscriptionResponse {
 	ok: boolean;
 	subscriptionId?: string;
 	status?: 'pending_confirmation' | 'active' | 'unsubscribed';
-	transportMode?: 'sandbox' | 'resend';
+	transportMode?: 'sandbox' | 'resend' | 'disabled';
 	sandboxPreviewToken?: string;
+	sandboxUnsubscribeToken?: string;
 	message: string;
 	code?: string;
+}
+
+export interface SubscriptionServiceStatus {
+	available: boolean;
+	mode: 'resend' | 'sandbox' | 'unavailable';
+	smsAvailable: false;
+	reason?: string;
 }

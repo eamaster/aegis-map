@@ -367,12 +367,20 @@ export interface ResolvedCapAlert {
 	missingExpiry: boolean;
 	clockSkewFlag: boolean;
 	mergedLanguages: WarningLocalizedBlock[];
+	/** Transitive closure of referenced CAP identifiers (for superseding Update/Cancel chains). */
+	referencedIdentifiers: string[];
+	supersededByIdentifier: string | null;
+}
+
+function areaHasGeometry(area: CapArea): boolean {
+	return area.polygons.length > 0 || area.circles.length > 0 || area.geocodes.length > 0;
 }
 
 /**
  * Resolve CAP lifecycle across a batch of parsed alerts:
  * - Deduplicates mirrored alerts by `(sender, identifier)` or `identifier` + merges language blocks.
  * - Supersedes/cancels earlier alerts referenced by newer `Update` or `Cancel` messages (even if arrived out of order).
+ * - Computes transitive CAP reference closures and inherits parent areas when Update/Cancel omits geometry.
  * - Flags missing `<expires>`, future `<sent>` clock skew, and `upcoming` vs `active` vs `expired`.
  */
 export function resolveCapLifecycle(
@@ -389,11 +397,19 @@ export function resolveCapLifecycle(
 		if (!existing) {
 			deduped.set(key, {
 				...alert,
-				infos: [...alert.infos],
+				infos: alert.infos.map((info) => ({
+					...info,
+					areas: info.areas.map((a) => ({
+						...a,
+						polygons: [...a.polygons],
+						circles: [...a.circles],
+						geocodes: [...a.geocodes],
+					})),
+				})),
 				references: [...alert.references],
 			});
 		} else {
-			// Merge distinct language info blocks from mirrored feeds
+			// Merge distinct language info blocks & any references from mirrored feeds
 			const seenLangs = new Set(existing.infos.map((i) => i.language.toLowerCase()));
 			for (const info of alert.infos) {
 				if (!seenLangs.has(info.language.toLowerCase())) {
@@ -401,35 +417,110 @@ export function resolveCapLifecycle(
 					seenLangs.add(info.language.toLowerCase());
 				}
 			}
-		}
-	}
-
-	// Track which identifiers have been superseded or cancelled by a newer message
-	const supersededBy = new Map<string, { msgType: 'Update' | 'Cancel'; sentMs: number }>();
-	for (const alert of deduped.values()) {
-		if (alert.msgType === 'Update' || alert.msgType === 'Cancel') {
 			for (const ref of alert.references) {
-				const prev = supersededBy.get(ref.identifier);
-				if (!prev || alert.sentMs >= prev.sentMs) {
-					supersededBy.set(ref.identifier, { msgType: alert.msgType, sentMs: alert.sentMs });
+				if (!existing.references.some((r) => r.identifier === ref.identifier)) {
+					existing.references.push(ref);
 				}
 			}
 		}
 	}
 
+	// Build transitive reference closure & track superseding/cancelling replacements
+	const supersededBy = new Map<string, { msgType: 'Update' | 'Cancel'; sentMs: number; byIdentifier: string }>();
+	for (const alert of deduped.values()) {
+		if (alert.msgType === 'Update' || alert.msgType === 'Cancel') {
+			for (const ref of alert.references) {
+				const prev = supersededBy.get(ref.identifier);
+				if (!prev || alert.sentMs >= prev.sentMs) {
+					supersededBy.set(ref.identifier, {
+						msgType: alert.msgType,
+						sentMs: alert.sentMs,
+						byIdentifier: alert.identifier,
+					});
+				}
+			}
+		}
+	}
+
+	const closureCache = new Map<string, string[]>();
+	const collectTransitiveRefs = (id: string, visiting = new Set<string>()): string[] => {
+		const cached = closureCache.get(id);
+		if (cached) return cached;
+		if (visiting.has(id)) return [];
+		visiting.add(id);
+		const node = deduped.get(id);
+		const out: string[] = [];
+		const seen = new Set<string>();
+		if (node) {
+			for (const ref of node.references) {
+				if (ref.identifier && ref.identifier !== id && !seen.has(ref.identifier)) {
+					seen.add(ref.identifier);
+					out.push(ref.identifier);
+				}
+				for (const subId of collectTransitiveRefs(ref.identifier, visiting)) {
+					if (subId !== id && !seen.has(subId)) {
+						seen.add(subId);
+						out.push(subId);
+					}
+				}
+			}
+		}
+		visiting.delete(id);
+		closureCache.set(id, out);
+		return out;
+	};
+
 	const resolved: ResolvedCapAlert[] = [];
 	for (const alert of deduped.values()) {
+		const referencedIdentifiers = collectTransitiveRefs(alert.identifier);
 		const sup = supersededBy.get(alert.identifier);
+
+		// Inherit parent areas if an Update/Cancel omitted geometry
+		const primaryInfo = alert.infos[0];
+		const hasAnyGeo = primaryInfo?.areas.some(areaHasGeometry) ?? false;
+		if (!hasAnyGeo && referencedIdentifiers.length > 0) {
+			for (const refId of referencedIdentifiers) {
+				const parentInfo = deduped.get(refId)?.infos[0];
+				if (parentInfo && parentInfo.areas.some(areaHasGeometry)) {
+					if (primaryInfo) {
+						if (primaryInfo.areas.length === 0) {
+							primaryInfo.areas = parentInfo.areas.map((a) => ({
+								...a,
+								polygons: [...a.polygons],
+								circles: [...a.circles],
+								geocodes: [...a.geocodes],
+							}));
+						} else {
+							primaryInfo.areas.push(...parentInfo.areas);
+						}
+					} else {
+						alert.infos.push({
+							...parentInfo,
+							areas: parentInfo.areas.map((a) => ({
+								...a,
+								polygons: [...a.polygons],
+								circles: [...a.circles],
+								geocodes: [...a.geocodes],
+							})),
+						});
+					}
+					break;
+				}
+			}
+		}
+
 		let lifecycleState: WarningLifecycleState;
+		let supersededByIdentifier: string | null = null;
 		if (alert.msgType === 'Cancel') {
 			lifecycleState = 'cancelled';
 		} else if (sup && sup.sentMs >= alert.sentMs) {
 			lifecycleState = sup.msgType === 'Cancel' ? 'cancelled' : 'superseded';
+			supersededByIdentifier = sup.byIdentifier;
 		} else {
-			const primaryInfo = alert.infos[0];
-			const expiresMs = primaryInfo?.expires ? Date.parse(primaryInfo.expires) : NaN;
-			const onsetMs = primaryInfo?.onset ? Date.parse(primaryInfo.onset) : NaN;
-			const missingExpiry = !primaryInfo?.expires;
+			const effInfo = alert.infos[0];
+			const expiresMs = effInfo?.expires ? Date.parse(effInfo.expires) : NaN;
+			const onsetMs = effInfo?.onset ? Date.parse(effInfo.onset) : NaN;
+			const missingExpiry = !effInfo?.expires;
 
 			if (Number.isFinite(expiresMs) && expiresMs <= nowMs) {
 				lifecycleState = 'expired';
@@ -442,8 +533,8 @@ export function resolveCapLifecycle(
 			}
 		}
 
-		const primaryInfo = alert.infos[0];
-		const missingExpiry = !primaryInfo?.expires;
+		const finalInfo = alert.infos[0];
+		const missingExpiry = !finalInfo?.expires;
 		const clockSkewFlag = alert.sentMs > nowMs + CLOCK_SKEW_TOLERANCE_MS;
 
 		const mergedLanguages: WarningLocalizedBlock[] = alert.infos.map((info) => ({
@@ -462,6 +553,8 @@ export function resolveCapLifecycle(
 			missingExpiry,
 			clockSkewFlag,
 			mergedLanguages,
+			referencedIdentifiers,
+			supersededByIdentifier,
 		});
 	}
 

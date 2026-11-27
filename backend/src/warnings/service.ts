@@ -1,5 +1,4 @@
 import type {
-	OfficialWarningItem,
 	WarningCoverageStatus,
 	WarningsApiResponse,
 	WarningSourceReport,
@@ -7,7 +6,7 @@ import type {
 import { inferNearestGazetteerCountry } from '../../../shared/gazetteer';
 import { getAuthoritiesForCountry } from '../../../shared/warningRegistry';
 import {
-	matchStoredRecordToPoint,
+	evaluateAuthorityRecordsForPoint,
 	refreshOrLoadAuthoritySnapshot,
 	type FetchLike,
 } from './adapters';
@@ -53,11 +52,8 @@ export async function queryOfficialWarnings(options: {
 				now,
 				forceRefresh: options.forceRefresh,
 			});
-			const matched: OfficialWarningItem[] = [];
-			for (const rec of snap.doc.records) {
-				const m = matchStoredRecordToPoint(rec, options.lat, options.lng, now);
-				if (m) matched.push(m);
-			}
+			const evaluated = evaluateAuthorityRecordsForPoint(snap.doc, options.lat, options.lng, now);
+			const matched = evaluated.visibleWarnings;
 			const report: WarningSourceReport = {
 				sourceId: spec.sourceId,
 				authorityName: spec.authorityName,
@@ -65,12 +61,16 @@ export async function queryOfficialWarnings(options: {
 				status: snap.status,
 				checkedAt: snap.doc.checkedAt,
 				lastSuccessAt: snap.doc.lastSuccessAt,
-				activeAlertCount: snap.doc.records.length,
+				activeAlertCount: evaluated.activeRecordCount,
 				matchedAlertCount: matched.length,
 				unsupportedHazards: spec.unsupportedHazards,
 				attribution: spec.attribution,
 				termsUrl: spec.termsUrl,
-				...(snap.doc.lastError ? { errorReason: snap.doc.lastError } : {}),
+				...(snap.doc.lastError
+					? { errorReason: snap.doc.lastError }
+					: snap.doc.partialReasons && snap.doc.partialReasons.length > 0
+						? { errorReason: `Partial feed (${snap.doc.partialReasons.join(', ')})` }
+						: {}),
 			};
 			return { report, matched };
 		}),
@@ -80,24 +80,29 @@ export async function queryOfficialWarnings(options: {
 	const warnings = results.flatMap((r) => r.matched);
 
 	const hasOk = sources.some((s) => s.status === 'ok' || s.status === 'not_modified');
+	const hasPartial = sources.some((s) => s.status === 'partial');
 	const hasStale = sources.some((s) => s.status === 'stale');
 	const hasUnavailable = sources.some((s) => s.status === 'unavailable');
 
 	let coverageStatus: WarningCoverageStatus;
 	let coverageExplanation: string;
 
-	if (warnings.length > 0 && !hasUnavailable && !hasStale) {
-		coverageStatus = 'active_warnings';
-		coverageExplanation = `${warnings.length} active official warning(s) match this area.`;
-	} else if (warnings.length === 0 && hasOk && !hasUnavailable && !hasStale) {
-		coverageStatus = 'checked_no_warnings';
-		coverageExplanation = `Checked ${sources.map((s) => s.authorityName).join(', ')} successfully; no active warnings match this location.`;
-	} else if ((hasOk || hasStale) && hasUnavailable) {
+	if (hasPartial || ((hasOk || hasStale) && hasUnavailable)) {
 		coverageStatus = 'partial_coverage';
-		coverageExplanation = 'At least one authority source is temporarily unavailable; displayed coverage is partial.';
-	} else if (hasStale) {
+		coverageExplanation =
+			'At least one authority feed or detail item was partially read or temporarily unavailable; missing items are not treated as an all-clear.';
+	} else if (hasStale && warnings.length === 0) {
 		coverageStatus = 'stale';
 		coverageExplanation = 'Upstream warning feed is temporarily unreachable; showing last successfully checked snapshot.';
+	} else if (hasStale && warnings.length > 0) {
+		coverageStatus = 'stale';
+		coverageExplanation = `${warnings.length} warning(s) from last successfully checked snapshot (upstream temporarily unreachable).`;
+	} else if (warnings.length > 0 && !hasUnavailable) {
+		coverageStatus = 'active_warnings';
+		coverageExplanation = `${warnings.length} active official warning(s) match this area.`;
+	} else if (warnings.length === 0 && hasOk && !hasUnavailable) {
+		coverageStatus = 'checked_no_warnings';
+		coverageExplanation = `Checked ${sources.map((s) => s.authorityName).join(', ')} successfully; no active warnings match this location.`;
 	} else {
 		coverageStatus = 'source_unavailable';
 		coverageExplanation = 'Configured official warning source(s) could not be reached. Do not assume an all-clear.';

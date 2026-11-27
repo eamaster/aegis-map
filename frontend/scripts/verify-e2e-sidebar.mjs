@@ -322,8 +322,23 @@ async function runSuccess(browser) {
         // Imagery: fire view and false color must request exactly the labelled product/date.
         for (const tab of ['fire', 'falsecolor']) {
             const gibsBase = expectResponse((r) => r.url().startsWith('https://gibs.earthdata.nasa.gov/') && !r.url().includes('Thermal_Anomalies'), `GIBS ${tab}`);
-            const gibsOverlay = tab === 'fire' ? expectResponse((r) => r.url().startsWith('https://gibs.earthdata.nasa.gov/') && r.url().includes('Thermal_Anomalies'), 'GIBS thermal overlay') : null;
-            gibsOverlay?.catch(() => {});
+            let capturedOverlayReqUrl = null;
+            const onOverlayReq = (req) => {
+                if (req.url().startsWith('https://gibs.earthdata.nasa.gov/') && req.url().includes('Thermal_Anomalies')) {
+                    capturedOverlayReqUrl = req.url();
+                }
+            };
+            if (tab === 'fire') page.on('request', onOverlayReq);
+            const gibsOverlayOutcome = tab === 'fire'
+                ? Promise.race([
+                      expectResponse((r) => r.url().startsWith('https://gibs.earthdata.nasa.gov/') && r.url().includes('Thermal_Anomalies'), 'GIBS thermal overlay')
+                          .then((res) => ({ kind: 'response', res })),
+                      page.waitForEvent('requestfailed', {
+                          predicate: (req) => req.url().startsWith('https://gibs.earthdata.nasa.gov/') && req.url().includes('Thermal_Anomalies'),
+                          timeout: STEP_TIMEOUT,
+                      }).then((req) => ({ kind: 'failed', failure: req.failure()?.errorText || 'requestfailed', url: req.url() })),
+                  ]).catch((err) => ({ kind: 'timeout', error: err instanceof Error ? err.message : String(err) }))
+                : null;
             await page.locator(`[data-testid="imagery-tab-${tab}"]`).click();
             const gibs = await gibsBase;
             const gu = new URL(gibs.url());
@@ -342,18 +357,68 @@ async function runSuccess(browser) {
             const limitationShown = (await page.locator('[data-testid="imagery-limitation"]').count()) > 0;
             checks.record(!!limitation === limitationShown, `${tab} bbox limitation notice matches spec`, limitation || 'none');
             if (tab === 'fire') {
-                const overlay = await gibsOverlay;
-                const ou = new URL(overlay.url());
+                const outcome = await gibsOverlayOutcome;
+                page.off('request', onOverlayReq);
                 const overlayProduct = await imagery.getAttribute('data-imagery-overlay-product');
                 const overlayDate = await imagery.getAttribute('data-imagery-overlay-date');
                 const overlayStatus = await waitForAttr(page, '[data-testid="satellite-imagery"]', 'data-imagery-overlay-status', ['loaded', 'error'], 'thermal overlay');
-                const overlayBody = await overlay.body().catch(() => Buffer.alloc(0));
-                const isPng = overlayBody.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
-                const overlayType = overlay.headers()['content-type'] ?? '';
-                checks.record(ou.searchParams.get('LAYERS') === overlayProduct && ou.searchParams.get('TIME') === overlayDate && ou.searchParams.get('FORMAT') === 'image/png' && ou.searchParams.get('TRANSPARENT') === 'true', 'overlay request matches labelled product/date as transparent PNG', `${overlayProduct} ${overlayDate}`);
-                checks.record(overlay.status() === 200 && overlayType === 'image/png' && isPng, 'overlay response is a PNG image', `HTTP ${overlay.status()} ${overlayType} ${overlayBody.length} bytes signature=${isPng}`);
-                checks.record(overlayStatus === 'loaded', 'overlay decoded and shown in UI', overlayStatus);
-                evidence.imagery_fire.overlay = { product: overlayProduct, date: overlayDate, http: overlay.status(), contentType: overlayType, bytes: overlayBody.length, ui: overlayStatus };
+                const reqUrl = outcome?.kind === 'response' ? outcome.res.url() : (outcome?.url || capturedOverlayReqUrl);
+                if (reqUrl) {
+                    const ou = new URL(reqUrl);
+                    checks.record(
+                        ou.searchParams.get('LAYERS') === overlayProduct && ou.searchParams.get('TIME') === overlayDate && ou.searchParams.get('FORMAT') === 'image/png' && ou.searchParams.get('TRANSPARENT') === 'true',
+                        'overlay request matches labelled product/date as transparent PNG',
+                        `${overlayProduct} ${overlayDate}`,
+                    );
+                } else {
+                    checks.record(false, 'overlay request captured', 'no Thermal_Anomalies request observed');
+                }
+
+                // Separate deterministic app UI handling from live GIBS upstream availability
+                if (outcome?.kind === 'response') {
+                    const overlayBody = await outcome.res.body().catch(() => Buffer.alloc(0));
+                    const isPng = overlayBody.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+                    const overlayType = outcome.res.headers()['content-type'] ?? '';
+                    if (outcome.res.status() === 200 && overlayType.startsWith('image/') && isPng) {
+                        checks.record(overlayStatus === 'loaded', 'live overlay PNG decoded and shown in UI', `HTTP 200 ${overlayType} ${overlayBody.length} bytes ui=${overlayStatus}`);
+                        evidence.imagery_fire.overlay = { product: overlayProduct, date: overlayDate, upstream: 'ok', http: outcome.res.status(), contentType: overlayType, bytes: overlayBody.length, ui: overlayStatus };
+                    } else {
+                        const fireCaption = (await page.locator('[data-testid="imagery-caption"]').textContent()) ?? '';
+                        const reportedFailure = overlayStatus === 'error' && /Overlay for \d{4}-\d{2}-\d{2} failed to load/.test(fireCaption);
+                        checks.record(reportedFailure, 'live upstream GIBS non-image error surfaced cleanly in UI', `HTTP ${outcome.res.status()} ${overlayType} ui=${overlayStatus}`);
+                        evidence.imagery_fire.overlay = { product: overlayProduct, date: overlayDate, upstream: 'degraded', http: outcome.res.status(), contentType: overlayType, ui: overlayStatus };
+                    }
+                } else {
+                    // Check direct HTTP response from live GIBS to confirm whether upstream returned ServiceExceptionReport XML (ORB blocked by Chromium)
+                    let directStatus = null;
+                    let directType = '';
+                    let directSnippet = '';
+                    if (reqUrl) {
+                        const direct = await fetch(reqUrl).catch(() => null);
+                        if (direct) {
+                            directStatus = direct.status;
+                            directType = direct.headers.get('content-type') || '';
+                            directSnippet = (await direct.text().catch(() => '')).slice(0, 180);
+                        }
+                    }
+                    const isUpstreamXmlException = directType.includes('xml') || directSnippet.includes('ServiceExceptionReport') || (directStatus !== null && directStatus >= 400);
+                    const fireCaption = (await page.locator('[data-testid="imagery-caption"]').textContent()) ?? '';
+                    const uiReportedError = overlayStatus === 'error' && /Overlay for \d{4}-\d{2}-\d{2} failed to load/.test(fireCaption);
+                    checks.record(
+                        isUpstreamXmlException && uiReportedError,
+                        'live GIBS upstream error isolated and surfaced in UI (non-image upstream blocked by ORB)',
+                        `upstream HTTP ${directStatus} ${directType} (${outcome?.failure || outcome?.kind}); ui=${overlayStatus}`,
+                    );
+                    evidence.imagery_fire.overlay = {
+                        product: overlayProduct,
+                        date: overlayDate,
+                        upstream: isUpstreamXmlException ? 'upstream_service_exception' : outcome?.kind,
+                        http: directStatus,
+                        contentType: directType,
+                        snippet: directSnippet.replace(/\s+/g, ' ').trim(),
+                        ui: overlayStatus,
+                    };
+                }
                 const markers = Number(await imagery.getAttribute('data-imagery-markers'));
                 const total = Number(await imagery.getAttribute('data-firms-total'));
                 checks.record(Number.isInteger(markers) && markers >= 0 && markers <= total, 'drawn markers do not exceed FIRMS detections', `${markers}/${total}`);
@@ -427,10 +492,16 @@ async function runFailure(browser) {
                 }),
             }),
         );
-        // Fire base passes through; its overlay is an undecodable "PNG"; every other GIBS image fails.
+        // Fire base passes through; its overlay returns deterministic GIBS ServiceExceptionReport XML (blocked by ORB); every other GIBS image fails.
         await page.route('https://gibs.earthdata.nasa.gov/**', (route) => {
             const url = route.request().url();
-            if (url.includes('Thermal_Anomalies')) return route.fulfill({ status: 200, contentType: 'image/png', body: 'not a png' });
+            if (url.includes('Thermal_Anomalies')) {
+                return route.fulfill({
+                    status: 200,
+                    contentType: 'text/xml; charset=UTF-8',
+                    body: '<?xml version="1.0" encoding="UTF-8"?><ServiceExceptionReport version="1.1.1"><ServiceException>msShapefileOpen(): Fixture simulated GIBS shapefile error.</ServiceException></ServiceExceptionReport>',
+                });
+            }
             if (url.includes('MODIS_Aqua_CorrectedReflectance_TrueColor')) return route.continue();
             return route.abort('failed');
         });

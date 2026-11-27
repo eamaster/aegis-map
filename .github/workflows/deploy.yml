@@ -41,7 +41,7 @@ jobs:
       - name: Test backend
         run: cd backend && npm test
 
-      - name: Deploy Worker to Cloudflare
+      - name: Apply D1 Migrations & Deploy Worker to Cloudflare
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -52,10 +52,12 @@ jobs:
           [ -z "${CLOUDFLARE_API_TOKEN:-}" ] && missing+=("CLOUDFLARE_API_TOKEN")
           [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ] && missing+=("CLOUDFLARE_ACCOUNT_ID")
           if [ "${#missing[@]}" -gt 0 ]; then
-            echo "::warning::Missing GitHub Actions secrets for automated Worker deploy (${missing[*]}). Configure them under Settings -> Secrets and variables -> Actions. Skipping wrangler deploy in CI; build-frontend will verify the live Worker contract and smoke checks."
-            exit 0
+            echo "::error::Missing required Cloudflare secrets for production Worker deploy (${missing[*]}). Refusing to skip backend deploy on main push."
+            exit 1
           fi
-          cd backend && npx wrangler deploy --var GIT_SHA:${GITHUB_SHA}
+          cd backend
+          npx wrangler d1 migrations apply AEGIS_DB --remote
+          npx wrangler deploy --var "GIT_SHA:${GITHUB_SHA}"
 
   build-frontend:
     name: Lint, Test & Build Frontend
@@ -81,11 +83,12 @@ jobs:
       - name: Test frontend
         run: cd frontend && npm test
 
-      # Coordinated release gate: verify backend contract and smoke check v2 & v1 endpoints on push
-      - name: Verify production backend API contract & smoke check
+      # Coordinated release gate: verify immutable Worker SHA, D1 schema readiness, capabilities, and smoke checks on push
+      - name: Verify production backend identity, D1 readiness & smoke checks
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
         env:
           VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+          GITHUB_SHA_EXPECTED: ${{ github.sha }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -94,29 +97,49 @@ jobs:
             exit 1
           fi
           BASE="${VITE_API_BASE_URL%/}"
-          echo "Checking backend health at ${BASE}/"
-          BODY=$(curl -fsS --max-time 30 "${BASE}/")
-          echo "$BODY"
-          node -e '
-            const required = [
-              "workers-ai-analyze-v1",
-              "provider-status-v1",
-              "firms-global-v2",
-              "official-warnings-v1",
-              "sar-stac-v1",
-              "disaster-history-v1",
-              "warning-subscriptions-v1",
-            ];
-            const body = JSON.parse(process.argv[1]);
-            const v = String(body.version || "");
-            const caps = Array.isArray(body.capabilities) ? body.capabilities : [];
-            const missing = required.filter((c) => !caps.includes(c));
-            if (missing.length > 0) {
-              console.error("Backend", v || "(no version)", "lacks capabilities required by this frontend:", missing.join(", "));
-              process.exit(1);
-            }
-            console.log("Backend contract gate passed:", v, "sha=" + (body.commitSha || "unknown"), caps.join(", "));
-          ' "$BODY"
+          echo "Checking backend identity & capabilities at ${BASE}/ (expected SHA ${GITHUB_SHA_EXPECTED})"
+
+          PASSED=0
+          for ATTEMPT in 1 2 3 4 5 6 7 8; do
+            BODY=$(curl -fsS --max-time 30 "${BASE}/" || true)
+            if [ -n "$BODY" ] && node -e '
+              const expectedSha = process.env.GITHUB_SHA_EXPECTED;
+              const required = [
+                "workers-ai-analyze-v1",
+                "provider-status-v1",
+                "firms-global-v2",
+                "official-warnings-v1",
+                "sar-stac-v1",
+                "disaster-history-v1",
+                "warning-subscriptions-v1",
+              ];
+              const body = JSON.parse(process.argv[1]);
+              if (body.commitSha !== expectedSha) {
+                console.error("Attempt mismatch: deployed commitSha=", body.commitSha, "expected=", expectedSha);
+                process.exit(1);
+              }
+              if (body.services?.d1 !== "ready") {
+                console.error("Attempt failed: services.d1=", body.services?.d1);
+                process.exit(1);
+              }
+              const caps = Array.isArray(body.capabilities) ? body.capabilities : [];
+              const missing = required.filter((c) => !caps.includes(c));
+              if (missing.length > 0) {
+                console.error("Missing required capabilities:", missing.join(", "));
+                process.exit(1);
+              }
+              console.log("Verified Worker identity:", body.version, "sha=" + body.commitSha, "d1=" + body.services.d1, "emailDelivery=" + body.services.emailDelivery);
+            ' "$BODY"; then
+              PASSED=1
+              break
+            fi
+            echo "Waiting for Worker edge propagation (attempt ${ATTEMPT}/8)..."
+            sleep 3
+          done
+          if [ "$PASSED" != "1" ]; then
+            echo "::error::Production Worker identity / D1 readiness / capability gate failed for commit ${GITHUB_SHA_EXPECTED}"
+            exit 1
+          fi
 
           NEEDS_INGEST=0
           for WIN in 24h 7d; do
@@ -155,6 +178,29 @@ jobs:
             }
             console.log("Verified /api/v1/warnings:", w.coverageStatus, "sources=" + w.sources.map((s) => s.sourceId + ":" + s.status).join(","));
           ' "$WARN_BODY"
+
+          echo "Running non-mutating D1-backed smoke checks (/api/v1/history, /api/v1/analytics/sources, /api/v1/subscriptions/status)..."
+          HIST_BODY=$(curl -fsS --max-time 30 "${BASE}/api/v1/history?limit=5")
+          ANALYTICS_BODY=$(curl -fsS --max-time 30 "${BASE}/api/v1/analytics/sources")
+          SUB_STATUS_BODY=$(curl -fsS --max-time 30 "${BASE}/api/v1/subscriptions/status")
+          node -e '
+            const hist = JSON.parse(process.argv[1]);
+            const analytics = JSON.parse(process.argv[2]);
+            const subStatus = JSON.parse(process.argv[3]);
+            if (!hist.storageAvailable || !Array.isArray(hist.events)) {
+              console.error("D1 history check failed:", hist);
+              process.exit(1);
+            }
+            if (!analytics.storageAvailable || !Array.isArray(analytics.providers)) {
+              console.error("D1 analytics check failed:", analytics);
+              process.exit(1);
+            }
+            if (typeof subStatus.available !== "boolean" || subStatus.smsAvailable !== false) {
+              console.error("Subscription status check failed:", subStatus);
+              process.exit(1);
+            }
+            console.log("Verified D1 endpoints: historyEvents=" + hist.events.length, "analyticsProviders=" + analytics.providers.length, "emailDeliveryMode=" + subStatus.mode);
+          ' "$HIST_BODY" "$ANALYTICS_BODY" "$SUB_STATUS_BODY"
 
           if [ "$NEEDS_INGEST" = "1" ]; then
             echo "No FIRMS snapshot present for at least one window; triggering firms-ingest.yml..."

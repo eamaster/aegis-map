@@ -12,8 +12,10 @@ import {
 	createEmailTransport,
 	createSubscription,
 	dispatchVerifiedWarningAlerts,
+	getSubscriptionServiceStatus,
 	unsubscribeSubscription,
 } from '../src/subscriptions';
+import { queryOfficialWarnings } from '../src/warnings/service';
 import { EONET_QUERIES, USGS_URL } from '../src/disasters';
 import { callWorker, memoryKv, withFetch } from './helpers';
 
@@ -412,12 +414,14 @@ describe('Subscriptions & Durable Alert Outbox (/api/v1/subscriptions*)', () => 
 			status: string;
 			transportMode: string;
 			sandboxPreviewToken: string;
+			sandboxUnsubscribeToken: string;
 			subscriptionId: string;
 		};
 		expect(created.ok).toBe(true);
 		expect(created.status).toBe('pending_confirmation');
 		expect(created.transportMode).toBe('sandbox');
 		expect(created.sandboxPreviewToken).toBeTruthy();
+		expect(created.sandboxUnsubscribeToken).toBeTruthy();
 
 		const confirmRes = await SELF.fetch(
 			`http://example.com/api/v1/subscriptions/confirm?token=${encodeURIComponent(created.sandboxPreviewToken)}`,
@@ -427,11 +431,11 @@ describe('Subscriptions & Durable Alert Outbox (/api/v1/subscriptions*)', () => 
 		expect(await confirmRes.json()).toMatchObject({ ok: true, status: 'active' });
 
 		// 3. Dispatch against mocked MET Norway active alert for Oslo
-		const delivered: Array<{ subject: string; idempotencyKey: string }> = [];
+		const delivered: Array<{ to: string; subject: string; text: string; idempotencyKey: string }> = [];
 		const spyTransport = {
 			mode: 'sandbox' as const,
 			async send(msg: { to: string; subject: string; text: string; idempotencyKey: string }) {
-				delivered.push({ subject: msg.subject, idempotencyKey: msg.idempotencyKey });
+				delivered.push({ to: msg.to, subject: msg.subject, text: msg.text, idempotencyKey: msg.idempotencyKey });
 				return { providerMessageId: `mock-${delivered.length}` };
 			},
 		};
@@ -469,6 +473,7 @@ describe('Subscriptions & Durable Alert Outbox (/api/v1/subscriptions*)', () => 
 		});
 		expect(firstDispatch.sent).toBe(1);
 		expect(delivered).toHaveLength(1);
+		expect(delivered[0].subject).toContain('Official Alert');
 
 		// Second dispatch with identical alert must deduplicate
 		const secondDispatch = await dispatchVerifiedWarningAlerts({
@@ -481,25 +486,70 @@ describe('Subscriptions & Durable Alert Outbox (/api/v1/subscriptions*)', () => 
 		expect(secondDispatch.sent).toBe(0);
 		expect(secondDispatch.deduplicated).toBe(1);
 
-		// 4. Subsequent clear/empty OK snapshot triggers one Cancel/All-Clear notice
-		const thirdDispatch = await dispatchVerifiedWarningAlerts({
+		// 4a. An empty 200 feed without an explicit issuer Cancel MUST NOT trigger a false clearance email
+		const emptyFeedDispatch = await dispatchVerifiedWarningAlerts({
+			db,
+			kv: kv.kv,
+			transport: spyTransport,
+			now: new Date('2026-11-26T06:30:00Z'),
+			fetchImpl: async () => new Response(JSON.stringify({ type: 'FeatureCollection', features: [] }), { status: 200 }),
+		});
+		expect(emptyFeedDispatch.sent).toBe(0);
+		expect(delivered).toHaveLength(1);
+
+		// 4b. Explicit issuer Cancel message triggers ONE Official Cancellation notice
+		const metCancelGeoJson = {
+			type: 'FeatureCollection',
+			features: [
+				{
+					id: 'met-oslo-gale-1-cancel',
+					geometry: metGeoJson.features[0].geometry,
+					properties: {
+						...metGeoJson.features[0].properties,
+						id: 'met-oslo-gale-1',
+						type: 'Cancel',
+						sent: '2026-11-26T07:00:00Z',
+					},
+				},
+			],
+		};
+		const cancelDispatch = await dispatchVerifiedWarningAlerts({
 			db,
 			kv: kv.kv,
 			transport: spyTransport,
 			now: new Date('2026-11-26T07:00:00Z'),
-			fetchImpl: async () => new Response(JSON.stringify({ type: 'FeatureCollection', features: [] }), { status: 200 }),
+			fetchImpl: async () => new Response(JSON.stringify(metCancelGeoJson), { status: 200 }),
 		});
-		expect(thirdDispatch.sent).toBe(1);
-		expect(delivered[1].subject).toContain('Cleared/Cancelled');
+		expect(cancelDispatch.sent).toBe(1);
+		expect(delivered[1].subject).toContain('Official Cancellation');
 
-		// 5. Unsubscribe stops future deliveries
-		const unsubRes = await SELF.fetch('http://example.com/api/v1/subscriptions/unsubscribe', {
+		// 5. Unsubscribe rejects public subscriptionId and requires secret unsubscribeToken
+		const forgedUnsubRes = await SELF.fetch('http://example.com/api/v1/subscriptions/unsubscribe', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ token: created.subscriptionId }),
 		});
+		expect(forgedUnsubRes.status).toBe(404);
+
+		const unsubRes = await SELF.fetch('http://example.com/api/v1/subscriptions/unsubscribe', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ token: created.sandboxUnsubscribeToken }),
+		});
 		expect(unsubRes.status).toBe(200);
 		expect(await unsubRes.json()).toMatchObject({ ok: true, status: 'unsubscribed' });
+
+		// Old confirmation token cannot reactivate an unsubscribed address
+		const replayConfirm = await SELF.fetch(
+			`http://example.com/api/v1/subscriptions/confirm?token=${encodeURIComponent(created.sandboxPreviewToken)}`,
+			{ method: 'POST' },
+		);
+		expect([404, 409]).toContain(replayConfirm.status);
+		const persistedRow = await db
+			.prepare(`SELECT status FROM subscriptions WHERE id = ?`)
+			.bind(created.subscriptionId)
+			.first<{ status: string }>();
+		expect(persistedRow?.status).toBe('unsubscribed');
 
 		const checkAfter = await dispatchVerifiedWarningAlerts({
 			db,
@@ -508,7 +558,630 @@ describe('Subscriptions & Durable Alert Outbox (/api/v1/subscriptions*)', () => 
 			now: new Date('2026-11-26T08:00:00Z'),
 			fetchImpl: async () => new Response(JSON.stringify(metGeoJson), { status: 200 }),
 		});
-		// Only resend-user (not confirmed) + resident (unsubscribed) -> 0 active for resident; resend-user was pending_confirmation
 		expect(checkAfter.sent).toBe(0);
+	});
+
+	it('prevents false clearances across partial feeds, budget limits, malformed siblings, unresolved geometry, filter changes, out-of-order updates, and expiry', async () => {
+		const db = (env as typeof env & { AEGIS_DB: D1Database }).AEGIS_DB;
+		const kv = memoryKv();
+		const spyTransport = (() => {
+			const sent: Array<{ subject: string; text: string }> = [];
+			return {
+				sent,
+				transport: {
+					mode: 'sandbox' as const,
+					async send(msg: { to: string; subject: string; text: string; idempotencyKey: string }) {
+						sent.push({ subject: msg.subject, text: msg.text });
+						return { providerMessageId: `msg-${sent.length}` };
+					},
+				},
+			};
+		})();
+
+		const capXml = (opts: {
+			id: string;
+			sent: string;
+			msgType?: 'Alert' | 'Update' | 'Cancel';
+			refs?: string;
+			severity?: string;
+			expires?: string;
+			includeArea?: boolean;
+		}) => `<?xml version="1.0" encoding="UTF-8"?>
+<cap:alert xmlns:cap="urn:oasis:names:tc:emergency:cap:1.2">
+  <cap:identifier>${opts.id}</cap:identifier>
+  <cap:sender>irimo@irimo.ir</cap:sender>
+  <cap:sent>${opts.sent}</cap:sent>
+  <cap:status>Actual</cap:status>
+  <cap:msgType>${opts.msgType ?? 'Alert'}</cap:msgType>
+  <cap:scope>Public</cap:scope>
+  ${opts.refs ? `<cap:references>${opts.refs}</cap:references>` : ''}
+  <cap:info>
+    <cap:language>en</cap:language>
+    <cap:category>Met</cap:category>
+    <cap:event>Heavy Snow &amp; Wind</cap:event>
+    <cap:urgency>Expected</cap:urgency>
+    <cap:severity>${opts.severity ?? 'Severe'}</cap:severity>
+    <cap:certainty>Likely</cap:certainty>
+    <cap:expires>${opts.expires ?? '2026-11-28T12:00:00Z'}</cap:expires>
+    <cap:headline>${opts.id} Headline</cap:headline>
+    <cap:description>Tehran highland blizzard warning.</cap:description>
+    <cap:instruction>Avoid mountain passes.</cap:instruction>
+    ${opts.includeArea === false ? '' : `<cap:area><cap:areaDesc>Tehran</cap:areaDesc><cap:polygon>35.2,50.8 35.2,52.0 36.1,52.0 36.1,50.8 35.2,50.8</cap:polygon></cap:area>`}
+  </cap:info>
+</cap:alert>`;
+
+		const rssXml = (urls: string[]) =>
+			`<?xml version="1.0"?><rss><channel>${urls.map((u, i) => `<item><title>Item ${i}</title><link>${u}</link></item>`).join('')}</channel></rss>`;
+
+		// Subscribe and confirm Tehran resident for IRIMO CAP/RSS adapter
+		const subCreate = await createSubscription({
+			db,
+			req: {
+				channel: 'email',
+				destination: 'tehran-resident@example.com',
+				placeName: 'Tehran',
+				lat: 35.6892,
+				lng: 51.389,
+				countryCode: 'IR',
+				sourceId: 'ir-irimo',
+				minSeverity: 'moderate',
+			},
+			transport: spyTransport.transport,
+		});
+		expect(subCreate.status).toBe(201);
+		expect(subCreate.body.ok).toBe(true);
+		if (subCreate.body.ok && subCreate.body.sandboxPreviewToken) {
+			const confirmed = await confirmSubscription(db, subCreate.body.sandboxPreviewToken);
+			expect(confirmed.status).toBe(200);
+		}
+
+		// Step 0: Complete feed delivers ALERT-1 once
+		const alert1Url = 'https://www.irimo.ir/cap/alert-1.xml';
+		const okFetch = async (input: RequestInfo | URL) => {
+			const url = String(input);
+			if (url.endsWith('/rss.xml')) {
+				return new Response(url.includes('-fa/') ? rssXml([alert1Url]) : rssXml([]), { status: 200 });
+			}
+			if (url === alert1Url) return new Response(capXml({ id: 'ALERT-1', sent: '2026-11-27T06:00:00Z' }), { status: 200 });
+			return new Response('not found', { status: 404 });
+		};
+		const r0 = await dispatchVerifiedWarningAlerts({
+			db,
+			kv: kv.kv,
+			transport: spyTransport.transport,
+			now: new Date('2026-11-27T06:05:00Z'),
+			fetchImpl: okFetch,
+		});
+		expect(r0.sent).toBe(1);
+		expect(spyTransport.sent).toHaveLength(1);
+		expect(spyTransport.sent[0].subject).toContain('Official Alert');
+
+		// Step 1: Partial feed (RSS succeeded with uncached failed link returning 500, ALERT-1 omitted from RSS) -> partial_coverage, 0 false cancellations, LKG ALERT-1 retained
+		const failedDetailUrl = 'https://www.irimo.ir/cap/detail-fail.xml';
+		const partialFetch = async (input: RequestInfo | URL) => {
+			const url = String(input);
+			if (url.endsWith('/rss.xml')) {
+				return new Response(url.includes('-fa/') ? rssXml([failedDetailUrl]) : rssXml([]), { status: 200 });
+			}
+			return new Response('upstream error', { status: 500 });
+		};
+		const w1 = await queryOfficialWarnings({
+			lat: 35.6892,
+			lng: 51.389,
+			countryCode: 'IR',
+			kv: kv.kv,
+			fetchImpl: partialFetch,
+			now: new Date('2026-11-27T06:20:00Z'),
+			forceRefresh: true,
+		});
+		expect(w1.coverageStatus).toBe('partial_coverage');
+		expect(w1.warnings.map((w) => w.identifier)).toContain('ALERT-1');
+		const r1 = await dispatchVerifiedWarningAlerts({
+			db,
+			kv: kv.kv,
+			transport: spyTransport.transport,
+			now: new Date('2026-11-27T06:21:00Z'),
+			fetchImpl: partialFetch,
+		});
+		expect(r1.sent).toBe(0);
+		expect(spyTransport.sent).toHaveLength(1);
+
+		// Step 2: Budget exhaustion (18 RSS items, beyond 15-item budget, ALERT-1 omitted) -> partial_coverage, 0 cancellations
+		const manyLinks = Array.from({ length: 18 }, (_, i) => `https://www.irimo.ir/cap/other-${i}.xml`);
+		const budgetFetch = async (input: RequestInfo | URL) => {
+			const url = String(input);
+			if (url.endsWith('/rss.xml')) {
+				return new Response(url.includes('-fa/') ? rssXml(manyLinks) : rssXml([]), { status: 200 });
+			}
+			return new Response(capXml({ id: 'OTHER', sent: '2026-11-27T06:00:00Z', includeArea: false }), { status: 200 });
+		};
+		const w2 = await queryOfficialWarnings({
+			lat: 35.6892,
+			lng: 51.389,
+			countryCode: 'IR',
+			kv: kv.kv,
+			fetchImpl: budgetFetch,
+			now: new Date('2026-11-27T06:35:00Z'),
+			forceRefresh: true,
+		});
+		expect(w2.coverageStatus).toBe('partial_coverage');
+		const r2 = await dispatchVerifiedWarningAlerts({
+			db,
+			kv: kv.kv,
+			transport: spyTransport.transport,
+			now: new Date('2026-11-27T06:36:00Z'),
+			fetchImpl: budgetFetch,
+		});
+		expect(r2.sent).toBe(0);
+		expect(spyTransport.sent).toHaveLength(1);
+
+		// Step 3: Malformed sibling XML -> partial_coverage, 0 false cancellations
+		const malformedFetch = async (input: RequestInfo | URL) => {
+			const url = String(input);
+			if (url.endsWith('/rss.xml')) {
+				return new Response(url.includes('-fa/') ? rssXml(['https://www.irimo.ir/cap/bad.xml']) : rssXml([]), { status: 200 });
+			}
+			return new Response('<cap:alert><broken', { status: 200 });
+		};
+		const w3 = await queryOfficialWarnings({
+			lat: 35.6892,
+			lng: 51.389,
+			countryCode: 'IR',
+			kv: kv.kv,
+			fetchImpl: malformedFetch,
+			now: new Date('2026-11-27T06:50:00Z'),
+			forceRefresh: true,
+		});
+		expect(w3.coverageStatus).toBe('partial_coverage');
+		const r3 = await dispatchVerifiedWarningAlerts({
+			db,
+			kv: kv.kv,
+			transport: spyTransport.transport,
+			now: new Date('2026-11-27T06:51:00Z'),
+			fetchImpl: malformedFetch,
+		});
+		expect(r3.sent).toBe(0);
+
+		// Step 4: Severity filter tightened to 'extreme' (ALERT-1 is 'Severe') -> 0 false cancellations
+		await db.prepare(`UPDATE subscriptions SET min_severity = 'extreme'`).run();
+		const r4 = await dispatchVerifiedWarningAlerts({
+			db,
+			kv: kv.kv,
+			transport: spyTransport.transport,
+			now: new Date('2026-11-27T07:05:00Z'),
+			fetchImpl: okFetch,
+		});
+		expect(r4.sent).toBe(0);
+
+		// Step 5: Duplicate & out-of-order superseding Update (Update arrives before parent, omits area -> inherits parent polygon!)
+		await db.prepare(`UPDATE subscriptions SET min_severity = 'moderate'`).run();
+		const updUrl = 'https://www.irimo.ir/cap/alert-2-update.xml';
+		const updateFetch = async (input: RequestInfo | URL) => {
+			const url = String(input);
+			if (url.endsWith('/rss.xml')) {
+				return new Response(url.includes('-fa/') ? rssXml([updUrl, alert1Url, updUrl]) : rssXml([]), { status: 200 });
+			}
+			if (url === updUrl) {
+				return new Response(
+					capXml({
+						id: 'ALERT-2-UPDATE',
+						sent: '2026-11-27T07:20:00Z',
+						msgType: 'Update',
+						refs: 'irimo@irimo.ir,ALERT-1,2026-11-27T06:00:00Z',
+						severity: 'Extreme',
+						expires: '2026-11-27T10:00:00Z',
+						includeArea: false,
+					}),
+					{ status: 200 },
+				);
+			}
+			return new Response(
+				capXml({
+					id: 'ALERT-1',
+					sent: '2026-11-27T06:00:00Z',
+					expires: '2026-11-27T10:00:00Z',
+				}),
+				{ status: 200 },
+			);
+		};
+		const w5 = await queryOfficialWarnings({
+			lat: 35.6892,
+			lng: 51.389,
+			countryCode: 'IR',
+			kv: kv.kv,
+			fetchImpl: updateFetch,
+			now: new Date('2026-11-27T07:25:00Z'),
+			forceRefresh: true,
+		});
+		expect(w5.coverageStatus).toBe('active_warnings');
+		expect(w5.warnings.map((w) => w.identifier)).toEqual(['ALERT-2-UPDATE']);
+		expect(w5.warnings[0].msgType).toBe('Update');
+		const r5 = await dispatchVerifiedWarningAlerts({
+			db,
+			kv: kv.kv,
+			transport: spyTransport.transport,
+			now: new Date('2026-11-27T07:26:00Z'),
+			fetchImpl: updateFetch,
+		});
+		expect(r5.sent).toBe(1);
+		expect(spyTransport.sent[1].subject).toContain('Official Update');
+
+		// Step 6: Natural expiry (clock past 10:00Z) -> UI shows checked_no_warnings, dispatcher sends 0 false cancellations
+		// Put ALERT-1-v2 expiring at 10:00Z fresh into CAP cache under new URLs so cached un-expired ALERT-1 isn't reused
+		const alert1ExpUrl = 'https://www.irimo.ir/cap/alert-1-exp.xml';
+		const updExpUrl = 'https://www.irimo.ir/cap/alert-2-update-exp.xml';
+		const expiredFetch = async (input: RequestInfo | URL) => {
+			const url = String(input);
+			if (url.endsWith('/rss.xml')) {
+				return new Response(url.includes('-fa/') ? rssXml([updExpUrl, alert1ExpUrl]) : rssXml([]), { status: 200 });
+			}
+			if (url === updExpUrl) {
+				return new Response(
+					capXml({
+						id: 'ALERT-2-UPDATE',
+						sent: '2026-11-27T07:20:00Z',
+						msgType: 'Update',
+						refs: 'irimo@irimo.ir,ALERT-1,2026-11-27T06:00:00Z',
+						severity: 'Extreme',
+						expires: '2026-11-27T10:00:00Z',
+						includeArea: false,
+					}),
+					{ status: 200 },
+				);
+			}
+			return new Response(
+				capXml({
+					id: 'ALERT-1',
+					sent: '2026-11-27T06:00:00Z',
+					expires: '2026-11-27T10:00:00Z',
+				}),
+				{ status: 200 },
+			);
+		};
+		const w6 = await queryOfficialWarnings({
+			lat: 35.6892,
+			lng: 51.389,
+			countryCode: 'IR',
+			kv: kv.kv,
+			fetchImpl: expiredFetch,
+			now: new Date('2026-11-27T11:00:00Z'),
+			forceRefresh: true,
+		});
+		expect(w6.coverageStatus).toBe('checked_no_warnings');
+		const r6 = await dispatchVerifiedWarningAlerts({
+			db,
+			kv: kv.kv,
+			transport: spyTransport.transport,
+			now: new Date('2026-11-27T11:01:00Z'),
+			fetchImpl: expiredFetch,
+		});
+		expect(r6.sent).toBe(0);
+
+		// Step 7: Explicit CAP Cancel referencing ALERT-2-UPDATE triggers ONE cancellation email and deduplicates on replay
+		const cancelUrl = 'https://www.irimo.ir/cap/alert-3-cancel.xml';
+		const explicitCancelFetch = async (input: RequestInfo | URL) => {
+			const url = String(input);
+			if (url.endsWith('/rss.xml')) {
+				return new Response(url.includes('-fa/') ? rssXml([cancelUrl, updExpUrl, alert1ExpUrl]) : rssXml([]), { status: 200 });
+			}
+			if (url === cancelUrl) {
+				return new Response(
+					capXml({
+						id: 'ALERT-3-CANCEL',
+						sent: '2026-11-27T08:00:00Z',
+						msgType: 'Cancel',
+						refs: 'irimo@irimo.ir,ALERT-2-UPDATE,2026-11-27T07:20:00Z',
+						includeArea: false,
+					}),
+					{ status: 200 },
+				);
+			}
+			return expiredFetch(input);
+		};
+		const w7 = await queryOfficialWarnings({
+			lat: 35.6892,
+			lng: 51.389,
+			countryCode: 'IR',
+			kv: kv.kv,
+			fetchImpl: explicitCancelFetch,
+			now: new Date('2026-11-27T08:05:00Z'),
+			forceRefresh: true,
+		});
+		expect(w7.warnings).toHaveLength(0);
+		const r7 = await dispatchVerifiedWarningAlerts({
+			db,
+			kv: kv.kv,
+			transport: spyTransport.transport,
+			now: new Date('2026-11-27T08:06:00Z'),
+			fetchImpl: explicitCancelFetch,
+		});
+		expect(r7.sent).toBe(1);
+		expect(spyTransport.sent).toHaveLength(3);
+		expect(spyTransport.sent[2].subject).toContain('Official Cancellation');
+
+		const r7Dup = await dispatchVerifiedWarningAlerts({
+			db,
+			kv: kv.kv,
+			transport: spyTransport.transport,
+			now: new Date('2026-11-27T08:10:00Z'),
+			fetchImpl: explicitCancelFetch,
+		});
+		expect(r7Dup.sent).toBe(0);
+		expect(spyTransport.sent).toHaveLength(3);
+	});
+
+	it('processes 205 subscribers across resumable keyset batches, 55 prior deliveries, lease locks, and KV receipt healing', async () => {
+		const db = (env as typeof env & { AEGIS_DB: D1Database }).AEGIS_DB;
+		const kv = memoryKv();
+		const deliveredTo: string[] = [];
+		const spyTransport = {
+			mode: 'sandbox' as const,
+			async send(msg: { to: string; subject: string; text: string; idempotencyKey: string }) {
+				deliveredTo.push(msg.to);
+				return { providerMessageId: `batch-${deliveredTo.length}` };
+			},
+		};
+
+		// Insert 205 active subscribers in chunks
+		for (let start = 0; start < 205; start += 50) {
+			const end = Math.min(205, start + 50);
+			const stmts: D1PreparedStatement[] = [];
+			for (let i = start; i < end; i++) {
+				const id = `sub-${String(i).padStart(3, '0')}`;
+				stmts.push(
+					db
+						.prepare(
+							`INSERT INTO subscriptions (id, channel, destination, place_name, lat, lng, country_code, source_id, min_severity, status, confirm_token, unsubscribe_token, created_at, confirmed_at)
+							 VALUES (?, 'email', ?, 'Oslo', 59.91, 10.75, 'NO', 'no-metalerts', 'moderate', 'active', ?, ?, '2026-11-26T00:00:00Z', '2026-11-26T00:01:00Z')`,
+						)
+						.bind(id, `user${i}@example.com`, `consumed:${id}`, `unsub-${i}`),
+				);
+			}
+			await db.batch(stmts);
+		}
+
+		// Seed 55 prior 'sent' deliveries for the last subscriber (sub-204) to verify loadAllSentDeliveriesForSub > 50
+		const priorStmts: D1PreparedStatement[] = [];
+		for (let j = 0; j < 55; j++) {
+			priorStmts.push(
+				db
+					.prepare(
+						`INSERT INTO subscription_deliveries (id, subscription_id, alert_id, alert_revision_sent_at, msg_type, idempotency_key, status, attempts, provider_message_id, created_at, updated_at)
+						 VALUES (?, 'sub-204', ?, '2026-11-25T00:00:00Z', 'Alert', ?, 'sent', 1, ?, '2026-11-25T00:00:00Z', '2026-11-25T00:00:00Z')`,
+					)
+					.bind(`del-${String(j).padStart(3, '0')}`, `alert-${j}`, `key-${j}`, `prov-${j}`),
+			);
+		}
+		await db.batch(priorStmts);
+
+		// Seed KV snapshot with version: 1 and an explicit cancellation for alert-54 (the 55th delivery!)
+		await kv.kv.put(
+			'warnings:source:v1:no-metalerts',
+			JSON.stringify({
+				version: 1,
+				sourceId: 'no-metalerts',
+				checkedAt: '2026-11-27T09:00:00Z',
+				lastSuccessAt: '2026-11-27T09:00:00Z',
+				completeness: 'complete',
+				partialReasons: [],
+				etag: null,
+				lastModified: null,
+				backoffUntil: null,
+				lastError: null,
+				records: [
+					{
+						id: 'no-alert-54-cancel',
+						identifier: 'alert-54',
+						sourceId: 'no-metalerts',
+						issuerName: 'MET Norway',
+						issuerUrl: 'https://www.met.no/',
+						countryCode: 'NO',
+						msgType: 'Cancel',
+						lifecycleState: 'cancelled',
+						references: ['alert-54'],
+						category: 'Met',
+						severity: 'severe',
+						urgency: 'Expected',
+						certainty: 'Likely',
+						sentAt: '2026-11-27T09:00:00Z',
+						effectiveAt: '2026-11-27T09:00:00Z',
+						onsetAt: null,
+						expiresAt: null,
+						missingExpiry: true,
+						clockSkewFlag: false,
+						primaryLanguage: 'en',
+						translations: [{ language: 'en', headline: 'Alert 54 cancelled', event: 'Gale', description: 'Cancelled', instruction: null, areaDesc: 'Oslo', web: null }],
+						bulletinUrl: 'https://www.met.no/',
+						attribution: 'MET Norway',
+						areas: [{ areaDesc: 'Oslo', polygons: [[[10.0, 59.5], [11.5, 59.5], [11.5, 60.5], [10.0, 60.5], [10.0, 59.5]]], geocodes: [] }],
+					},
+				],
+			}),
+		);
+
+		// Also verify active lease blocks an overlapping run
+		await db
+			.prepare(
+				`INSERT INTO ingestion_checkpoints (source, window_key, cursor, updated_at, status)
+				 VALUES ('subscription_dispatch', 'lease', 'other-worker|2026-11-27T09:00:45.000Z', '2026-11-27T09:00:00Z', 'running')`,
+			)
+			.run();
+		const overlapped = await dispatchVerifiedWarningAlerts({
+			db,
+			kv: kv.kv,
+			transport: spyTransport,
+			now: new Date('2026-11-27T09:00:10Z'),
+			fetchImpl: async () => new Response(JSON.stringify({ type: 'FeatureCollection', features: [] }), { status: 200 }),
+		});
+		expect(overlapped.skippedLease).toBe(true);
+		expect(overlapped.sent).toBe(0);
+
+		// Clear lease and update snapshot with an active gale warning so all 205 subscribers receive 1 alert + sub-204 ALSO gets Cancel for alert-54
+		await db.prepare(`DELETE FROM ingestion_checkpoints WHERE source = 'subscription_dispatch' AND window_key = 'lease'`).run();
+		const activeSnap = JSON.parse((await kv.kv.get('warnings:source:v1:no-metalerts'))!);
+		activeSnap.records.push({
+			id: 'no-active-wave',
+			identifier: 'active-wave-1',
+			sourceId: 'no-metalerts',
+			issuerName: 'MET Norway',
+			issuerUrl: 'https://www.met.no/',
+			countryCode: 'NO',
+			msgType: 'Alert',
+			lifecycleState: 'active',
+			references: [],
+			category: 'Met',
+			severity: 'severe',
+			urgency: 'Expected',
+			certainty: 'Likely',
+			sentAt: '2026-11-27T09:00:00Z',
+			effectiveAt: '2026-11-27T09:00:00Z',
+			onsetAt: '2026-11-27T08:00:00Z',
+			expiresAt: '2026-11-28T09:00:00Z',
+			missingExpiry: false,
+			clockSkewFlag: false,
+			primaryLanguage: 'en',
+			translations: [{ language: 'en', headline: 'Severe gale warning', event: 'Gale', description: 'Heavy wind', instruction: 'Stay indoors', areaDesc: 'Oslo', web: null }],
+			bulletinUrl: 'https://www.met.no/',
+			attribution: 'MET Norway',
+			areas: [{ areaDesc: 'Oslo', polygons: [[[10.0, 59.5], [11.5, 59.5], [11.5, 60.5], [10.0, 60.5], [10.0, 59.5]]], geocodes: [] }],
+		});
+		await kv.kv.put('warnings:source:v1:no-metalerts', JSON.stringify(activeSnap));
+
+		// Run 4 resumable invocations capped at 70 subscribers each within 180s poll cache window -> processes all 205 (70 + 70 + 65, then heal)
+		const run1 = await dispatchVerifiedWarningAlerts({
+			db,
+			kv: kv.kv,
+			transport: spyTransport,
+			now: new Date('2026-11-27T09:00:30Z'),
+			pageSize: 70,
+			maxSubscriptions: 70,
+			maxSubrequests: 200,
+		});
+		expect(run1.subscriptionsVisited).toBe(70);
+		expect(run1.sent).toBe(70);
+
+		const run2 = await dispatchVerifiedWarningAlerts({
+			db,
+			kv: kv.kv,
+			transport: spyTransport,
+			now: new Date('2026-11-27T09:01:00Z'),
+			pageSize: 70,
+			maxSubscriptions: 70,
+			maxSubrequests: 200,
+		});
+		expect(run2.subscriptionsVisited).toBe(70);
+		expect(run2.sent).toBe(70);
+
+		const run3 = await dispatchVerifiedWarningAlerts({
+			db,
+			kv: kv.kv,
+			transport: spyTransport,
+			now: new Date('2026-11-27T09:01:30Z'),
+			pageSize: 70,
+			maxSubscriptions: 70,
+			maxSubrequests: 200,
+		});
+		expect(run3.subscriptionsVisited).toBe(65);
+		// 65 active alerts + 1 Cancel for sub-204's 55th prior delivery ('alert-54')
+		expect(run3.sent).toBe(66);
+		expect(deliveredTo).toHaveLength(206);
+		expect(deliveredTo.filter((x) => x === 'user204@example.com')).toHaveLength(2);
+
+		// Also verify retry_pending with pre-existing KV receipt heals D1 without re-invoking transport.send
+		await kv.kv.put('sub:sent:del-heal-1', 'provider-accepted-999');
+		await db
+			.prepare(
+				`INSERT INTO subscription_deliveries (id, subscription_id, alert_id, alert_revision_sent_at, msg_type, idempotency_key, status, attempts, rendered_subject, rendered_body, created_at, updated_at)
+				 VALUES ('del-heal-1', 'sub-000', 'heal-alert', '2026-11-27T09:00:00Z', 'Alert', 'heal-key-1', 'retry_pending', 1, 'Heal Subject', 'Body', '2026-11-27T09:00:00Z', '2026-11-27T09:00:00Z')`,
+			)
+			.run();
+		const beforeCount = deliveredTo.length;
+		const healRun = await dispatchVerifiedWarningAlerts({
+			db,
+			kv: kv.kv,
+			transport: spyTransport,
+			now: new Date('2026-11-27T09:02:00Z'),
+			pageSize: 70,
+			maxSubscriptions: 70,
+			maxSubrequests: 200,
+		});
+		expect(healRun.deduplicated).toBeGreaterThanOrEqual(1);
+		expect(deliveredTo.length).toBe(beforeCount);
+		const healedRow = await db
+			.prepare(`SELECT status, provider_message_id FROM subscription_deliveries WHERE id = 'del-heal-1'`)
+			.first<{ status: string; provider_message_id: string }>();
+		expect(healedRow).toEqual({ status: 'sent', provider_message_id: 'provider-accepted-999' });
+	}, 20_000);
+
+	it('honestly reports unavailable subscription delivery when production mail config is absent and enforces single-use consent tokens', async () => {
+		const db = (env as typeof env & { AEGIS_DB: D1Database }).AEGIS_DB;
+		const disabled = createEmailTransport({ allowSandbox: false });
+		expect(disabled.mode).toBe('disabled');
+		expect(await getSubscriptionServiceStatus(db, disabled)).toEqual({
+			available: false,
+			mode: 'unavailable',
+			smsAvailable: false,
+			reason:
+				'Automated email alert delivery is not configured in this deployment (RESEND_API_KEY missing). Official warnings remain available directly in Near me.',
+		});
+
+		const blockedCreate = await createSubscription({
+			db,
+			req: {
+				channel: 'email',
+				destination: 'prod-user@example.com',
+				placeName: 'Oslo',
+				lat: 59.91,
+				lng: 10.75,
+				countryCode: 'NO',
+				sourceId: 'no-metalerts',
+			},
+			transport: disabled,
+		});
+		expect(blockedCreate.status).toBe(503);
+		expect(blockedCreate.body).toMatchObject({
+			ok: false,
+			code: 'delivery_unavailable',
+		});
+
+		// Sandbox consent token lifecycle: single-use confirm -> duplicate blocked -> unsubscribe -> reactivation blocked
+		const sandbox = createEmailTransport({ allowSandbox: true });
+		const okCreate = await createSubscription({
+			db,
+			req: {
+				channel: 'email',
+				destination: 'consent@example.com',
+				placeName: 'Oslo',
+				lat: 59.91,
+				lng: 10.75,
+				countryCode: 'NO',
+				sourceId: 'no-metalerts',
+			},
+			transport: sandbox,
+		});
+		expect(okCreate.status).toBe(201);
+		expect(okCreate.body.ok).toBe(true);
+		if (okCreate.body.ok && okCreate.body.sandboxPreviewToken && okCreate.body.sandboxUnsubscribeToken) {
+			const c1 = await confirmSubscription(db, okCreate.body.sandboxPreviewToken);
+			expect(c1.status).toBe(200);
+			expect(c1.body).toMatchObject({ ok: true, status: 'active' });
+
+			// Reusing a consumed confirmation token is rejected (404 not_found)
+			const c2 = await confirmSubscription(db, okCreate.body.sandboxPreviewToken);
+			expect(c2.status).toBe(404);
+
+			const u1 = await unsubscribeSubscription(db, okCreate.body.sandboxUnsubscribeToken);
+			expect(u1.status).toBe(200);
+			expect(u1.body).toMatchObject({ ok: true, status: 'unsubscribed' });
+
+			// Unsubscribed subscription cannot be reactivated via old token
+			const c3 = await confirmSubscription(db, okCreate.body.sandboxPreviewToken);
+			expect([404, 409]).toContain(c3.status);
+			const row = await db
+				.prepare(`SELECT status FROM subscriptions WHERE id = ?`)
+				.bind(okCreate.body.subscriptionId ?? '')
+				.first<{ status: string }>();
+			expect(row?.status).toBe('unsubscribed');
+		}
 	});
 });

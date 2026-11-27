@@ -7,13 +7,14 @@
  *  - in-sachet (NDMA India SACHET CAP RSS + FetchXMLFile + FetchPolygonXMLFile)
  */
 
-import type { OfficialWarningItem, WarningLocalizedBlock } from '../../../shared/contracts';
+import type { OfficialWarningItem, WarningLifecycleState, WarningLocalizedBlock } from '../../../shared/contracts';
 import type { WarningAuthoritySpec } from '../../../shared/warningRegistry';
 import {
 	CLOCK_SKEW_TOLERANCE_MS,
 	MISSING_EXPIRY_MAX_AGE_MS,
 	normalizeSeverity,
 	parseCapAlertXml,
+	parseCapReferences,
 	parseRssFeed,
 	parseSachetPolygonXml,
 	resolveCapLifecycle,
@@ -26,7 +27,7 @@ import { matchMalaysiaWarningText, matchPointToCapAreas } from './geoMatch';
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 const WARNING_FETCH_TIMEOUT_MS = 9000;
-const MAX_CAP_FETCHES_PER_POLL = 8;
+export const MAX_CAP_FETCHES_PER_POLL = 15;
 const WARNING_SNAPSHOT_KV_TTL_SECONDS = 7 * 24 * 60 * 60; // Keep LKG up to 7 days for stale display
 const WARNING_BACKOFF_MS = 3 * 60 * 1000;
 const CAP_XML_CACHE_TTL_SECONDS = 12 * 60 * 60;
@@ -40,6 +41,10 @@ export interface StoredWarningRecord {
 	issuerUrl: string;
 	countryCode: string;
 	msgType: 'Alert' | 'Update' | 'Cancel' | 'Ack' | 'Error';
+	lifecycleState: WarningLifecycleState;
+	references: string[];
+	supersededById?: string | null;
+	geometryUnresolved?: boolean;
 	category: string;
 	severity: OfficialWarningItem['severity'];
 	urgency: string;
@@ -63,6 +68,8 @@ export interface AuthoritySnapshotDoc {
 	sourceId: string;
 	checkedAt: string;
 	lastSuccessAt: string | null;
+	completeness?: 'complete' | 'partial';
+	partialReasons?: string[];
 	etag?: string | null;
 	lastModified?: string | null;
 	backoffUntil?: string | null;
@@ -123,7 +130,13 @@ async function pollMetMalaysia(
 	spec: WarningAuthoritySpec,
 	fetchImpl: FetchLike,
 	now: Date,
-): Promise<{ records: StoredWarningRecord[]; etag: string | null; lastModified: string | null }> {
+): Promise<{
+	completeness: 'complete' | 'partial';
+	partialReasons: string[];
+	records: StoredWarningRecord[];
+	etag: string | null;
+	lastModified: string | null;
+}> {
 	const { text, etag, lastModified } = await fetchBoundedText(spec.feedUrls[0], fetchImpl);
 	const data = JSON.parse(text) as unknown;
 	if (!Array.isArray(data)) {
@@ -193,6 +206,15 @@ async function pollMetMalaysia(
 					: 'moderate';
 
 		const stableId = `my-${sentAt}-${(titleEn || titleBm).slice(0, 24).replace(/\s+/g, '-')}-${i}`;
+		const expiresMs = expiresAt ? Date.parse(expiresAt) : NaN;
+		const onsetMs = onsetAt ? Date.parse(onsetAt) : NaN;
+		const lifecycleState: WarningLifecycleState =
+			Number.isFinite(expiresMs) && expiresMs <= now.getTime()
+				? 'expired'
+				: Number.isFinite(onsetMs) && onsetMs > now.getTime() + CLOCK_SKEW_TOLERANCE_MS
+					? 'upcoming'
+					: 'active';
+
 		records.push({
 			id: stableId,
 			identifier: stableId,
@@ -201,6 +223,8 @@ async function pollMetMalaysia(
 			issuerUrl: spec.homepageUrl,
 			countryCode: 'MY',
 			msgType: 'Alert',
+			lifecycleState,
+			references: [],
 			category: 'Met',
 			severity,
 			urgency: 'Expected',
@@ -220,7 +244,7 @@ async function pollMetMalaysia(
 		});
 	}
 
-	return { records, etag, lastModified };
+	return { completeness: 'complete', partialReasons: [], records, etag, lastModified };
 }
 
 /** Adapter 2: MET Norway (`api.met.no/weatherapi/metalerts/2.0/current.json`). */
@@ -231,6 +255,8 @@ async function pollMetNorway(
 	prevDoc: AuthoritySnapshotDoc | null,
 ): Promise<{
 	notModified?: boolean;
+	completeness: 'complete' | 'partial';
+	partialReasons: string[];
 	records: StoredWarningRecord[];
 	etag: string | null;
 	lastModified: string | null;
@@ -241,7 +267,14 @@ async function pollMetNorway(
 
 	const res = await fetchBoundedText(spec.feedUrls[0], fetchImpl, condHeaders);
 	if (res.status === 304 && prevDoc) {
-		return { notModified: true, records: prevDoc.records, etag: res.etag ?? prevDoc.etag ?? null, lastModified: res.lastModified ?? prevDoc.lastModified ?? null };
+		return {
+			notModified: true,
+			completeness: prevDoc.completeness ?? 'complete',
+			partialReasons: prevDoc.partialReasons ?? [],
+			records: prevDoc.records,
+			etag: res.etag ?? prevDoc.etag ?? null,
+			lastModified: res.lastModified ?? prevDoc.lastModified ?? null,
+		};
 	}
 
 	const fc = JSON.parse(res.text) as {
@@ -306,6 +339,19 @@ async function pollMetNorway(
 			: prevRecord && prevRecord.expiresAt === expiresAt && prevRecord.translations[0]?.headline === headline
 				? prevRecord.sentAt
 				: (onsetAt ?? now.toISOString());
+		const msgType: StoredWarningRecord['msgType'] =
+			p.type === 'Update' ? 'Update' : p.type === 'Cancel' ? 'Cancel' : 'Alert';
+		const rawRefs = typeof p.references === 'string' ? parseCapReferences(p.references).map((r) => r.identifier) : [];
+		const expiresMs = expiresAt ? Date.parse(expiresAt) : NaN;
+		const onsetMs = onsetAt ? Date.parse(onsetAt) : NaN;
+		const lifecycleState: WarningLifecycleState =
+			msgType === 'Cancel'
+				? 'cancelled'
+				: Number.isFinite(expiresMs) && expiresMs <= now.getTime()
+					? 'expired'
+					: Number.isFinite(onsetMs) && onsetMs > now.getTime() + CLOCK_SKEW_TOLERANCE_MS
+						? 'upcoming'
+						: 'active';
 
 		records.push({
 			id: `no-${id}`,
@@ -314,7 +360,9 @@ async function pollMetNorway(
 			issuerName: spec.authorityName,
 			issuerUrl: spec.homepageUrl,
 			countryCode: 'NO',
-			msgType: p.type === 'Update' ? 'Update' : p.type === 'Cancel' ? 'Cancel' : 'Alert',
+			msgType,
+			lifecycleState,
+			references: rawRefs,
 			category: 'Met',
 			severity: normalizeSeverity(String(p.riskMatrixColor ?? p.severity ?? 'unknown')),
 			urgency: 'Expected',
@@ -343,7 +391,7 @@ async function pollMetNorway(
 		});
 	}
 
-	return { records, etag: res.etag, lastModified: res.lastModified };
+	return { completeness: 'complete', partialReasons: [], records, etag: res.etag, lastModified: res.lastModified };
 }
 
 /** Adapter 3 & 4: CAP RSS feeds (IRIMO fa/en & India SACHET + FetchPolygonXMLFile). */
@@ -356,6 +404,8 @@ async function pollCapRssAuthority(
 	prevDoc: AuthoritySnapshotDoc | null,
 ): Promise<{
 	notModified?: boolean;
+	completeness: 'complete' | 'partial';
+	partialReasons: string[];
 	records: StoredWarningRecord[];
 	etag: string | null;
 	lastModified: string | null;
@@ -367,34 +417,55 @@ async function pollCapRssAuthority(
 	let firstEtag: string | null = null;
 	let firstLastMod: string | null = null;
 	const itemLinks: string[] = [];
+	const partialReasons: string[] = [];
+	let rssSucceeded = 0;
 
 	for (let fIdx = 0; fIdx < spec.feedUrls.length; fIdx++) {
-		const feedRes = await fetchBoundedText(spec.feedUrls[fIdx], fetchImpl, fIdx === 0 ? condHeaders : {});
-		if (fIdx === 0) {
-			firstEtag = feedRes.etag;
-			firstLastMod = feedRes.lastModified;
-			if (feedRes.status === 304 && prevDoc && spec.feedUrls.length === 1) {
-				return {
-					notModified: true,
-					records: prevDoc.records,
-					etag: feedRes.etag ?? prevDoc.etag ?? null,
-					lastModified: feedRes.lastModified ?? prevDoc.lastModified ?? null,
-				};
+		try {
+			const feedRes = await fetchBoundedText(spec.feedUrls[fIdx], fetchImpl, fIdx === 0 ? condHeaders : {});
+			rssSucceeded++;
+			if (fIdx === 0) {
+				firstEtag = feedRes.etag;
+				firstLastMod = feedRes.lastModified;
+				if (feedRes.status === 304 && prevDoc && spec.feedUrls.length === 1) {
+					return {
+						notModified: true,
+						completeness: prevDoc.completeness ?? 'complete',
+						partialReasons: prevDoc.partialReasons ?? [],
+						records: prevDoc.records,
+						etag: feedRes.etag ?? prevDoc.etag ?? null,
+						lastModified: feedRes.lastModified ?? prevDoc.lastModified ?? null,
+					};
+				}
 			}
-		}
-		const rssItems = parseRssFeed(feedRes.text);
-		for (const item of rssItems.slice(0, MAX_CAP_FETCHES_PER_POLL)) {
-			const safe = sanitizeBulletinUrl(item.link);
-			if (safe && !itemLinks.includes(safe)) {
-				itemLinks.push(safe);
+			const rssItems = parseRssFeed(feedRes.text);
+			if (rssItems.length > MAX_CAP_FETCHES_PER_POLL) {
+				partialReasons.push('rss_feed_truncated');
 			}
+			for (const item of rssItems.slice(0, MAX_CAP_FETCHES_PER_POLL)) {
+				const safe = sanitizeBulletinUrl(item.link);
+				if (safe && !itemLinks.includes(safe)) {
+					itemLinks.push(safe);
+				}
+			}
+		} catch (err) {
+			if (spec.feedUrls.length === 1) {
+				throw err;
+			}
+			partialReasons.push('rss_feed_partial_failure');
 		}
 	}
 
+	if (rssSucceeded === 0) {
+		throw new Error(`All RSS feeds failed for ${spec.sourceId}`);
+	}
+
 	const parsedAlerts: ParsedCapAlert[] = [];
+	const unresolvedPolygonAlerts = new Set<string>();
 	let networkFetches = 0;
 
-	for (const link of itemLinks) {
+	for (let idx = 0; idx < itemLinks.length; idx++) {
+		const link = itemLinks[idx];
 		let xmlText: string | null = null;
 		const cKey = capCacheKey(link);
 		if (kv) {
@@ -405,7 +476,10 @@ async function pollCapRssAuthority(
 			}
 		}
 		if (!xmlText) {
-			if (networkFetches >= MAX_CAP_FETCHES_PER_POLL) break;
+			if (networkFetches >= MAX_CAP_FETCHES_PER_POLL) {
+				partialReasons.push('cap_fetch_budget_exhausted');
+				break;
+			}
 			try {
 				networkFetches++;
 				const res = await fetchBoundedText(link, fetchImpl);
@@ -414,6 +488,7 @@ async function pollCapRssAuthority(
 					await kv.put(cKey, xmlText, { expirationTtl: CAP_XML_CACHE_TTL_SECONDS }).catch(() => {});
 				}
 			} catch {
+				partialReasons.push('cap_detail_fetch_failed');
 				continue;
 			}
 		}
@@ -424,7 +499,12 @@ async function pollCapRssAuthority(
 			// Hydrate SACHET external polygon URLs if present and bounded
 			for (const info of parsed.infos) {
 				const hasPoly = info.areas.some((a) => a.polygons.length > 0);
-				if (!hasPoly && info.polygonUrls.length > 0 && networkFetches < MAX_CAP_FETCHES_PER_POLL) {
+				if (!hasPoly && info.polygonUrls.length > 0) {
+					if (networkFetches >= MAX_CAP_FETCHES_PER_POLL) {
+						partialReasons.push('cap_fetch_budget_exhausted');
+						unresolvedPolygonAlerts.add(parsed.identifier);
+						continue;
+					}
 					try {
 						networkFetches++;
 						const polyUrl = info.polygonUrls[0];
@@ -443,24 +523,38 @@ async function pollCapRssAuthority(
 							}
 						}
 					} catch {
-						// Best-effort polygon hydration; keeps zone-only matchUncertain fallback
+						partialReasons.push('polygon_fetch_failed');
+						unresolvedPolygonAlerts.add(parsed.identifier);
 					}
 				}
 			}
 			parsedAlerts.push(parsed);
 		} catch {
-			// Skip malformed individual CAP item while keeping valid siblings
+			partialReasons.push('cap_xml_malformed');
 		}
 	}
 
 	const resolved = resolveCapLifecycle(parsedAlerts, now);
 	const records: StoredWarningRecord[] = [];
+	const currentIds = new Set<string>();
+	const supersededOrCancelledRefIds = new Set<string>();
+
 	for (const item of resolved) {
-		if (item.lifecycleState === 'cancelled' || item.lifecycleState === 'superseded' || item.lifecycleState === 'expired') {
-			continue;
+		currentIds.add(item.alert.identifier);
+		if (item.lifecycleState === 'cancelled' || item.lifecycleState === 'superseded') {
+			for (const refId of item.referencedIdentifiers) {
+				supersededOrCancelledRefIds.add(refId);
+			}
 		}
+		if (item.lifecycleState === 'active' || item.lifecycleState === 'upcoming') {
+			for (const refId of item.referencedIdentifiers) {
+				supersededOrCancelledRefIds.add(refId);
+			}
+		}
+
 		const primaryInfo = item.alert.infos[0];
-		if (!primaryInfo) continue;
+		// Note: CAP Cancel messages may legally carry minimal <info> or inherit parent areas in resolveCapLifecycle
+		if (!primaryInfo && item.lifecycleState !== 'cancelled') continue;
 
 		records.push({
 			id: `${spec.sourceId}-${item.alert.identifier}`,
@@ -470,25 +564,43 @@ async function pollCapRssAuthority(
 			issuerUrl: spec.homepageUrl,
 			countryCode,
 			msgType: item.alert.msgType,
-			category: primaryInfo.category,
-			severity: normalizeSeverity(primaryInfo.severity),
-			urgency: primaryInfo.urgency,
-			certainty: primaryInfo.certainty,
+			lifecycleState: item.lifecycleState,
+			references: item.referencedIdentifiers,
+			supersededById: item.supersededByIdentifier,
+			geometryUnresolved: unresolvedPolygonAlerts.has(item.alert.identifier),
+			category: primaryInfo?.category ?? 'Other',
+			severity: normalizeSeverity(primaryInfo?.severity ?? 'unknown'),
+			urgency: primaryInfo?.urgency ?? 'Unknown',
+			certainty: primaryInfo?.certainty ?? 'Unknown',
 			sentAt: item.alert.sent,
-			effectiveAt: primaryInfo.effective,
-			onsetAt: primaryInfo.onset,
-			expiresAt: primaryInfo.expires,
+			effectiveAt: primaryInfo?.effective ?? null,
+			onsetAt: primaryInfo?.onset ?? null,
+			expiresAt: primaryInfo?.expires ?? null,
 			missingExpiry: item.missingExpiry,
 			clockSkewFlag: item.clockSkewFlag,
-			primaryLanguage: primaryInfo.language,
+			primaryLanguage: primaryInfo?.language ?? 'und',
 			translations: item.mergedLanguages,
-			bulletinUrl: primaryInfo.web ?? spec.homepageUrl,
+			bulletinUrl: primaryInfo?.web ?? spec.homepageUrl,
 			attribution: spec.attribution,
-			areas: primaryInfo.areas,
+			areas: primaryInfo?.areas ?? [],
 		});
 	}
 
-	return { records, etag: firstEtag, lastModified: firstLastMod };
+	// Retain previously active/upcoming LKG records during partial polls unless superseded/cancelled or expired
+	const uniqueReasons = Array.from(new Set(partialReasons));
+	const completeness: 'complete' | 'partial' = uniqueReasons.length > 0 ? 'partial' : 'complete';
+	if (completeness === 'partial' && prevDoc) {
+		const nowMs = now.getTime();
+		for (const prev of prevDoc.records) {
+			if (prev.lifecycleState !== 'active' && prev.lifecycleState !== 'upcoming') continue;
+			if (currentIds.has(prev.identifier) || supersededOrCancelledRefIds.has(prev.identifier)) continue;
+			const expMs = prev.expiresAt ? Date.parse(prev.expiresAt) : NaN;
+			if (Number.isFinite(expMs) && expMs <= nowMs) continue;
+			records.push(prev);
+		}
+	}
+
+	return { completeness, partialReasons: uniqueReasons, records, etag: firstEtag, lastModified: firstLastMod };
 }
 
 export async function refreshOrLoadAuthoritySnapshot(
@@ -499,7 +611,7 @@ export async function refreshOrLoadAuthoritySnapshot(
 		now?: Date;
 		forceRefresh?: boolean;
 	} = {},
-): Promise<{ doc: AuthoritySnapshotDoc; status: 'ok' | 'stale' | 'unavailable' | 'not_modified' }> {
+): Promise<{ doc: AuthoritySnapshotDoc; status: 'ok' | 'partial' | 'stale' | 'unavailable' | 'not_modified' }> {
 	const now = options.now ?? new Date();
 	const nowMs = now.getTime();
 	const fetchImpl = options.fetchImpl ?? ((input, init) => fetch(input, init));
@@ -534,15 +646,18 @@ export async function refreshOrLoadAuthoritySnapshot(
 		const isFresh =
 			prevDoc.lastSuccessAt !== null &&
 			nowMs - Date.parse(prevDoc.lastSuccessAt) <= spec.pollMinIntervalSeconds * 4 * 1000;
+		const freshStatus = prevDoc.completeness === 'partial' ? 'partial' : 'ok';
 		return {
 			doc: prevDoc,
-			status: prevDoc.lastSuccessAt ? (isFresh ? 'ok' : 'stale') : 'unavailable',
+			status: prevDoc.lastSuccessAt ? (isFresh ? freshStatus : 'stale') : 'unavailable',
 		};
 	}
 
 	try {
 		let pollResult: {
 			notModified?: boolean;
+			completeness: 'complete' | 'partial';
+			partialReasons: string[];
 			records: StoredWarningRecord[];
 			etag: string | null;
 			lastModified: string | null;
@@ -568,6 +683,8 @@ export async function refreshOrLoadAuthoritySnapshot(
 			sourceId: spec.sourceId,
 			checkedAt: now.toISOString(),
 			lastSuccessAt: now.toISOString(),
+			completeness: pollResult.completeness,
+			...(pollResult.partialReasons.length > 0 ? { partialReasons: pollResult.partialReasons } : {}),
 			etag: pollResult.etag,
 			lastModified: pollResult.lastModified,
 			backoffUntil: null,
@@ -581,7 +698,13 @@ export async function refreshOrLoadAuthoritySnapshot(
 				.catch(() => {});
 		}
 
-		return { doc: nextDoc, status: pollResult.notModified ? 'not_modified' : 'ok' };
+		const resolvedStatus =
+			pollResult.completeness === 'partial'
+				? 'partial'
+				: pollResult.notModified
+					? 'not_modified'
+					: 'ok';
+		return { doc: nextDoc, status: resolvedStatus };
 	} catch (err) {
 		const reason = err instanceof Error ? err.message : 'Upstream fetch error';
 		const failedDoc: AuthoritySnapshotDoc = {
@@ -589,6 +712,8 @@ export async function refreshOrLoadAuthoritySnapshot(
 			sourceId: spec.sourceId,
 			checkedAt: now.toISOString(),
 			lastSuccessAt: prevDoc?.lastSuccessAt ?? null,
+			completeness: prevDoc?.completeness ?? 'partial',
+			partialReasons: prevDoc?.partialReasons,
 			etag: prevDoc?.etag ?? null,
 			lastModified: prevDoc?.lastModified ?? null,
 			backoffUntil: new Date(nowMs + WARNING_BACKOFF_MS).toISOString(),
@@ -610,19 +735,30 @@ export async function refreshOrLoadAuthoritySnapshot(
 	}
 }
 
+export function effectiveRecordLifecycle(rec: StoredWarningRecord, now: Date = new Date()): WarningLifecycleState {
+	if (rec.lifecycleState === 'cancelled' || rec.msgType === 'Cancel') return 'cancelled';
+	if (rec.lifecycleState === 'superseded') return 'superseded';
+	const nowMs = now.getTime();
+	const expiresMs = rec.expiresAt ? Date.parse(rec.expiresAt) : NaN;
+	const sentMs = Date.parse(rec.sentAt);
+	if (rec.lifecycleState === 'expired') return 'expired';
+	if (Number.isFinite(expiresMs) && expiresMs <= nowMs) return 'expired';
+	if (rec.missingExpiry && Number.isFinite(sentMs) && nowMs - sentMs > MISSING_EXPIRY_MAX_AGE_MS) {
+		return 'expired';
+	}
+	const onsetMs = rec.onsetAt ? Date.parse(rec.onsetAt) : NaN;
+	if (Number.isFinite(onsetMs) && onsetMs > nowMs + CLOCK_SKEW_TOLERANCE_MS) return 'upcoming';
+	return 'active';
+}
+
 export function matchStoredRecordToPoint(
 	rec: StoredWarningRecord,
 	lat: number,
 	lng: number,
 	now: Date = new Date(),
 ): OfficialWarningItem | null {
-	const nowMs = now.getTime();
-	const expiresMs = rec.expiresAt ? Date.parse(rec.expiresAt) : NaN;
-	const onsetMs = rec.onsetAt ? Date.parse(rec.onsetAt) : NaN;
-	const sentMs = Date.parse(rec.sentAt);
-
-	if (Number.isFinite(expiresMs) && expiresMs <= nowMs) return null;
-	if (rec.missingExpiry && Number.isFinite(sentMs) && nowMs - sentMs > MISSING_EXPIRY_MAX_AGE_MS) {
+	const lifecycleState = effectiveRecordLifecycle(rec, now);
+	if (lifecycleState !== 'active' && lifecycleState !== 'upcoming') {
 		return null;
 	}
 
@@ -632,9 +768,6 @@ export function matchStoredRecordToPoint(
 			: matchPointToCapAreas(lat, lng, rec.areas, { countryCode: rec.countryCode });
 
 	if (!match.matched) return null;
-
-	const lifecycleState: OfficialWarningItem['lifecycleState'] =
-		Number.isFinite(onsetMs) && onsetMs > nowMs + CLOCK_SKEW_TOLERANCE_MS ? 'upcoming' : 'active';
 
 	return {
 		id: rec.id,
@@ -662,5 +795,57 @@ export function matchStoredRecordToPoint(
 		translations: rec.translations,
 		bulletinUrl: rec.bulletinUrl,
 		attribution: rec.attribution,
+		...(rec.references && rec.references.length > 0 ? { references: rec.references } : {}),
+	};
+}
+
+export interface PointAuthorityEvaluation {
+	visibleWarnings: OfficialWarningItem[];
+	explicitCancellations: StoredWarningRecord[];
+	supersededIds: Set<string>;
+	expiredIds: Set<string>;
+	activeRecordCount: number;
+}
+
+/**
+ * Shared point-in-time evaluation used by BOTH UI warning responses (/api/v1/warnings)
+ * and subscription notification dispatching to keep displayed state and alerts consistent.
+ */
+export function evaluateAuthorityRecordsForPoint(
+	doc: AuthoritySnapshotDoc,
+	lat: number,
+	lng: number,
+	now: Date = new Date(),
+): PointAuthorityEvaluation {
+	const visibleWarnings: OfficialWarningItem[] = [];
+	const explicitCancellations: StoredWarningRecord[] = [];
+	const supersededIds = new Set<string>();
+	const expiredIds = new Set<string>();
+	let activeRecordCount = 0;
+
+	for (const rec of doc.records) {
+		const state = effectiveRecordLifecycle(rec, now);
+		if (state === 'active' || state === 'upcoming') {
+			activeRecordCount++;
+			for (const refId of rec.references ?? []) {
+				supersededIds.add(refId);
+			}
+			const matched = matchStoredRecordToPoint(rec, lat, lng, now);
+			if (matched) visibleWarnings.push(matched);
+		} else if (state === 'cancelled') {
+			explicitCancellations.push(rec);
+		} else if (state === 'superseded') {
+			supersededIds.add(rec.identifier);
+		} else if (state === 'expired') {
+			expiredIds.add(rec.identifier);
+		}
+	}
+
+	return {
+		visibleWarnings,
+		explicitCancellations,
+		supersededIds,
+		expiredIds,
+		activeRecordCount,
 	};
 }
