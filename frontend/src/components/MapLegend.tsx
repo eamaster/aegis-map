@@ -72,8 +72,8 @@ export default function MapLegend({
 }: MapLegendProps) {
 	const { t } = useLocale();
 	const ds = useDesignSystem();
-	const [isMobile, setIsMobile] = useState(
-		typeof window !== 'undefined' ? window.innerWidth < 768 : false,
+	const [viewportWidth, setViewportWidth] = useState(
+		typeof window !== 'undefined' ? window.innerWidth : 1280,
 	);
 	const [desktopExpanded, setDesktopExpanded] = useState(true);
 	const [mobileIdleExpanded, setMobileIdleExpanded] = useState(false);
@@ -82,30 +82,35 @@ export default function MapLegend({
 
 	useEffect(() => {
 		const handleResize = () => {
-			setIsMobile(window.innerWidth < 768);
+			setViewportWidth(window.innerWidth);
 		};
 		window.addEventListener('resize', handleResize);
 		return () => window.removeEventListener('resize', handleResize);
 	}, []);
 
-	const isExpanded = !isMobile
-		? desktopExpanded
-		: showEventList
-			? true
-			: selectedDisasterId
-				? expandedForSelectionId === selectedDisasterId
-				: mobileIdleExpanded;
+	const isMobile = viewportWidth < 768;
+	// On phones and narrow tablets (<1024px) where an open inspector narrows the map,
+	// auto-collapse the legend to a compact pill on selection so the marker and pinned bubble stay unobstructed.
+	const collapseOnSelection = viewportWidth < 1024;
+
+	const isExpanded = showEventList
+		? true
+		: selectedDisasterId && collapseOnSelection
+			? expandedForSelectionId === selectedDisasterId
+			: isMobile
+				? mobileIdleExpanded
+				: desktopExpanded;
 
 	const setLegendExpanded = (next: boolean) => {
 		if (!next) {
 			setShowEventList(false);
 		}
-		if (!isMobile) {
-			setDesktopExpanded(next);
-		} else if (selectedDisasterId) {
+		if (selectedDisasterId && collapseOnSelection) {
 			setExpandedForSelectionId(next ? selectedDisasterId : null);
-		} else {
+		} else if (isMobile) {
 			setMobileIdleExpanded(next);
+		} else {
+			setDesktopExpanded(next);
 		}
 	};
 
