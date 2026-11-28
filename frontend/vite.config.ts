@@ -87,7 +87,16 @@ function aegisServiceWorkerManifestPlugin(): Plugin {
         }
       }
 
-      const sortedAssets = ['./', 'index.html', 'manifest.webmanifest', ...Array.from(assetFiles).sort()]
+      const brandAssets = ['favicon.ico', 'favicon.svg', 'icons/favicon-32x32.png', 'icons/icon-192.png'].filter((rel) =>
+        fs.existsSync(path.join(resolvedOutDir, rel)),
+      )
+      const sortedAssets = [
+        './',
+        'index.html',
+        'manifest.webmanifest',
+        ...brandAssets,
+        ...Array.from(assetFiles).sort(),
+      ]
       const dedupedAssets = Array.from(new Set(sortedAssets))
 
       const hasher = crypto.createHash('sha256')

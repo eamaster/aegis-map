@@ -1,5 +1,6 @@
 import type {
 	HistoryApiResponse,
+	PushLookupResponse,
 	SarScenesApiResponse,
 	SourceAnalyticsApiResponse,
 	SubscriptionCreateRequest,
@@ -74,9 +75,32 @@ export async function fetchSubscriptionStatus(signal?: AbortSignal): Promise<Sub
 			mode: 'unavailable',
 			smsAvailable: false,
 			reason: `Subscription status check failed (HTTP ${res.status}).`,
+			pushAvailable: false,
+			pushMode: 'unavailable',
+			pushReason: `Subscription status check failed (HTTP ${res.status}).`,
 		};
 	}
 	return (await res.json()) as SubscriptionServiceStatus;
+}
+
+async function parseSubscriptionJson(res: Response, fallbackMessage: string): Promise<SubscriptionResponse> {
+	try {
+		const body = (await res.json()) as Partial<SubscriptionResponse>;
+		if (typeof body.ok === 'boolean') {
+			return {
+				...body,
+				ok: body.ok,
+				message: typeof body.message === 'string' && body.message ? body.message : fallbackMessage,
+			};
+		}
+	} catch {
+		// non-JSON error body
+	}
+	return {
+		ok: false,
+		code: `http_${res.status}`,
+		message: fallbackMessage,
+	};
 }
 
 export async function submitSubscription(req: SubscriptionCreateRequest): Promise<SubscriptionResponse> {
@@ -85,7 +109,28 @@ export async function submitSubscription(req: SubscriptionCreateRequest): Promis
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(req),
 	});
-	return (await res.json()) as SubscriptionResponse;
+	return parseSubscriptionJson(res, `Subscription request failed (HTTP ${res.status}).`);
+}
+
+export async function lookupPushRegistrations(
+	endpoint: string,
+	signal?: AbortSignal,
+): Promise<PushLookupResponse> {
+	const res = await fetch(apiUrl('/api/v1/subscriptions/push-lookup'), {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ endpoint }),
+		signal,
+	});
+	if (!res.ok) {
+		return {
+			ok: false,
+			registrations: [],
+			code: `http_${res.status}`,
+			message: `Push registration lookup failed (HTTP ${res.status}).`,
+		};
+	}
+	return (await res.json()) as PushLookupResponse;
 }
 
 export async function confirmSubscriptionToken(token: string): Promise<SubscriptionResponse> {
@@ -94,7 +139,7 @@ export async function confirmSubscriptionToken(token: string): Promise<Subscript
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ token }),
 	});
-	return (await res.json()) as SubscriptionResponse;
+	return parseSubscriptionJson(res, `Confirmation failed (HTTP ${res.status}).`);
 }
 
 export async function unsubscribeSubscriptionToken(token: string): Promise<SubscriptionResponse> {
@@ -103,5 +148,37 @@ export async function unsubscribeSubscriptionToken(token: string): Promise<Subsc
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ token }),
 	});
-	return (await res.json()) as SubscriptionResponse;
+	return parseSubscriptionJson(res, `Unsubscribe failed (HTTP ${res.status}).`);
+}
+
+export async function unsubscribePushPlace(options: {
+	endpoint: string;
+	subscriptionId?: string;
+	sourceId: string;
+	lat: number;
+	lng: number;
+}): Promise<SubscriptionResponse> {
+	const res = await fetch(apiUrl('/api/v1/subscriptions/unsubscribe'), {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({
+			channel: 'web_push',
+			endpoint: options.endpoint,
+			scope: 'place',
+			...(options.subscriptionId ? { subscriptionId: options.subscriptionId } : {}),
+			sourceId: options.sourceId,
+			lat: options.lat,
+			lng: options.lng,
+		}),
+	});
+	return parseSubscriptionJson(res, `Disabling push for this place failed (HTTP ${res.status}).`);
+}
+
+export async function unsubscribePushSubscriptionEndpoint(endpoint: string): Promise<SubscriptionResponse> {
+	const res = await fetch(apiUrl('/api/v1/subscriptions/unsubscribe'), {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ channel: 'web_push', endpoint, scope: 'device' }),
+	});
+	return parseSubscriptionJson(res, `Disabling push on this device failed (HTTP ${res.status}).`);
 }

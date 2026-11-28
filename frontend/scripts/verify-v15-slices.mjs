@@ -296,9 +296,9 @@ async function main() {
 		await up.locator('[data-testid="manual-coords-input"]').fill('59.9139, 10.7522');
 		await up.locator('[data-testid="apply-coords-btn"]').click();
 		await up.locator('[data-testid="subscription-unavailable-banner"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
-		const emailDisabled = await up.locator('[data-testid="subscription-email-input"]').isDisabled();
-		const submitDisabled = await up.locator('[data-testid="subscription-submit-btn"]').isDisabled();
-		checks.record(emailDisabled && submitDisabled, 'subscription form disables inputs and displays unavailable banner when delivery is disabled');
+		const emailInputCount = await up.locator('[data-testid="subscription-email-input"]').count();
+		const submitBtnCount = await up.locator('[data-testid="subscription-submit-btn"]').count();
+		checks.record(emailInputCount === 0 && submitBtnCount === 0, 'subscription form hides inert email inputs and displays unavailable banner when delivery is disabled');
 		await unavailCtx.close();
 
 		// ------------------------------------------------------------------

@@ -10,7 +10,9 @@ import {
 	DEFAULT_OBSERVATION_WINDOW,
 	DEFAULT_VOLCANO_MODE,
 	DISASTER_TYPES,
+	GLOBAL_FIRMS_PRODUCTS,
 	isDisasterType,
+	isGlobalFirmsProduct,
 	isObservationWindow,
 	isVolcanoMode,
 	OBSERVATION_WINDOWS,
@@ -19,6 +21,7 @@ import {
 	VOLCANO_MODES,
 	type ApiCapability,
 	type DisasterType,
+	type GlobalFirmsProduct,
 	type ObservationWindow,
 	type VolcanoMode,
 } from '../../shared/contracts';
@@ -30,7 +33,9 @@ export {
 	DEFAULT_OBSERVATION_WINDOW,
 	DEFAULT_VOLCANO_MODE,
 	DISASTER_TYPES,
+	GLOBAL_FIRMS_PRODUCTS,
 	isDisasterType,
+	isGlobalFirmsProduct,
 	isObservationWindow,
 	isVolcanoMode,
 	OBSERVATION_WINDOWS,
@@ -39,6 +44,7 @@ export {
 	VOLCANO_MODES,
 	type ApiCapability,
 	type DisasterType,
+	type GlobalFirmsProduct,
 	type ObservationWindow,
 	type VolcanoMode,
 };
@@ -225,18 +231,7 @@ export const AREA_UNIT_TO_ACRES: Readonly<Record<string, number>> = {
 	sqmi: 640,
 };
 
-/**
- * Global FIRMS VIIRS sensor products ingested for worldwide coverage.
- * S-NPP (Suomi NPP), NOAA-20 (JPSS-1), and NOAA-21 (JPSS-2).
- */
-export const GLOBAL_FIRMS_PRODUCTS = ['VIIRS_SNPP_NRT', 'VIIRS_NOAA20_NRT', 'VIIRS_NOAA21_NRT'] as const;
-export type GlobalFirmsProduct = (typeof GLOBAL_FIRMS_PRODUCTS)[number];
-
-export function isGlobalFirmsProduct(value: unknown): value is GlobalFirmsProduct {
-	return typeof value === 'string' && (GLOBAL_FIRMS_PRODUCTS as readonly string[]).includes(value);
-}
-
-/** Localized /api/fire-hotspots primary sensor. */
+/** Localized /api/fire-hotspots default single-sensor constant (all VIIRS products live in GLOBAL_FIRMS_PRODUCTS). */
 export const LOCAL_FIRMS_SOURCE: GlobalFirmsProduct = 'VIIRS_SNPP_NRT';
 
 /** Derived route validation error messages. */

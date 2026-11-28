@@ -13,10 +13,13 @@ describe('buildImagerySpec', () => {
         expect(param(spec.url, 'TIME')).toBe(spec.date);
         expect(param(spec.url, 'BBOX')).toBe('44.5,37.5,45.5,38.5');
 
-        expect(spec.overlay).toMatchObject({ product: 'VIIRS_SNPP_Thermal_Anomalies_375m_All', date: '2026-10-09' });
+        expect(spec.overlay).toMatchObject({
+            product: 'VIIRS_NOAA20_Thermal_Anomalies_375m_All,VIIRS_SNPP_Thermal_Anomalies_375m_All',
+            date: null,
+        });
         expect(param(spec.overlay!.url, 'LAYERS')).toBe(spec.overlay!.product);
-        expect(param(spec.overlay!.url, 'TIME')).toBe(spec.overlay!.date);
-        expect(spec.overlay!.label).toContain('single requested UTC day');
+        expect(new URL(spec.overlay!.url).searchParams.has('TIME')).toBe(false);
+        expect(spec.overlay!.label).toContain('undated rolling composite');
     });
 
     it('labels MODIS 7-2-1 as false-color reflectance, not temperature', () => {

@@ -64,6 +64,23 @@ export async function checkD1SchemaReady(db: D1Database | undefined): Promise<D1
 	}
 }
 
+/**
+ * Checks whether additive migration 0003 (`push_subscription_keys`) has been applied.
+ * Kept separate from checkD1SchemaReady so backend deploys stay compatible before
+ * operator Web Push activation.
+ */
+export async function checkWebPushSchemaReady(db: D1Database | undefined): Promise<D1SchemaState> {
+	if (!db) return 'unbound';
+	try {
+		const row = await db
+			.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'push_subscription_keys'`)
+			.first<{ name: string }>();
+		return row?.name === 'push_subscription_keys' ? 'ready' : 'schema_missing';
+	} catch {
+		return 'schema_missing';
+	}
+}
+
 function computeRevisionHash(rec: Pick<DisasterRecord, 'title' | 'severity' | 'lat' | 'lng' | 'date'>): string {
 	const str = `${rec.title}|${rec.severity}|${rec.lat.toFixed(4)}|${rec.lng.toFixed(4)}|${rec.date}`;
 	let h = 2166136261;

@@ -119,7 +119,8 @@ export async function searchPlaces(
 	}
 
 	const doFetch = options.fetchImpl ?? ((input, init) => fetch(input, init));
-	const lang = options.language === 'fa' || options.language === 'ms' ? options.language : 'en';
+	const rawLang = (options.language ?? '').toLowerCase();
+	const lang = rawLang.startsWith('zh') ? 'zh' : rawLang === 'fa' || rawLang === 'ms' ? rawLang : 'en';
 	const url = `${GEOCODE_URL}?name=${encodeURIComponent(trimmed)}&count=8&language=${lang}&format=json`;
 
 	try {

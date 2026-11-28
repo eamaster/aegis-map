@@ -31,6 +31,7 @@
 	},
 	"vars": {
 		"CORS_ORIGINS": "https://hesam.me,https://www.hesam.me",
-		"ALLOW_SANDBOX_EMAIL": "true"
+		"ALLOW_SANDBOX_EMAIL": "true",
+		"ALLOW_SANDBOX_PUSH": "true"
 	}
 }

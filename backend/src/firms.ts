@@ -42,10 +42,19 @@ export interface FireHotspot {
 	daynight: FirmsDayNight | null;
 }
 
-export type FirmsWindowStatus = 'ok' | 'http_error' | 'timeout' | 'network_error' | 'malformed';
+export type FirmsWindowStatus = 'ok' | 'partial' | 'http_error' | 'timeout' | 'network_error' | 'malformed';
+
+export interface FirmsBoxOutcomeSummary {
+	bbox: string;
+	status: Exclude<FirmsWindowStatus, 'partial'>;
+	httpStatus?: number;
+	detections: number;
+	rejectedRows: number;
+}
 
 export interface FirmsWindowResult {
 	id: 'recent' | 'prior';
+	source?: GlobalFirmsProduct;
 	startDate: string;
 	endDate: string;
 	dayRange: number;
@@ -53,6 +62,9 @@ export interface FirmsWindowResult {
 	httpStatus?: number;
 	detections: number;
 	rejectedRows: number;
+	succeededBboxes?: string[];
+	failedBboxes?: string[];
+	boxOutcomes?: FirmsBoxOutcomeSummary[];
 }
 
 export type FirmsCoverageStatus = 'complete' | 'partial' | 'unavailable';
@@ -63,6 +75,7 @@ export interface FirmsCoverage {
 	requestedStart: string;
 	requestedEnd: string;
 	missingDates: string[];
+	missingBboxes?: string[];
 	windows: FirmsWindowResult[];
 }
 
@@ -81,7 +94,15 @@ export interface HotspotStats {
 export interface FireHotspotsResponse extends HotspotStats {
 	hotspots: FireHotspot[];
 	source: string;
+	sources: GlobalFirmsProduct[];
+	failedSources: GlobalFirmsProduct[];
 	sensor: string;
+	rawMatchedCount: number;
+	truncated: boolean;
+	/** Satellite detection counts across the full deduplicated matched set (before display cap). */
+	matchedSatelliteCounts?: Record<string, number>;
+	/** Satellite detection counts across the returned capped `hotspots` array. */
+	displayedSatelliteCounts?: Record<string, number>;
 	bboxes: string[];
 	coverage: FirmsCoverage;
 	rejectedRows: number;
@@ -89,13 +110,22 @@ export interface FireHotspotsResponse extends HotspotStats {
 	cacheVersion: string;
 }
 
+import {
+	canonicalizeFirmsSatellite,
+	formatFirmsSensorSummary,
+	GLOBAL_FIRMS_PRODUCTS,
+	isGlobalFirmsProduct,
+	type GlobalFirmsProduct,
+} from '../../shared/contracts';
 import { LOCAL_FIRMS_SOURCE } from './config';
 
 export const FIRMS_SOURCE = LOCAL_FIRMS_SOURCE;
-export const FIRMS_SENSOR_LABEL = 'VIIRS S-NPP 375 m (NRT)';
+export const FIRMS_SENSOR_LABEL = formatFirmsSensorSummary(GLOBAL_FIRMS_PRODUCTS);
 export const FIRMS_BBOX_DELTA = 0.5;
 export const FIRMS_CACHE_TTL_SECONDS = 1800;
-export const FIRMS_CACHE_VERSION = 'v4';
+export const FIRMS_CACHE_VERSION = 'v5';
+export const FIRMS_MAX_HOTSPOTS = 500;
+export const MAX_CONCURRENT_FIRMS_REQUESTS = 4;
 export const FIRMS_REQUEST_TIMEOUT_MS = 8000;
 export const FIRMS_LOOKBACK_DAYS = 7;
 const FIRMS_AREA_BASE = 'https://firms.modaps.eosdis.nasa.gov/api/area/csv';
@@ -233,13 +263,49 @@ export function planFirmsWindows(now: Date): FirmsWindowPlan[] {
 	];
 }
 
-export function buildFirmsAreaUrl(mapKey: string, bbox: string, dayRange: number, startDate: string): string {
-	return `${FIRMS_AREA_BASE}/${encodeURIComponent(mapKey)}/${FIRMS_SOURCE}/${bbox}/${dayRange}/${startDate}`;
+export function parseFirmsSourcesQuery(
+	raw: string | undefined,
+): { ok: true; products: GlobalFirmsProduct[] } | { ok: false; reason: string } {
+	if (raw === undefined || raw.trim() === '') {
+		return { ok: true, products: [...GLOBAL_FIRMS_PRODUCTS] };
+	}
+	const tokens = raw.split(',').map((t) => t.trim());
+	if (tokens.some((t) => t === '')) {
+		return { ok: false, reason: `sources query parameter must be comma-separated values from: ${GLOBAL_FIRMS_PRODUCTS.join(', ')}` };
+	}
+	const selected = new Set<GlobalFirmsProduct>();
+	for (const token of tokens) {
+		if (!isGlobalFirmsProduct(token)) {
+			return {
+				ok: false,
+				reason: `Invalid FIRMS source "${token}". Supported: ${GLOBAL_FIRMS_PRODUCTS.join(', ')}`,
+			};
+		}
+		selected.add(token);
+	}
+	const products = GLOBAL_FIRMS_PRODUCTS.filter((p) => selected.has(p));
+	return { ok: true, products };
 }
 
-/** Cache key bound to the exact queried boxes, source, and UTC date window. */
-export function buildFirmsCacheKey(bboxes: readonly string[], requestedStart: string, requestedEnd: string): string {
-	return `firms:${FIRMS_CACHE_VERSION}:${FIRMS_SOURCE}:${bboxes.join('|')}:${requestedStart}_${requestedEnd}`;
+export function buildFirmsAreaUrl(
+	mapKey: string,
+	bbox: string,
+	dayRange: number,
+	startDate: string,
+	source: GlobalFirmsProduct = FIRMS_SOURCE,
+): string {
+	return `${FIRMS_AREA_BASE}/${encodeURIComponent(mapKey)}/${source}/${bbox}/${dayRange}/${startDate}`;
+}
+
+/** Cache key bound to the exact queried boxes, normalized sensor set, and UTC date window. */
+export function buildFirmsCacheKey(
+	bboxes: readonly string[],
+	requestedStart: string,
+	requestedEnd: string,
+	products: readonly GlobalFirmsProduct[] = GLOBAL_FIRMS_PRODUCTS,
+): string {
+	const normalized = [...new Set(products)].sort().join(',');
+	return `firms:${FIRMS_CACHE_VERSION}:${normalized}:${bboxes.join('|')}:${requestedStart}_${requestedEnd}`;
 }
 
 export function redactSecret(text: string, secret: string): string {
@@ -419,10 +485,10 @@ export function parseFirmsCsv(csvText: string, expect?: FirmsCsvExpectation): Fi
 }
 
 export function hotspotIdentity(h: FireHotspot): string {
-	return `${h.latitude.toFixed(5)}|${h.longitude.toFixed(5)}|${h.acq_date}|${h.acq_time}|${h.satellite}`;
+	return `${h.latitude.toFixed(5)}|${h.longitude.toFixed(5)}|${h.acq_date}|${h.acq_time}|${canonicalizeFirmsSatellite(h.satellite)}`;
 }
 
-/** Deduplicate by observation identity (location, UTC date/time, satellite). */
+/** Deduplicate by observation identity (location, UTC date/time, canonical satellite). */
 export function deduplicateHotspots(records: readonly FireHotspot[]): FireHotspot[] {
 	const map = new Map<string, FireHotspot>();
 	for (const h of records) {
@@ -430,6 +496,39 @@ export function deduplicateHotspots(records: readonly FireHotspot[]): FireHotspo
 		if (!map.has(key)) map.set(key, h);
 	}
 	return Array.from(map.values());
+}
+
+function compareHotspotsNewestFirst(a: FireHotspot, b: FireHotspot): number {
+	const dateCmp = b.acq_date.localeCompare(a.acq_date);
+	if (dateCmp !== 0) return dateCmp;
+	const timeCmp = b.acq_time.localeCompare(a.acq_time);
+	if (timeCmp !== 0) return timeCmp;
+	const frpCmp = (b.frp ?? -1) - (a.frp ?? -1);
+	if (frpCmp !== 0) return frpCmp;
+	const btCmp = (b.bright_ti4 ?? -1) - (a.bright_ti4 ?? -1);
+	if (btCmp !== 0) return btCmp;
+	const latCmp = a.latitude - b.latitude;
+	if (latCmp !== 0) return latCmp;
+	const lngCmp = a.longitude - b.longitude;
+	if (lngCmp !== 0) return lngCmp;
+	return a.satellite.localeCompare(b.satellite);
+}
+
+async function runWithConcurrency<T>(tasks: readonly (() => Promise<T>)[], limit: number): Promise<T[]> {
+	if (tasks.length === 0) return [];
+	const results = new Array<T>(tasks.length);
+	let nextIndex = 0;
+	const workerCount = Math.max(1, Math.min(limit, tasks.length));
+	await Promise.all(
+		Array.from({ length: workerCount }, async () => {
+			while (true) {
+				const idx = nextIndex++;
+				if (idx >= tasks.length) break;
+				results[idx] = await tasks[idx]();
+			}
+		}),
+	);
+	return results;
 }
 
 export function computeHotspotStats(hotspots: readonly FireHotspot[]): HotspotStats {
@@ -467,7 +566,8 @@ export function computeHotspotStats(hotspots: readonly FireHotspot[]): HotspotSt
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 interface BoxOutcome {
-	status: FirmsWindowStatus;
+	bbox: string;
+	status: Exclude<FirmsWindowStatus, 'partial'>;
 	httpStatus?: number;
 	hotspots: FireHotspot[];
 	rejectedRows: number;
@@ -485,15 +585,16 @@ async function fetchBox(
 		res = await fetchImpl(url, { signal: AbortSignal.timeout(FIRMS_REQUEST_TIMEOUT_MS) });
 	} catch (err) {
 		const name = err instanceof Error ? err.name : 'Error';
-		const status: FirmsWindowStatus = name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : 'network_error';
+		const status: Exclude<FirmsWindowStatus, 'partial'> =
+			name === 'TimeoutError' || name === 'AbortError' ? 'timeout' : 'network_error';
 		const message = err instanceof Error ? redactSecret(err.message, mapKey) : 'unknown';
 		console.warn(`FIRMS ${label}: ${status} (${name}: ${message})`);
-		return { status, hotspots: [], rejectedRows: 0 };
+		return { bbox: expect.bbox, status, hotspots: [], rejectedRows: 0 };
 	}
 
 	if (!res.ok) {
 		console.warn(`FIRMS ${label}: HTTP ${res.status}`);
-		return { status: 'http_error', httpStatus: res.status, hotspots: [], rejectedRows: 0 };
+		return { bbox: expect.bbox, status: 'http_error', httpStatus: res.status, hotspots: [], rejectedRows: 0 };
 	}
 
 	let text: string;
@@ -502,28 +603,43 @@ async function fetchBox(
 	} catch (err) {
 		const name = err instanceof Error ? err.name : 'Error';
 		console.warn(`FIRMS ${label}: body read failed (${name})`);
-		return { status: name === 'TimeoutError' ? 'timeout' : 'network_error', httpStatus: res.status, hotspots: [], rejectedRows: 0 };
+		return {
+			bbox: expect.bbox,
+			status: name === 'TimeoutError' ? 'timeout' : 'network_error',
+			httpStatus: res.status,
+			hotspots: [],
+			rejectedRows: 0,
+		};
 	}
 
 	const parsed = parseFirmsCsv(text, expect);
 	if (!parsed.ok) {
 		console.warn(`FIRMS ${label}: malformed response (${parsed.reason})`);
-		return { status: 'malformed', httpStatus: res.status, hotspots: [], rejectedRows: 0 };
+		return { bbox: expect.bbox, status: 'malformed', httpStatus: res.status, hotspots: [], rejectedRows: 0 };
 	}
 	if (parsed.rejectedRows > 0) {
 		console.warn(`FIRMS ${label}: rejected ${parsed.rejectedRows} invalid rows`);
 	}
-	return { status: 'ok', httpStatus: res.status, hotspots: parsed.hotspots, rejectedRows: parsed.rejectedRows };
+	return {
+		bbox: expect.bbox,
+		status: 'ok',
+		httpStatus: res.status,
+		hotspots: parsed.hotspots,
+		rejectedRows: parsed.rejectedRows,
+	};
 }
 
 export interface FirmsFetchOptions {
 	now?: Date;
 	fetchImpl?: FetchLike;
+	sources?: readonly GlobalFirmsProduct[];
+	maxHotspots?: number;
 }
 
 /**
- * Fetch the 7-day window. Never converts a failed window into "no detections":
- * each window carries its own status, and coverage.status reflects them.
+ * Fetch the 7-day window across requested FIRMS VIIRS sensors (defaulting to S-NPP, NOAA-20, NOAA-21).
+ * Never converts a failed window/sensor into "no detections": each window carries its own status,
+ * and coverage.status reflects them.
  */
 export async function fetch7DayFirmsHotspots(
 	lat: number,
@@ -533,55 +649,141 @@ export async function fetch7DayFirmsHotspots(
 ): Promise<FireHotspotsResponse> {
 	const now = options.now ?? new Date();
 	const fetchImpl: FetchLike = options.fetchImpl ?? ((input, init) => fetch(input, init));
+	const requestedSet = new Set(options.sources && options.sources.length > 0 ? options.sources : GLOBAL_FIRMS_PRODUCTS);
+	const products = GLOBAL_FIRMS_PRODUCTS.filter((p) => requestedSet.has(p));
+	const maxHotspots = Math.max(1, options.maxHotspots ?? FIRMS_MAX_HOTSPOTS);
 	const bboxes = buildFirmsBboxes(lat, lng);
 	const plans = planFirmsWindows(now);
 
-	const windowResults = await Promise.all(
-		plans.map(async (plan) => {
-			const boxes = await Promise.all(
-				bboxes.map((bbox, i) =>
-					fetchBox(
-						buildFirmsAreaUrl(mapKey, bbox, plan.dayRange, plan.startDate),
-						{ startDate: plan.startDate, endDate: plan.endDate, bbox },
-						mapKey,
-						`${plan.id} window box ${i + 1}/${bboxes.length}`,
-						fetchImpl,
-					),
-				),
+	interface BoxFetchSpec {
+		attemptIdx: number;
+		product: GlobalFirmsProduct;
+		plan: FirmsWindowPlan;
+		bbox: string;
+		boxIdx: number;
+	}
+
+	const attempts: Array<{ product: GlobalFirmsProduct; plan: FirmsWindowPlan; boxes: BoxOutcome[] }> = [];
+	const specs: BoxFetchSpec[] = [];
+	for (const product of products) {
+		for (const plan of plans) {
+			const attemptIdx = attempts.length;
+			attempts.push({ product, plan, boxes: new Array<BoxOutcome>(bboxes.length) });
+			bboxes.forEach((bbox, boxIdx) => {
+				specs.push({ attemptIdx, product, plan, bbox, boxIdx });
+			});
+		}
+	}
+
+	await runWithConcurrency(
+		specs.map((spec) => async () => {
+			const outcome = await fetchBox(
+				buildFirmsAreaUrl(mapKey, spec.bbox, spec.plan.dayRange, spec.plan.startDate, spec.product),
+				{ startDate: spec.plan.startDate, endDate: spec.plan.endDate, bbox: spec.bbox },
+				mapKey,
+				`${spec.product} ${spec.plan.id} window box ${spec.boxIdx + 1}/${bboxes.length}`,
+				fetchImpl,
 			);
-			const failed = boxes.find((b) => b.status !== 'ok');
-			const hotspots = failed ? [] : boxes.flatMap((b) => b.hotspots);
-			const result: FirmsWindowResult = {
-				id: plan.id,
-				startDate: plan.startDate,
-				endDate: plan.endDate,
-				dayRange: plan.dayRange,
-				status: failed ? failed.status : 'ok',
-				...(failed?.httpStatus !== undefined ? { httpStatus: failed.httpStatus } : {}),
-				detections: hotspots.length,
-				rejectedRows: boxes.reduce((sum, b) => sum + b.rejectedRows, 0),
-			};
-			return { result, hotspots };
+			attempts[spec.attemptIdx].boxes[spec.boxIdx] = outcome;
 		}),
+		MAX_CONCURRENT_FIRMS_REQUESTS,
 	);
 
-	const okWindows = windowResults.filter((w) => w.result.status === 'ok');
+	const countBySatellite = (records: readonly FireHotspot[]): Record<string, number> => {
+		const counts: Record<string, number> = {};
+		for (const h of records) {
+			const sat = canonicalizeFirmsSatellite(h.satellite);
+			counts[sat] = (counts[sat] ?? 0) + 1;
+		}
+		return counts;
+	};
+
+	const attemptResults = attempts.map(({ product, plan, boxes }) => {
+		const okBoxes = boxes.filter((b) => b.status === 'ok');
+		const failedBoxes = boxes.filter((b) => b.status !== 'ok');
+		const firstFailed = failedBoxes[0];
+
+		// Always preserve valid raw detections from every box that succeeded, even if a sibling box failed.
+		const hotspots = okBoxes.flatMap((b) => b.hotspots).map((h) => ({
+			...h,
+			satellite: canonicalizeFirmsSatellite(h.satellite, product),
+		}));
+
+		const windowStatus: FirmsWindowStatus =
+			failedBoxes.length === 0 ? 'ok' : okBoxes.length > 0 ? 'partial' : firstFailed.status;
+
+		const result: FirmsWindowResult = {
+			id: plan.id,
+			source: product,
+			startDate: plan.startDate,
+			endDate: plan.endDate,
+			dayRange: plan.dayRange,
+			status: windowStatus,
+			...(firstFailed?.httpStatus !== undefined ? { httpStatus: firstFailed.httpStatus } : {}),
+			detections: hotspots.length,
+			rejectedRows: boxes.reduce((sum, b) => sum + b.rejectedRows, 0),
+			...(bboxes.length > 1
+				? {
+						succeededBboxes: okBoxes.map((b) => b.bbox),
+						failedBboxes: failedBoxes.map((b) => b.bbox),
+						boxOutcomes: boxes.map((b) => ({
+							bbox: b.bbox,
+							status: b.status,
+							...(b.httpStatus !== undefined ? { httpStatus: b.httpStatus } : {}),
+							detections: b.hotspots.length,
+							rejectedRows: b.rejectedRows,
+						})),
+				  }
+				: {}),
+		};
+		return { product, result, hotspots, okBoxCount: okBoxes.length, totalBoxCount: boxes.length };
+	});
+
+	const totalBoxRequests = attemptResults.reduce((sum, w) => sum + w.totalBoxCount, 0);
+	const okBoxRequests = attemptResults.reduce((sum, w) => sum + w.okBoxCount, 0);
 	const status: FirmsCoverageStatus =
-		okWindows.length === windowResults.length ? 'complete' : okWindows.length === 0 ? 'unavailable' : 'partial';
+		okBoxRequests === totalBoxRequests ? 'complete' : okBoxRequests === 0 ? 'unavailable' : 'partial';
 
-	const missingDates = windowResults
-		.filter((w) => w.result.status !== 'ok')
-		.flatMap((w) => datesBetween(w.result.startDate, w.result.endDate))
-		.sort();
+	const failedSourceSet = new Set(
+		attemptResults.filter((w) => w.result.status !== 'ok').map((w) => w.product),
+	);
+	const failedSources = products.filter((p) => failedSourceSet.has(p));
 
-	const hotspots = deduplicateHotspots(okWindows.flatMap((w) => w.hotspots));
+	const missingDateSet = new Set<string>();
+	const missingBboxSet = new Set<string>();
+	for (const attempt of attemptResults) {
+		if (attempt.result.status !== 'ok') {
+			for (const d of datesBetween(attempt.result.startDate, attempt.result.endDate)) {
+				missingDateSet.add(d);
+			}
+			for (const b of attempt.result.failedBboxes ?? []) {
+				missingBboxSet.add(b);
+			}
+		}
+	}
+	const missingDates = Array.from(missingDateSet).sort();
+	const missingBboxes = Array.from(missingBboxSet);
+
+	const deduplicated = deduplicateHotspots(attemptResults.flatMap((w) => w.hotspots));
+	deduplicated.sort(compareHotspotsNewestFirst);
+	const rawMatchedCount = deduplicated.length;
+	const truncated = rawMatchedCount > maxHotspots;
+	const hotspots = deduplicated.slice(0, maxHotspots);
 	const stats = computeHotspotStats(hotspots);
+	const matchedSatelliteCounts = countBySatellite(deduplicated);
+	const displayedSatelliteCounts = countBySatellite(hotspots);
 
 	return {
 		hotspots,
 		...stats,
-		source: FIRMS_SOURCE,
-		sensor: FIRMS_SENSOR_LABEL,
+		source: products.join(','),
+		sources: products,
+		failedSources,
+		sensor: formatFirmsSensorSummary(products),
+		rawMatchedCount,
+		truncated,
+		matchedSatelliteCounts,
+		displayedSatelliteCounts,
 		bboxes,
 		coverage: {
 			status,
@@ -589,9 +791,10 @@ export async function fetch7DayFirmsHotspots(
 			requestedStart: plans[1].startDate,
 			requestedEnd: plans[0].endDate,
 			missingDates,
-			windows: windowResults.map((w) => w.result),
+			...(missingBboxes.length > 0 ? { missingBboxes } : {}),
+			windows: attemptResults.map((w) => w.result),
 		},
-		rejectedRows: windowResults.reduce((sum, w) => sum + w.result.rejectedRows, 0),
+		rejectedRows: attemptResults.reduce((sum, w) => sum + w.result.rejectedRows, 0),
 		fetchedAt: now.toISOString(),
 		cacheVersion: FIRMS_CACHE_VERSION,
 	};
@@ -604,6 +807,7 @@ export function isUsableCachedFirms(value: unknown): value is FireHotspotsRespon
 	return (
 		v.cacheVersion === FIRMS_CACHE_VERSION &&
 		Array.isArray(v.hotspots) &&
+		Array.isArray(v.sources) &&
 		typeof v.totalCount === 'number' &&
 		v.totalCount === v.hotspots.length &&
 		!!v.coverage &&

@@ -6,8 +6,10 @@ import {
 	deduplicateHotspots,
 	fetch7DayFirmsHotspots,
 	FireHotspot,
+	isUsableCachedFirms,
 	parseCoordinateQuery,
 	parseFirmsCsv,
+	parseFirmsSourcesQuery,
 	parseStrictNumber,
 	planFirmsWindows,
 	validateCoordinates,
@@ -106,13 +108,33 @@ describe('FIRMS bounding boxes and windows', () => {
 		expect(prior).toEqual({ id: 'prior', startDate: '2026-10-04', endDate: '2026-10-05', dayRange: 2 });
 	});
 
-	it('binds the cache key to the exact queried boxes and window', () => {
+	it('binds the cache key to the exact queried boxes, canonical source order, and window', () => {
 		const a = buildFirmsCacheKey(buildFirmsBboxes(45.72, 37.95), '2026-10-04', '2026-10-10');
 		const b = buildFirmsCacheKey(buildFirmsBboxes(45.724, 37.95), '2026-10-04', '2026-10-10');
 		const c = buildFirmsCacheKey(buildFirmsBboxes(45.72, 37.95), '2026-10-05', '2026-10-11');
-		expect(a).toMatch(/^firms:v4:VIIRS_SNPP_NRT:/);
+		const reordered = buildFirmsCacheKey(
+			buildFirmsBboxes(45.72, 37.95),
+			'2026-10-04',
+			'2026-10-10',
+			['VIIRS_NOAA21_NRT', 'VIIRS_SNPP_NRT', 'VIIRS_NOAA20_NRT'],
+		);
+		expect(a).toMatch(/^firms:v5:/);
+		expect(a).toBe(reordered);
 		expect(a).not.toBe(b);
 		expect(a).not.toBe(c);
+	});
+
+	it('parses ?sources= query strictly in canonical product order', () => {
+		expect(parseFirmsSourcesQuery(undefined)).toEqual({
+			ok: true,
+			products: ['VIIRS_SNPP_NRT', 'VIIRS_NOAA20_NRT', 'VIIRS_NOAA21_NRT'],
+		});
+		expect(parseFirmsSourcesQuery('VIIRS_NOAA20_NRT,VIIRS_SNPP_NRT')).toEqual({
+			ok: true,
+			products: ['VIIRS_SNPP_NRT', 'VIIRS_NOAA20_NRT'],
+		});
+		expect(parseFirmsSourcesQuery('MODIS_NRT')).toMatchObject({ ok: false });
+		expect(parseFirmsSourcesQuery('VIIRS_SNPP_NRT,')).toMatchObject({ ok: false });
 	});
 });
 
@@ -256,13 +278,21 @@ describe('FIRMS deduplication and statistics', () => {
 });
 
 describe('fetch7DayFirmsHotspots window outcomes', () => {
-	const run = (handler: (url: string) => Response | Promise<Response>, lat = 45.72, lng = 37.95) => {
+	const run = (
+		handler: (url: string) => Response | Promise<Response>,
+		lat = 45.72,
+		lng = 37.95,
+		extra: Partial<Parameters<typeof fetch7DayFirmsHotspots>[3]> = { sources: ['VIIRS_SNPP_NRT'] },
+	) => {
 		const calls: string[] = [];
 		const fetchImpl = async (url: string) => {
 			calls.push(url);
 			return handler(url);
 		};
-		return fetch7DayFirmsHotspots(lat, lng, MAP_KEY, { now: NOW, fetchImpl }).then((result) => ({ result, calls }));
+		return fetch7DayFirmsHotspots(lat, lng, MAP_KEY, { now: NOW, fetchImpl, ...extra }).then((result) => ({
+			result,
+			calls,
+		}));
 	};
 
 	it('requests both windows with explicit start dates and combines observations', async () => {
@@ -285,8 +315,75 @@ describe('fetch7DayFirmsHotspots window outcomes', () => {
 			'2026-10-05 1026 n',
 			'2026-10-06 1026 h',
 		]);
+		expect(result.hotspots[0].satellite).toBe('S-NPP');
 		expect(result.totalCount).toBe(3);
 		expect(result.lowConfidence).toBe(1);
+	});
+
+	it('queries S-NPP, NOAA-20, and NOAA-21 by default with bounded concurrency (<=4), returns NOAA-20-only cells, deduplicates canonical satellites, and caps at 500', async () => {
+		let active = 0;
+		let maxActive = 0;
+		const n20Row = '32.25000,6.75000,342.10,0.40,0.40,2026-10-09,1310,1,VIIRS,h,2.0NRT,292.00,12.40,D';
+		const n21Row = '32.26000,6.76000,338.00,0.40,0.40,2026-10-09,1310,N21,VIIRS,n,2.0NRT,291.00,6.10,D';
+		const multiRes = await fetch7DayFirmsHotspots(32.25, 6.75, MAP_KEY, {
+			now: NOW,
+			sources: undefined,
+			fetchImpl: async (url) => {
+				active++;
+				maxActive = Math.max(maxActive, active);
+				await Promise.resolve();
+				active--;
+				if (url.includes('/VIIRS_NOAA20_NRT/') && url.includes('/5/')) {
+					return csvResponse([FIRMS_HEADER, n20Row].join('\n'));
+				}
+				return csvResponse(`${FIRMS_HEADER}\n`);
+			},
+		});
+		expect(maxActive).toBeLessThanOrEqual(4);
+		expect(multiRes.sources).toEqual(['VIIRS_SNPP_NRT', 'VIIRS_NOAA20_NRT', 'VIIRS_NOAA21_NRT']);
+		expect(multiRes.coverage.status).toBe('complete');
+		expect(multiRes.totalCount).toBe(1);
+		expect(multiRes.hotspots[0].satellite).toBe('NOAA-20');
+
+		// Deduplicate across canonical satellite aliases ('1' vs 'NOAA-20') while keeping NOAA-21 distinct
+		const deduped = deduplicateHotspots([
+			hotspot({ latitude: 32.25, longitude: 6.75, acq_date: '2026-10-09', acq_time: '1310', satellite: '1' }),
+			hotspot({ latitude: 32.25, longitude: 6.75, acq_date: '2026-10-09', acq_time: '1310', satellite: 'NOAA-20' }),
+			hotspot({ latitude: 32.25, longitude: 6.75, acq_date: '2026-10-09', acq_time: '1310', satellite: 'N21' }),
+		]);
+		expect(deduped).toHaveLength(2);
+
+		// Mixed NOAA-20 + NOAA-21 + partial failure on S-NPP + 500 payload cap
+		const manyRows = Array.from({ length: 520 }, (_, i) => {
+			const lat = (32.1 + i * 0.0005).toFixed(5);
+			const lng = (6.6 + (i % 20) * 0.01).toFixed(5);
+			return `${lat},${lng},340.0,0.4,0.4,2026-10-09,1310,N20,VIIRS,n,2.0NRT,291.0,5.0,D`;
+		});
+		const capped = await fetch7DayFirmsHotspots(32.25, 6.75, MAP_KEY, {
+			now: NOW,
+			fetchImpl: async (url) => {
+				if (url.includes('/VIIRS_SNPP_NRT/') && url.includes('/2/')) {
+					return new Response('upstream err', { status: 500 });
+				}
+				if (url.includes('/VIIRS_NOAA20_NRT/') && url.includes('/5/')) {
+					return csvResponse([FIRMS_HEADER, ...manyRows].join('\n'));
+				}
+				if (url.includes('/VIIRS_NOAA21_NRT/') && url.includes('/5/')) {
+					return csvResponse([FIRMS_HEADER, n21Row].join('\n'));
+				}
+				return csvResponse(`${FIRMS_HEADER}\n`);
+			},
+		});
+		expect(capped.coverage.status).toBe('partial');
+		expect(capped.failedSources).toEqual(['VIIRS_SNPP_NRT']);
+		expect(capped.rawMatchedCount).toBe(521);
+		expect(capped.truncated).toBe(true);
+		expect(capped.hotspots).toHaveLength(500);
+		expect(capped.totalCount).toBe(500);
+		expect(capped.matchedSatelliteCounts).toEqual({ 'NOAA-20': 520, 'NOAA-21': 1 });
+		const displayedSum = Object.values(capped.displayedSatelliteCounts ?? {}).reduce((a, b) => a + b, 0);
+		expect(displayedSum).toBe(500);
+		expect(isUsableCachedFirms(capped)).toBe(false);
 	});
 
 	it('treats valid header-only responses as complete, legitimately empty coverage', async () => {
@@ -327,19 +424,47 @@ describe('fetch7DayFirmsHotspots window outcomes', () => {
 		const { result } = await run(() => csvResponse([FIRMS_HEADER, ROW_A].join('\n')));
 		expect(result.coverage.status).toBe('partial');
 		expect(result.coverage.windows.find((w) => w.id === 'prior')?.status).toBe('malformed');
-		expect(result.hotspots.map(hotspotKey)).toEqual(['45.22203|38.3917|2026-10-06|1026|N']);
+		expect(result.hotspots.map(hotspotKey)).toEqual(['45.22203|38.3917|2026-10-06|1026|S-NPP']);
 	});
 
-	it('queries both halves of an antimeridian box and fails the window if either half fails', async () => {
+	it('preserves valid detections from the successful half of an antimeridian split, reports narrow missingBboxes, and never caches partial results', async () => {
+		const westHalfRow = '10.10000,179.60000,348.50,0.40,0.40,2026-10-09,1120,N20,VIIRS,h,2.0NRT,292.00,18.20,D';
 		const { result, calls } = await run(
-			(url) => (url.includes('/-180.0000,') && url.includes('/2/') ? new Response('', { status: 503 }) : csvResponse(`${FIRMS_HEADER}\n`)),
+			(url) => {
+				if (url.includes('/-180.0000,')) return new Response('upstream failure', { status: 503 });
+				if (url.includes('/5/')) return csvResponse([FIRMS_HEADER, westHalfRow].join('\n'));
+				return csvResponse(`${FIRMS_HEADER}\n`);
+			},
 			10,
 			179.8,
+			{ sources: ['VIIRS_NOAA20_NRT'] },
 		);
 		expect(calls).toHaveLength(4);
 		expect(result.bboxes).toHaveLength(2);
 		expect(result.coverage.status).toBe('partial');
-		expect(result.coverage.windows.find((w) => w.id === 'prior')?.status).toBe('http_error');
+		expect(result.totalCount).toBe(1);
+		expect(result.hotspots[0]).toMatchObject({ latitude: 10.1, longitude: 179.6, satellite: 'NOAA-20' });
+		expect(result.coverage.missingBboxes).toEqual(['-180.0000,9.5000,-179.7000,10.5000']);
+		const recentWin = result.coverage.windows.find((w) => w.id === 'recent');
+		expect(recentWin).toMatchObject({
+			status: 'partial',
+			detections: 1,
+			succeededBboxes: ['179.3000,9.5000,180.0000,10.5000'],
+			failedBboxes: ['-180.0000,9.5000,-179.7000,10.5000'],
+		});
+		expect(isUsableCachedFirms(result)).toBe(false);
+	});
+
+	it('never treats an empty partial antimeridian split as a confirmed zero or cacheable response', async () => {
+		const { result } = await run(
+			(url) => (url.includes('/-180.0000,') && url.includes('/2/') ? new Response('', { status: 503 }) : csvResponse(`${FIRMS_HEADER}\n`)),
+			10,
+			179.8,
+		);
+		expect(result.coverage.status).toBe('partial');
+		expect(result.totalCount).toBe(0);
+		expect(result.coverage.windows.find((w) => w.id === 'prior')?.status).toBe('partial');
+		expect(isUsableCachedFirms(result)).toBe(false);
 	});
 
 	it('keeps the MAP_KEY out of logs, including exception messages that echo the URL', async () => {

@@ -223,10 +223,10 @@ jobs:
           VITE_MAPBOX_TOKEN: ${{ secrets.VITE_MAPBOX_TOKEN || 'pk.ci_fallback_token' }}
           VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL || 'http://127.0.0.1:8787' }}
           CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          BASELINE_SHA: "60e18e0536c149d1a58bdfefa26ee4766f4ed1e3"
+          BASELINE_SHA: "556f4c39f27925ad037a9b2c4e7975e58df462de"
         run: |
           set -euo pipefail
-          BASELINE_COMMIT="60e18e0536c149d1a58bdfefa26ee4766f4ed1e3"
+          BASELINE_COMMIT="556f4c39f27925ad037a9b2c4e7975e58df462de"
           git worktree add --detach /tmp/aegis-baseline "$BASELINE_COMMIT"
           ln -s "$PWD/frontend/node_modules" /tmp/aegis-baseline/frontend/node_modules
           (cd /tmp/aegis-baseline/frontend && npm run build)

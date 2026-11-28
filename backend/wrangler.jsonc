@@ -93,7 +93,8 @@
 			},
 			"vars": {
 				"CORS_ORIGINS": "https://hesam.me,https://www.hesam.me,http://localhost:4173,http://127.0.0.1:4173,http://localhost:5173",
-				"ALLOW_SANDBOX_EMAIL": "true"
+				"ALLOW_SANDBOX_EMAIL": "true",
+				"ALLOW_SANDBOX_PUSH": "true"
 			}
 		}
 	}

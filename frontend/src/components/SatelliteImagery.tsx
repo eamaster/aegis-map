@@ -1,7 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Satellite, Download, ExternalLink, Flame, AlertCircle, MapPin } from 'lucide-react';
+import { canonicalizeFirmsSatellite } from '../../../shared/contracts';
 import { useDesignSystem } from '../hooks/useDesignSystem';
 import { apiUrl } from '../config/api';
+import type { FireDetectionCell } from '../types';
 import {
 	createHotspotLoader,
 	fireDisplayState,
@@ -13,17 +15,25 @@ import { GIBS_WMS_THERMAL_LAYERS } from '../config/gibs';
 import { BdiLtr } from './BdiLtr';
 
 interface SatelliteImageryProps {
+	disasterId?: string;
 	lat: number;
 	lng: number;
 	disasterType: 'fire' | 'volcano' | 'earthquake';
+	isHotspotCell?: boolean;
+	detectionCell?: FireDetectionCell;
 	date?: string;
 	title: string;
 }
 
 const MAX_MARKERS = 30;
 
-const fireHotspotsUrl = (lat: number, lng: number) =>
-	apiUrl(`/api/fire-hotspots?lat=${encodeURIComponent(String(lat))}&lng=${encodeURIComponent(String(lng))}`);
+const fireHotspotsUrl = (lat: number, lng: number, sources?: readonly string[]) => {
+	const base = `/api/fire-hotspots?lat=${encodeURIComponent(String(lat))}&lng=${encodeURIComponent(String(lng))}`;
+	if (sources && sources.length > 0) {
+		return apiUrl(`${base}&sources=${encodeURIComponent(sources.join(','))}`);
+	}
+	return apiUrl(base);
+};
 
 const getWorldviewLayers = (type: string): string => {
 	switch (type) {
@@ -45,14 +55,17 @@ const getConfidenceColor = (conf: string | null): string => {
 };
 
 export default function SatelliteImagery({
+	disasterId,
 	lat,
 	lng,
 	disasterType,
+	isHotspotCell = false,
+	detectionCell,
 	date,
 	title,
 }: SatelliteImageryProps) {
 	const ds = useDesignSystem();
-	const [selectedLayer, setSelectedLayer] = useState<ImageryLayer>('visual');
+	const [selectedLayer, setSelectedLayer] = useState<ImageryLayer>(() => (isHotspotCell ? 'fire' : 'visual'));
 	const [fireState, setFireState] = useState<FireHotspotState>({ state: 'idle' });
 	const [loader] = useState(() =>
 		createHotspotLoader(fireHotspotsUrl, (input, init) => fetch(input, init), setFireState),
@@ -120,6 +133,43 @@ export default function SatelliteImagery({
 		return { markers: placed.slice(0, MAX_MARKERS), offImage: visibleHotspots.length - placed.length };
 	}, [visibleHotspots, selectedLayer, spec.halfSizeDeg, lat, lng]);
 
+	const cellFootprintRect = useMemo(() => {
+		if (!detectionCell?.bounds || selectedLayer !== 'fire' || spec.halfSizeDeg === null) return null;
+		const [west, south, east, north] = detectionCell.bounds;
+		const half = spec.halfSizeDeg;
+		const left = Math.max(0, Math.min(100, 50 + ((west - lng) / (2 * half)) * 100));
+		const right = Math.max(0, Math.min(100, 50 + ((east - lng) / (2 * half)) * 100));
+		const top = Math.max(0, Math.min(100, 50 - ((north - lat) / (2 * half)) * 100));
+		const bottom = Math.max(0, Math.min(100, 50 - ((south - lat) / (2 * half)) * 100));
+		const width = Math.max(0, right - left);
+		const height = Math.max(0, bottom - top);
+		if (width <= 0 || height <= 0) return null;
+		return { leftPct: left, topPct: top, widthPct: width, heightPct: height };
+	}, [detectionCell, selectedLayer, spec.halfSizeDeg, lat, lng]);
+
+	const satelliteBreakdown = useMemo(() => {
+		const counts = new Map<string, number>();
+		if (visibleHotspots.length > 0) {
+			for (const h of visibleHotspots) {
+				const sat = canonicalizeFirmsSatellite(h.satellite);
+				counts.set(sat, (counts.get(sat) ?? 0) + 1);
+			}
+		} else if (detectionCell?.satelliteCounts && !loadedFire) {
+			for (const [rawSat, cnt] of Object.entries(detectionCell.satelliteCounts)) {
+				if (cnt > 0) {
+					const sat = canonicalizeFirmsSatellite(rawSat);
+					counts.set(sat, (counts.get(sat) ?? 0) + cnt);
+				}
+			}
+		}
+		return Array.from(counts.entries());
+	}, [visibleHotspots, detectionCell, loadedFire]);
+
+	const failedSensorLabels = useMemo(() => {
+		const raw = loadedFire?.data.failedSources ?? [];
+		return raw.map((s) => canonicalizeFirmsSatellite(s));
+	}, [loadedFire]);
+
 	const windowLabel = coverage ? `${coverage.requestedStart} – ${coverage.requestedEnd} UTC` : '';
 	const eventDateMs = date ? Date.parse(date) : NaN;
 	const reportedEventDay = Number.isFinite(eventDateMs)
@@ -139,6 +189,7 @@ export default function SatelliteImagery({
 		<div
 			className="relative overflow-hidden rounded-xl p-3.5 border space-y-3"
 			data-testid="satellite-imagery"
+			data-disaster-id={disasterId ?? ''}
 			data-firms-state={disasterType === 'fire' ? fireDisplay : 'not-applicable'}
 			data-firms-coverage={coverage?.status ?? ''}
 			data-firms-window={coverage ? `${coverage.requestedStart}/${coverage.requestedEnd}` : ''}
@@ -211,15 +262,24 @@ export default function SatelliteImagery({
 					{coverage?.status === 'partial' && (
 						<div
 							data-testid="firms-partial"
-							className="text-xs p-2.5 rounded-lg border"
+							className="text-xs p-2.5 rounded-lg border space-y-1"
 							style={{
 								background: 'rgba(234, 179, 8, 0.15)',
 								borderColor: 'rgba(234, 179, 8, 0.4)',
 								color: ds.text.primary,
 							}}
 						>
-							Partial FIRMS coverage: no data returned for {coverage.missingDates.join(', ')} (UTC).
-							Counts below cover the remaining days only.
+							<div>
+								Partial FIRMS coverage: incomplete data
+								{failedSensorLabels.length > 0 ? ` from ${failedSensorLabels.join(', ')}` : ''}
+								{coverage.missingDates.length > 0 ? ` for ${coverage.missingDates.join(', ')} (UTC)` : ''}.
+								Counts below cover only the portions that succeeded.
+							</div>
+							{coverage.missingBboxes && coverage.missingBboxes.length > 0 && (
+								<div className="text-[11px]" style={{ color: ds.text.secondary }}>
+									Missing box extent(s): <BdiLtr mono>{coverage.missingBboxes.join(' · ')}</BdiLtr>
+								</div>
+							)}
 						</div>
 					)}
 
@@ -346,6 +406,41 @@ export default function SatelliteImagery({
 									</span>
 								</span>
 							</div>
+
+							{satelliteBreakdown.length > 0 && (
+								<div className="flex flex-wrap items-center gap-1.5 text-[10px]" data-testid="firms-satellite-breakdown">
+									<span style={{ color: ds.text.tertiary }}>
+										{loadedFire.data.truncated ? 'Sensors (displayed subset):' : 'Sensors:'}
+									</span>
+									{satelliteBreakdown.map(([sat, count]) => (
+										<span
+											key={sat}
+											className="px-1.5 py-0.5 rounded border font-mono"
+											style={{
+												background: ds.surface.overlaySubtle,
+												borderColor: ds.surface.borderSubtle,
+												color: ds.text.secondary,
+											}}
+										>
+											{sat}: {count}
+										</span>
+									))}
+								</div>
+							)}
+
+							{loadedFire.data.truncated && loadedFire.data.rawMatchedCount && (
+								<p data-testid="firms-truncated-note" className="text-[10px]" style={{ color: ds.text.tertiary }}>
+									Showing newest {loadedFire.data.totalCount} of {loadedFire.data.rawMatchedCount} unique
+									matched detections in this ±0.5° area; counts, peaks, and sensor breakdown reflect the
+									displayed subset
+									{loadedFire.data.matchedSatelliteCounts
+										? ` (all matched: ${Object.entries(loadedFire.data.matchedSatelliteCounts)
+												.map(([s, c]) => `${s} ${c}`)
+												.join(', ')})`
+										: ''}
+									.
+								</p>
+							)}
 						</div>
 					) : (
 						<div
@@ -365,6 +460,16 @@ export default function SatelliteImagery({
 										low-confidence detection
 										{loadedFire.hiddenLowConfidence === 1 ? '' : 's'} in this ±0.5° area; they are
 										hidden from the map view.
+									</p>
+								</>
+							) : coverage?.status === 'partial' ? (
+								<>
+									<p data-testid="firms-partial-empty" className="text-xs font-bold" style={{ color: ds.text.secondary }}>
+										No Detections in Available Portion (<BdiLtr mono>{windowLabel}</BdiLtr>)
+									</p>
+									<p className="text-[11px] mt-1" style={{ color: ds.text.tertiary }}>
+										Coverage is incomplete, so absence of thermal anomalies cannot be confirmed across all
+										requested sensors, dates, and boxes.
 									</p>
 								</>
 							) : (
@@ -520,7 +625,8 @@ export default function SatelliteImagery({
 					</div>
 				) : (
 					<div
-						className="relative w-full aspect-[4/3] min-h-[190px]"
+						data-testid="imagery-frame"
+						className="relative w-full aspect-[4/3]"
 						style={{ backgroundColor: '#111827' }}
 					>
 						{imageStatus === 'loading' && (
@@ -538,7 +644,7 @@ export default function SatelliteImagery({
 							src={spec.url}
 							alt={`${spec.label}${spec.date ? ` ${spec.date}` : ''}`}
 							data-testid="imagery-base"
-							className="absolute inset-0 w-full h-full object-cover"
+							className="absolute inset-0 w-full h-full object-fill"
 							onError={(e) => {
 								const img = e.target as HTMLImageElement;
 								if (spec.layer === 'visual' && !img.dataset.fallback) {
@@ -559,16 +665,35 @@ export default function SatelliteImagery({
 									src={spec.overlay.url}
 									alt=""
 									data-testid="imagery-overlay"
-									className="absolute inset-0 w-full h-full object-cover pointer-events-none"
+									className="absolute inset-0 w-full h-full object-fill pointer-events-none"
 									style={{ mixBlendMode: 'screen' }}
 									onError={() => setOverlayFailedUrl(spec.overlay?.url ?? null)}
 									onLoad={() => setOverlayLoadedUrl(spec.overlay?.url ?? null)}
 								/>
 							)}
 
+							{cellFootprintRect && (
+								<div
+									data-testid="imagery-cell-footprint"
+									className="absolute border border-dashed border-amber-300/75 bg-amber-400/5 pointer-events-none"
+									style={{
+										left: `${cellFootprintRect.leftPct}%`,
+										top: `${cellFootprintRect.topPct}%`,
+										width: `${cellFootprintRect.widthPct}%`,
+										height: `${cellFootprintRect.heightPct}%`,
+										zIndex: 8,
+									}}
+									title="0.5° FIRMS detection grid cell footprint"
+								/>
+							)}
+
 							{markers.map(({ h, pos }) => (
 								<div
 									key={`${h.latitude}|${h.longitude}|${h.acq_date}|${h.acq_time}|${h.satellite}`}
+									data-testid="imagery-hotspot-marker"
+									data-lat={String(h.latitude)}
+									data-lng={String(h.longitude)}
+									data-satellite={h.satellite}
 									className={`absolute rounded-full ${getConfidenceColor(h.confidence)} shadow-lg pointer-events-auto`}
 									style={{
 										width: '10px',
@@ -579,7 +704,7 @@ export default function SatelliteImagery({
 										border: '2px solid white',
 										zIndex: 10,
 									}}
-									title={`${h.acq_date} ${h.acq_time} UTC · ${h.bright_ti4 ?? '?'}K · ${h.frp ?? '?'}MW`}
+									title={`${h.satellite} · ${h.acq_date} ${h.acq_time} UTC · ${h.bright_ti4 ?? '?'}K · ${h.frp ?? '?'}MW`}
 								/>
 							))}
 
@@ -611,10 +736,10 @@ export default function SatelliteImagery({
 				{spec.date ? `, requested UTC day ${spec.date}; swath and cloud coverage not confirmed` : ''}.
 				{spec.overlay &&
 					(overlayStatus === 'loading' || overlayStatus === 'loaded') &&
-					` Overlay: ${spec.overlay.label}, requested ${spec.overlay.date}; an empty overlay may mean no detections or no coverage.`}
+					` Overlay: ${spec.overlay.label}${spec.overlay.date ? `, requested ${spec.overlay.date}` : ''}; an empty overlay may mean no detections or no coverage.`}
 				{spec.overlay &&
 					overlayStatus === 'error' &&
-					` Overlay for ${spec.overlay.date} failed to load; thermal anomalies are not shown on the image.`}
+					` Overlay${spec.overlay.date ? ` for ${spec.overlay.date}` : ' (undated NRT thermal layer)'} failed to load; thermal anomalies are not shown on the image.`}
 				{spec.layer === 'fire' &&
 					loadedFire &&
 					` Markers: FIRMS detections ${windowLabel} (multi-day; not the same period as the overlay).`}
@@ -674,8 +799,8 @@ export default function SatelliteImagery({
 				{disasterType === 'fire' && selectedLayer === 'fire' && (
 					<p>
 						<strong style={{ color: ds.text.primary }}>Fire Hotspots:</strong> markers are NASA FIRMS
-						VIIRS S-NPP detections{loadedFire ? ` for ${windowLabel}` : ''}; the red overlay is a
-						single day of VIIRS thermal anomalies; the base is MODIS Aqua true color (±0.5° view).
+						VIIRS (S-NPP, NOAA-20, NOAA-21) detections{loadedFire ? ` for ${windowLabel}` : ''}; the red
+						overlay is an undated GIBS NRT VIIRS thermal anomaly composite; the base is MODIS Aqua true color (±0.5° view).
 					</p>
 				)}
 				{selectedLayer === 'falsecolor' && (

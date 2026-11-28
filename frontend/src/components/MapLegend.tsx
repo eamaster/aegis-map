@@ -70,7 +70,7 @@ export default function MapLegend({
 	selectedDisasterId = null,
 	onSelectDisaster,
 }: MapLegendProps) {
-	const { t } = useLocale();
+	const { locale, t } = useLocale();
 	const ds = useDesignSystem();
 	const [viewportWidth, setViewportWidth] = useState(
 		typeof window !== 'undefined' ? window.innerWidth : 1280,
@@ -132,11 +132,11 @@ export default function MapLegend({
 		const diffMs = now.getTime() - date.getTime();
 		const diffMins = Math.floor(diffMs / 60000);
 
-		if (diffMins < 1) return 'Just now';
+		if (diffMins < 1) return t.justNowLabel;
 		if (diffMins < 60) return `${diffMins}m ago`;
 		const diffHours = Math.floor(diffMins / 60);
 		if (diffHours < 24) return `${diffHours}h ago`;
-		return date.toLocaleString('en-US', {
+		return date.toLocaleString(locale === 'zh-Hans' ? 'zh-CN' : locale, {
 			month: 'short',
 			day: 'numeric',
 			hour: '2-digit',
@@ -203,7 +203,7 @@ export default function MapLegend({
 				</button>
 			) : (
 				<div
-					className="w-full max-h-[calc(100dvh-120px)] flex flex-col overflow-hidden"
+					className="w-full max-h-[calc(100dvh-96px)] flex flex-col overflow-hidden"
 					style={{
 						...ds.glass.panel,
 						borderRadius: ds.borderRadius.panel,
@@ -215,7 +215,7 @@ export default function MapLegend({
 				>
 					{/* Header */}
 					<div
-						className="shrink-0 flex items-center justify-between gap-2 px-3.5 py-2.5 border-b"
+						className="shrink-0 flex items-center justify-between gap-2 px-3 py-2 border-b"
 						style={{
 							borderColor: addOpacity(ds.colors.accent.blue, 28),
 						}}
@@ -232,7 +232,7 @@ export default function MapLegend({
 								className="text-[11px] font-extrabold uppercase tracking-wider"
 								style={{ color: ds.text.primary }}
 							>
-								Live Monitor
+								{t.liveMonitorTitle}
 							</span>
 						</div>
 						<button
@@ -241,7 +241,7 @@ export default function MapLegend({
 							onClick={() => setLegendExpanded(false)}
 							aria-expanded="true"
 							aria-label="Collapse legend"
-							className="min-h-[32px] min-w-[32px] rounded-lg flex items-center justify-center"
+							className="min-h-[30px] min-w-[30px] rounded-lg flex items-center justify-center"
 							style={{
 								color: ds.text.primary,
 								background: ds.surface.overlaySubtle,
@@ -252,26 +252,31 @@ export default function MapLegend({
 						</button>
 					</div>
 
-					{/* Scrollable Body */}
-					<div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-3.5 py-3 space-y-2.5">
+					{/* Single Intentional Scroll Body */}
+					<div
+						data-testid="legend-scroll-body"
+						className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-3 py-2 space-y-2"
+					>
 						<div>
-							<BdiLtr
-								mono
-								className="block text-2xl font-black leading-none tracking-tight"
-							>
-								{counts.total.toLocaleString()}
-							</BdiLtr>
-							<span
-								className="block text-xs font-bold mt-1"
-								style={{ color: ds.text.secondary }}
-							>
-								Active Events
-							</span>
+							<div className="flex items-baseline gap-2">
+								<BdiLtr
+									mono
+									className="text-xl font-black leading-none tracking-tight"
+								>
+									{counts.total.toLocaleString()}
+								</BdiLtr>
+								<span
+									className="text-xs font-bold"
+									style={{ color: ds.text.secondary }}
+								>
+									{t.activeEventsLabel}
+								</span>
+							</div>
 							{sourceNotice && (
 								<span
 									data-testid="disaster-source-notice"
 									role="status"
-									className="block text-[11px] font-semibold mt-1.5 leading-snug"
+									className="block text-[11px] font-semibold mt-1 leading-snug"
 									style={{ color: ds.colors.status.warning }}
 								>
 									{sourceNotice}
@@ -282,7 +287,7 @@ export default function MapLegend({
 						{!isV2 && (
 							<div
 								data-testid="legacy-data-notice"
-								className="px-2.5 py-1.5 rounded-md text-[11px] font-bold leading-snug"
+								className="px-2 py-1 rounded-md text-[11px] font-bold leading-snug"
 								style={{
 									background: addOpacity(ds.colors.status.warning, 15),
 									border: `1px solid ${addOpacity(ds.colors.status.warning, 40)}`,
@@ -298,7 +303,7 @@ export default function MapLegend({
 						{isV2 && (sourceStatus?.firms === 'warming' || sourceStatus?.firms === 'unavailable') && (
 							<div
 								data-testid="firms-status-notice"
-								className="px-2.5 py-1.5 rounded-md text-[11px] font-semibold leading-snug"
+								className="px-2 py-1 rounded-md text-[11px] font-semibold leading-snug"
 								style={{
 									background: addOpacity(ds.colors.status.warning, 12),
 									border: `1px solid ${addOpacity(ds.colors.status.warning, 30)}`,
@@ -309,15 +314,15 @@ export default function MapLegend({
 							</div>
 						)}
 
-						{/* Window & Context Controls */}
-						<div className="space-y-1.5">
-							<div className="flex items-center justify-between gap-2">
+						{/* Compact Inline Window & Scope Controls */}
+						<div className="flex items-center justify-between gap-2">
+							<div className="flex items-center gap-1.5">
 								<div
 									className="flex items-center gap-1 text-[11px] font-bold"
 									style={{ color: ds.text.secondary }}
 								>
-									<Clock size={12} strokeWidth={2.5} aria-hidden="true" />
-									<span>Window</span>
+									<Clock size={11} strokeWidth={2.5} aria-hidden="true" />
+									<span>{t.windowLabel}</span>
 								</div>
 								<div
 									data-testid="window-toggle-container"
@@ -332,7 +337,7 @@ export default function MapLegend({
 											key={win}
 											type="button"
 											onClick={() => onObservationWindowChange?.(win)}
-											className="min-h-[26px] px-2 rounded text-[11px] font-bold transition-colors"
+											className="min-h-[24px] px-1.5 rounded text-[11px] font-bold transition-colors"
 											style={{
 												background:
 													observationWindow === win ? ds.colors.accent.blue : 'transparent',
@@ -345,16 +350,16 @@ export default function MapLegend({
 								</div>
 							</div>
 
-							<div className="flex items-center justify-between gap-2">
+							<div className="flex items-center gap-1">
 								<span className="text-[11px] font-semibold" style={{ color: ds.text.tertiary }}>
-									Scope
+									{t.scopeLabel}
 								</span>
 								<button
 									type="button"
 									onClick={() =>
 										onVolcanoModeChange?.(volcanoMode === 'context' ? 'strict' : 'context')
 									}
-									className="min-h-[26px] px-2 rounded text-[11px] font-semibold border"
+									className="min-h-[24px] px-2 rounded text-[11px] font-semibold border"
 									style={{
 										background: ds.surface.overlaySubtle,
 										borderColor: ds.surface.border,
@@ -365,20 +370,20 @@ export default function MapLegend({
 									}}
 									title="Toggle between all active open EONET incidents and strict time-window filtering"
 								>
-									{volcanoMode === 'context' ? 'Active' : 'Strict'}
+									{volcanoMode === 'context' ? t.scopeActive : t.scopeStrict}
 								</button>
 							</div>
 						</div>
 
 						{/* Disaster Type Filter Rows */}
-						<div className="space-y-1.5">
+						<div className="space-y-1">
 							{/* Wildfires */}
 							<button
 								type="button"
 								onClick={() => onFilterToggle('fire')}
 								aria-pressed={isActive('fire')}
 								aria-label={`Toggle wildfires filter - ${counts.fires} active`}
-								className="w-full text-start rounded-lg px-3 py-2 border flex items-center justify-between gap-2.5 transition-opacity"
+								className="w-full text-start rounded-lg px-2.5 py-1.5 border flex items-center justify-between gap-2 transition-opacity"
 								style={{
 									background: isActive('fire')
 										? addOpacity(getDisasterColor('fire'), 15)
@@ -389,9 +394,9 @@ export default function MapLegend({
 									opacity: isActive('fire') ? 1 : 0.65,
 								}}
 							>
-								<div className="flex items-center gap-2.5 min-w-0">
+								<div className="flex items-center gap-2 min-w-0">
 									<div
-										className="w-6 h-6 rounded-md flex items-center justify-center shrink-0"
+										className="w-5 h-5 rounded flex items-center justify-center shrink-0"
 										style={{
 											background: isActive('fire')
 												? getDisasterColor('fire')
@@ -399,7 +404,7 @@ export default function MapLegend({
 										}}
 									>
 										<Flame
-											size={14}
+											size={12}
 											strokeWidth={2.5}
 											style={{ color: isActive('fire') ? '#ffffff' : ds.text.secondary }}
 											aria-hidden="true"
@@ -407,12 +412,12 @@ export default function MapLegend({
 									</div>
 									<div className="flex flex-col min-w-0">
 										<span
-											className="text-xs font-bold truncate"
+											className="text-xs font-bold leading-tight truncate"
 											style={{ color: isActive('fire') ? ds.text.primary : ds.text.secondary }}
 										>
-											Wildfires
+											{t.filterWildfires}
 										</span>
-										<span className="text-[10px] truncate" style={{ color: ds.text.tertiary }}>
+										<span className="text-[10px] leading-tight truncate" style={{ color: ds.text.tertiary }}>
 											{volcanoMode === 'context'
 												? 'NASA EONET · Open'
 												: `NASA EONET · ${observationWindow}`}
@@ -441,7 +446,7 @@ export default function MapLegend({
 								disabled={!isV2}
 								aria-pressed={isActive('fire_detection')}
 								aria-label={`Toggle satellite hotspots filter - ${counts.fireDetections ?? 0} active`}
-								className="w-full text-start rounded-lg px-3 py-2 border flex items-center justify-between gap-2.5 transition-opacity disabled:cursor-not-allowed"
+								className="w-full text-start rounded-lg px-2.5 py-1.5 border flex items-center justify-between gap-2 transition-opacity disabled:cursor-not-allowed"
 								style={{
 									background: isActive('fire_detection')
 										? addOpacity(getDisasterColor('fire_detection'), 15)
@@ -452,9 +457,9 @@ export default function MapLegend({
 									opacity: isV2 ? (isActive('fire_detection') ? 1 : 0.65) : 0.45,
 								}}
 							>
-								<div className="flex items-center gap-2.5 min-w-0">
+								<div className="flex items-center gap-2 min-w-0">
 									<div
-										className="w-6 h-6 rounded-md flex items-center justify-center shrink-0"
+										className="w-5 h-5 rounded flex items-center justify-center shrink-0"
 										style={{
 											background: isActive('fire_detection')
 												? getDisasterColor('fire_detection')
@@ -462,7 +467,7 @@ export default function MapLegend({
 										}}
 									>
 										<Radio
-											size={14}
+											size={12}
 											strokeWidth={2.5}
 											style={{
 												color: isActive('fire_detection') ? '#ffffff' : ds.text.secondary,
@@ -472,18 +477,18 @@ export default function MapLegend({
 									</div>
 									<div className="flex flex-col min-w-0">
 										<span
-											className="text-xs font-bold truncate"
+											className="text-xs font-bold leading-tight truncate"
 											style={{
 												color: isActive('fire_detection')
 													? ds.text.primary
 													: ds.text.secondary,
 											}}
 										>
-											Satellite Hotspots
+											{t.filterHotspots}
 										</span>
 										<span
 											data-testid="satellite-hotspots-subtitle"
-											className="text-[10px] truncate"
+											className="text-[10px] leading-tight truncate"
 											style={{ color: ds.text.tertiary }}
 										>
 											{formatFireCellsSubtitle(counts.fireCells, sourceStatus, isV2)}
@@ -518,7 +523,7 @@ export default function MapLegend({
 								onClick={() => onFilterToggle('volcano')}
 								aria-pressed={isActive('volcano')}
 								aria-label={`Toggle volcanoes filter - ${counts.volcanoes} active`}
-								className="w-full text-start rounded-lg px-3 py-2 border flex items-center justify-between gap-2.5 transition-opacity"
+								className="w-full text-start rounded-lg px-2.5 py-1.5 border flex items-center justify-between gap-2 transition-opacity"
 								style={{
 									background: isActive('volcano')
 										? addOpacity(getDisasterColor('volcano'), 15)
@@ -529,9 +534,9 @@ export default function MapLegend({
 									opacity: isActive('volcano') ? 1 : 0.65,
 								}}
 							>
-								<div className="flex items-center gap-2.5 min-w-0">
+								<div className="flex items-center gap-2 min-w-0">
 									<div
-										className="w-6 h-6 rounded-md flex items-center justify-center shrink-0"
+										className="w-5 h-5 rounded flex items-center justify-center shrink-0"
 										style={{
 											background: isActive('volcano')
 												? getDisasterColor('volcano')
@@ -539,7 +544,7 @@ export default function MapLegend({
 										}}
 									>
 										<Mountain
-											size={14}
+											size={12}
 											strokeWidth={2.5}
 											style={{ color: isActive('volcano') ? '#ffffff' : ds.text.secondary }}
 											aria-hidden="true"
@@ -549,7 +554,7 @@ export default function MapLegend({
 										className="text-xs font-bold truncate"
 										style={{ color: isActive('volcano') ? ds.text.primary : ds.text.secondary }}
 									>
-										Volcanoes
+										{t.filterVolcanoes}
 									</span>
 								</div>
 								<BdiLtr mono className="text-sm font-extrabold shrink-0">
@@ -571,7 +576,7 @@ export default function MapLegend({
 								onClick={() => onFilterToggle('earthquake')}
 								aria-pressed={isActive('earthquake')}
 								aria-label={`Toggle earthquakes filter - ${counts.earthquakes} active`}
-								className="w-full text-start rounded-lg px-3 py-2 border flex items-center justify-between gap-2.5 transition-opacity"
+								className="w-full text-start rounded-lg px-2.5 py-1.5 border flex items-center justify-between gap-2 transition-opacity"
 								style={{
 									background: isActive('earthquake')
 										? addOpacity(getDisasterColor('earthquake'), 15)
@@ -582,9 +587,9 @@ export default function MapLegend({
 									opacity: isActive('earthquake') ? 1 : 0.65,
 								}}
 							>
-								<div className="flex items-center gap-2.5 min-w-0">
+								<div className="flex items-center gap-2 min-w-0">
 									<div
-										className="w-6 h-6 rounded-md flex items-center justify-center shrink-0"
+										className="w-5 h-5 rounded flex items-center justify-center shrink-0"
 										style={{
 											background: isActive('earthquake')
 												? getDisasterColor('earthquake')
@@ -592,7 +597,7 @@ export default function MapLegend({
 										}}
 									>
 										<Waves
-											size={14}
+											size={12}
 											strokeWidth={2.5}
 											style={{ color: isActive('earthquake') ? '#ffffff' : ds.text.secondary }}
 											aria-hidden="true"
@@ -604,7 +609,7 @@ export default function MapLegend({
 											color: isActive('earthquake') ? ds.text.primary : ds.text.secondary,
 										}}
 									>
-										Earthquakes
+										{t.filterEarthquakes}
 									</span>
 								</div>
 								<BdiLtr mono className="text-sm font-extrabold shrink-0">
@@ -634,7 +639,7 @@ export default function MapLegend({
 									data-testid="legend-event-list-toggle"
 									aria-expanded={showEventList}
 									onClick={() => setShowEventList((v) => !v)}
-									className="w-full min-h-[34px] px-2.5 py-1.5 rounded-lg border text-xs font-bold flex items-center justify-between gap-2"
+									className="w-full min-h-[30px] px-2.5 py-1 rounded-lg border text-xs font-bold flex items-center justify-between gap-2"
 									style={{
 										background: ds.surface.overlaySubtle,
 										borderColor: ds.surface.border,
@@ -642,10 +647,10 @@ export default function MapLegend({
 									}}
 								>
 									<span className="inline-flex items-center gap-1.5">
-										<List size={13} aria-hidden="true" />
+										<List size={12} aria-hidden="true" />
 										<span>{t.browseEventsListLabel}</span>
 									</span>
-									<BdiLtr mono className="text-[11px]" >
+									<BdiLtr mono className="text-[11px]">
 										{browseItems.length}
 									</BdiLtr>
 								</button>
@@ -653,7 +658,7 @@ export default function MapLegend({
 								{showEventList && (
 									<ul
 										data-testid="legend-event-list"
-										className="mt-1.5 max-h-40 overflow-y-auto custom-scrollbar space-y-1"
+										className="mt-1.5 max-h-36 overflow-y-auto custom-scrollbar space-y-1"
 									>
 										{browseItems.map((ev) => {
 											const meta = getHazardMeta(ev.type);
@@ -697,18 +702,23 @@ export default function MapLegend({
 							</div>
 						)}
 
-						<p
-							data-testid="legend-scope"
-							className="text-[10px] leading-relaxed"
+						<details
+							data-testid="legend-scope-disclosure"
+							className="text-[10px]"
 							style={{ color: ds.text.tertiary }}
 						>
-							{DISASTER_SCOPE.fire} · {DISASTER_SCOPE.volcano} · {DISASTER_SCOPE.earthquake}
-						</p>
+							<summary className="cursor-pointer select-none font-semibold hover:underline py-0.5">
+								{t.scopeDisclosureLabel}
+							</summary>
+							<p data-testid="legend-scope" className="mt-1 leading-relaxed">
+								{DISASTER_SCOPE.fire} · {DISASTER_SCOPE.volcano} · {DISASTER_SCOPE.earthquake}
+							</p>
+						</details>
 					</div>
 
 					{/* Footer */}
 					<div
-						className="shrink-0 flex items-center justify-between gap-2 px-3.5 py-2 border-t"
+						className="shrink-0 flex items-center justify-between gap-2 px-3 py-1.5 border-t"
 						style={{
 							borderColor: addOpacity(ds.colors.accent.blue, 28),
 							background: ds.surface.overlaySubtle,
@@ -716,11 +726,11 @@ export default function MapLegend({
 					>
 						<div className="flex items-center gap-1.5 text-[11px]">
 							<span className="font-semibold" style={{ color: ds.text.secondary }}>
-								Updated
+								{t.updatedLabel}
 							</span>
 							<BdiLtr className="font-bold">
 								<span style={{ color: ds.text.primary }}>
-									{lastUpdated ? formatTime(lastUpdated) : 'Just now'}
+									{lastUpdated ? formatTime(lastUpdated) : t.justNowLabel}
 								</span>
 							</BdiLtr>
 						</div>
@@ -730,7 +740,7 @@ export default function MapLegend({
 								data-testid="refresh-disasters-btn"
 								onClick={onRefresh}
 								disabled={isRefreshing}
-								className="min-h-[32px] min-w-[32px] rounded-lg flex items-center justify-center disabled:opacity-40"
+								className="min-h-[30px] min-w-[30px] rounded-lg flex items-center justify-center disabled:opacity-40"
 								style={{
 									background: addOpacity(ds.colors.accent.blue, 20),
 									border: `1px solid ${addOpacity(ds.colors.accent.blue, 45)}`,
@@ -739,7 +749,7 @@ export default function MapLegend({
 								aria-label="Refresh disaster data"
 							>
 								<RefreshCw
-									size={13}
+									size={12}
 									className={isRefreshing ? 'animate-spin' : ''}
 									style={{ color: ds.colors.accent.blueLight }}
 									strokeWidth={2.5}
