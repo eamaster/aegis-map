@@ -97,12 +97,12 @@ export async function requestFireHotspots(
 }
 
 export interface HotspotLoader {
-    load(lat: number, lng: number): void;
+    load(lat: number, lng: number, sources?: readonly string[]): void;
     cancel(): void;
 }
 
 export function createHotspotLoader(
-    buildUrl: (lat: number, lng: number) => string,
+    buildUrl: (lat: number, lng: number, sources?: readonly string[]) => string,
     fetchImpl: FetchLike,
     onUpdate: (state: FireHotspotState) => void,
 ): HotspotLoader {
@@ -110,14 +110,14 @@ export function createHotspotLoader(
     let controller: AbortController | null = null;
 
     return {
-        load(lat, lng) {
+        load(lat, lng, sources) {
             controller?.abort();
             generation = nextGeneration(generation);
             const requestGeneration = generation;
             const current = new AbortController();
             controller = current;
             onUpdate({ state: 'loading' });
-            void requestFireHotspots(buildUrl(lat, lng), fetchImpl, current.signal).then((result) => {
+            void requestFireHotspots(buildUrl(lat, lng, sources), fetchImpl, current.signal).then((result) => {
                 if (result && isCurrentGeneration(requestGeneration, generation)) onUpdate(result);
             });
         },

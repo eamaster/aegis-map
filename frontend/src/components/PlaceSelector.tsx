@@ -14,9 +14,9 @@ import {
 } from 'lucide-react';
 import { useLocale } from '../hooks/useLocale';
 import { useDesignSystem } from '../hooks/useDesignSystem';
+import { acquireUserLocation, resolveGpsPlaceWithUncertainty } from '../utils/geolocation';
 import {
 	buildManualPlace,
-	formatCoordinatesLtr,
 	parseFlexibleCoordinates,
 	searchPlaces,
 	type SelectedPlace,
@@ -59,6 +59,7 @@ export default function PlaceSelector({
 	const ds = useDesignSystem();
 	const searchInputRef = useRef<HTMLInputElement | null>(null);
 	const candidateRefs = useRef<Array<HTMLButtonElement | null>>([]);
+	const selectionEpochRef = useRef(0);
 
 	const [isEditingPlace, setIsEditingPlace] = useState<boolean>(() => !selectedPlace);
 	const [query, setQuery] = useState('');
@@ -82,6 +83,8 @@ export default function PlaceSelector({
 		: undefined;
 
 	const commitSelection = (place: SelectedPlace) => {
+		selectionEpochRef.current += 1;
+		setGpsLoading(false);
 		onSelectPlace(place);
 		setCandidates([]);
 		setHasSearched(false);
@@ -122,45 +125,57 @@ export default function PlaceSelector({
 		commitSelection(place);
 	};
 
-	const handleUseGps = () => {
-		if (typeof navigator === 'undefined' || !navigator.geolocation) {
-			setGpsStatus({ message: t.gpsStatusUnavailable, isError: true });
-			setShowManualCoords(true);
-			return;
-		}
+	const handleUseGps = async () => {
+		selectionEpochRef.current += 1;
+		const myEpoch = selectionEpochRef.current;
 		setGpsLoading(true);
 		setGpsStatus({ message: t.gpsRequesting, isError: false });
-		navigator.geolocation.getCurrentPosition(
-			(pos) => {
-				setGpsLoading(false);
-				const { latitude, longitude, accuracy } = pos.coords;
-				const base = buildManualPlace(latitude, longitude, countryOverride || null);
-				const gpsPlace: SelectedPlace = {
-					...base,
-					id: `gps:${latitude.toFixed(4)}:${longitude.toFixed(4)}`,
-					label: `${base.countryName ? `${base.countryName} · ` : ''}${formatCoordinatesLtr(latitude, longitude)}`,
-					source: 'gps',
-					accuracyMeters: Number.isFinite(accuracy) ? Math.round(accuracy) : null,
-					capturedAt: new Date(pos.timestamp || Date.now()).toISOString(),
-				};
-				setGpsStatus(
-					accuracy > 5000 ? { message: t.gpsStatusLowAccuracy, isError: true } : null,
-				);
-				commitSelection(gpsPlace);
-			},
-			(err) => {
-				setGpsLoading(false);
-				setShowManualCoords(true);
-				if (err.code === err.PERMISSION_DENIED) {
-					setGpsStatus({ message: t.gpsStatusDenied, isError: true });
-				} else if (err.code === err.TIMEOUT) {
-					setGpsStatus({ message: t.gpsStatusTimeout, isError: true });
-				} else {
-					setGpsStatus({ message: t.gpsStatusUnavailable, isError: true });
+
+		const result = await acquireUserLocation({
+			onCoarseFix: () => {
+				if (myEpoch === selectionEpochRef.current) {
+					setGpsStatus({ message: t.gpsRefining, isError: false });
 				}
 			},
-			{ enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
-		);
+		});
+
+		if (myEpoch !== selectionEpochRef.current) {
+			return;
+		}
+
+		setGpsLoading(false);
+		if (!result.ok) {
+			setShowManualCoords(true);
+			if (result.code === 'insecure_context') {
+				setGpsStatus({ message: t.gpsStatusInsecureContext, isError: true });
+			} else if (result.code === 'permission_denied') {
+				setGpsStatus({ message: t.gpsStatusDenied, isError: true });
+			} else if (result.code === 'timeout') {
+				setGpsStatus({ message: t.gpsStatusTimeout, isError: true });
+			} else {
+				setGpsStatus({ message: t.gpsStatusUnavailable, isError: true });
+			}
+			return;
+		}
+
+		const { fix } = result;
+		const resolved = resolveGpsPlaceWithUncertainty(fix.latitude, fix.longitude, fix.accuracy, fix.timestamp);
+		const gpsPlace: SelectedPlace = countryOverride
+			? {
+					...resolved.place,
+					countryCode: countryOverride.toUpperCase(),
+					countryName: countryOverride.toUpperCase(),
+			  }
+			: resolved.place;
+
+		const notes: string[] = [];
+		if (fix.accuracy > 5000) notes.push(t.gpsStatusLowAccuracy);
+		if (resolved.countryUncertain && !countryOverride) {
+			notes.push(t.gpsCountryUncertain);
+			setShowAuthorityOverride(true);
+		}
+		setGpsStatus(notes.length > 0 ? { message: notes.join(' '), isError: true } : null);
+		commitSelection(gpsPlace);
 	};
 
 	const showPickerForm = !selectedPlace || isEditingPlace;
@@ -228,6 +243,24 @@ export default function PlaceSelector({
 					</div>
 
 					<div className="flex flex-wrap items-center gap-2 shrink-0">
+						{!showPickerForm && (
+							<button
+								type="button"
+								onClick={() => void handleUseGps()}
+								disabled={gpsLoading}
+								data-testid="gps-request-btn"
+								className="min-h-[44px] inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold border transition-colors hover:border-blue-400 disabled:opacity-60 cursor-pointer"
+								style={{
+									background: ds.surface.overlaySubtle,
+									borderColor: ds.surface.border,
+									color: ds.text.primary,
+								}}
+							>
+								<Navigation size={14} className="text-blue-400 shrink-0" aria-hidden="true" />
+								<span>{t.useGpsButton}</span>
+							</button>
+						)}
+
 						<button
 							type="button"
 							data-testid="change-place-btn"
@@ -289,6 +322,33 @@ export default function PlaceSelector({
 				</div>
 			)}
 
+			{/* GPS error/status always visible regardless of whether picker form is collapsed */}
+			{gpsStatus && (
+				<div
+					role="status"
+					aria-live="polite"
+					data-testid="gps-status-banner"
+					className={`flex flex-wrap items-center justify-between gap-2 text-xs px-3.5 py-2.5 rounded-xl border ${
+						gpsStatus.isError
+							? 'border-amber-500/45 bg-amber-500/10 text-amber-200'
+							: 'border-blue-500/40 bg-blue-500/10 text-blue-200'
+					}`}
+					style={ds.isDark ? undefined : { color: ds.text.primary }}
+				>
+					<span>{gpsStatus.message}</span>
+					{gpsStatus.isError && (
+						<button
+							type="button"
+							onClick={() => void handleUseGps()}
+							className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold border border-current/30 hover:bg-white/10"
+						>
+							<RefreshCw size={12} aria-hidden="true" />
+							<span>Retry</span>
+						</button>
+					)}
+				</div>
+			)}
+
 			{/* Primary Place Search & Location Picker */}
 			{showPickerForm && (
 				<div className="space-y-3.5">
@@ -311,10 +371,10 @@ export default function PlaceSelector({
 						<div className="flex flex-wrap items-center gap-2">
 							<button
 								type="button"
-								onClick={handleUseGps}
+								onClick={() => void handleUseGps()}
 								disabled={gpsLoading}
 								data-testid="gps-request-btn"
-								className="min-h-[44px] inline-flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold border transition-colors hover:border-blue-400 disabled:opacity-60"
+								className="min-h-[44px] inline-flex items-center justify-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold border transition-colors hover:border-blue-400 disabled:opacity-60 cursor-pointer"
 								style={{
 									background: ds.surface.overlaySubtle,
 									borderColor: ds.surface.border,
@@ -326,33 +386,6 @@ export default function PlaceSelector({
 							</button>
 						</div>
 					</div>
-
-					{/* GPS error/status presented directly beside its control while keeping search & typed input intact */}
-					{gpsStatus && (
-						<div
-							role="status"
-							aria-live="polite"
-							data-testid="gps-status-banner"
-							className={`flex flex-wrap items-center justify-between gap-2 text-xs px-3.5 py-2.5 rounded-xl border ${
-								gpsStatus.isError
-									? 'border-amber-500/45 bg-amber-500/10 text-amber-200'
-									: 'border-blue-500/40 bg-blue-500/10 text-blue-200'
-							}`}
-							style={ds.isDark ? undefined : { color: ds.text.primary }}
-						>
-							<span>{gpsStatus.message}</span>
-							{gpsStatus.isError && (
-								<button
-									type="button"
-									onClick={handleUseGps}
-									className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold border border-current/30 hover:bg-white/10"
-								>
-									<RefreshCw size={12} aria-hidden="true" />
-									<span>Retry</span>
-								</button>
-							)}
-						</div>
-					)}
 
 					<form onSubmit={handleSearchSubmit} className="flex flex-col sm:flex-row gap-2.5">
 						<div className="flex-1 min-w-0">

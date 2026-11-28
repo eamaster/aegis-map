@@ -1,16 +1,65 @@
 {
+  "id": "/aegis-map/?view=near-me",
   "name": "AegisMap — Disaster Warnings & Satellite Intelligence",
   "short_name": "AegisMap",
   "description": "Official local hazard warnings, emergency guidance, and satellite monitoring.",
-  "start_url": "./?view=near-me",
+  "scope": "/aegis-map/",
+  "start_url": "/aegis-map/?view=near-me",
   "display": "standalone",
   "background_color": "#0a0f1c",
   "theme_color": "#0a0f1c",
   "icons": [
     {
-      "src": "data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌍</text></svg>",
+      "src": "icons/favicon-32x32.png",
+      "sizes": "32x32",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-192.png",
       "sizes": "192x192",
-      "type": "image/svg+xml"
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Near me",
+      "short_name": "Near me",
+      "description": "Check official local warnings and emergency contacts",
+      "url": "/aegis-map/?view=near-me",
+      "icons": [
+        {
+          "src": "icons/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Explore events",
+      "short_name": "Explore",
+      "description": "Interactive global hazard map and satellite telemetry",
+      "url": "/aegis-map/",
+      "icons": [
+        {
+          "src": "icons/icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
     }
   ]
 }

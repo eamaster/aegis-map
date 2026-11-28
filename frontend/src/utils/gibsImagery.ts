@@ -17,6 +17,7 @@ export interface ImageryProduct {
     /** Requested UTC date (YYYY-MM-DD); null when the provider exposes none. Not a confirmed observation date. */
     date: string | null;
     url: string;
+    note?: string;
 }
 
 export interface ImagerySpec extends ImageryProduct {
@@ -35,7 +36,7 @@ export const FIRE_BBOX_HALF_DEG = 0.5;
 const FALSE_COLOR_BBOX_HALF_DEG = 0.3;
 const MODIS_AQUA_LAG_DAYS = 3;
 const MODIS_TERRA_LAG_DAYS = 4;
-import { GIBS_VIIRS_OVERLAY_LAG_DAYS, GIBS_VIIRS_SNPP_THERMAL_PRODUCT } from '../config/gibs';
+import { GIBS_VIIRS_THERMAL_OVERLAY_PRODUCT } from '../config/gibs';
 
 export function utcDateOffset(now: Date, days: number): string {
     const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
@@ -43,11 +44,12 @@ export function utcDateOffset(now: Date, days: number): string {
     return d.toISOString().slice(0, 10);
 }
 
-function gibsUrl(layer: string, date: string, lat: number, lng: number, half: number, format: 'image/jpeg' | 'image/png'): string {
+function gibsUrl(layer: string, date: string | null, lat: number, lng: number, half: number, format: 'image/jpeg' | 'image/png'): string {
     // WMS 1.3.0 with EPSG:4326 uses minLat,minLng,maxLat,maxLng axis order.
     const bbox = `${lat - half},${lng - half},${lat + half},${lng + half}`;
+    const timeParam = date ? `&TIME=${date}` : '';
     const transparent = format === 'image/png' ? '&TRANSPARENT=true' : '';
-    return `${GIBS_WMS}?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=${layer}&TIME=${date}&CRS=EPSG:4326&WIDTH=800&HEIGHT=600&BBOX=${bbox}&FORMAT=${format}${transparent}`;
+    return `${GIBS_WMS}?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=${layer}${timeParam}&CRS=EPSG:4326&WIDTH=800&HEIGHT=600&BBOX=${bbox}&FORMAT=${format}${transparent}`;
 }
 
 /** GIBS does not wrap EPSG:4326 requests, so parts of a box past ±180° / ±90° render empty. */
@@ -62,7 +64,6 @@ export function bboxLimitation(lat: number, lng: number, half: number): string |
 export function buildImagerySpec(layer: ImageryLayer, lat: number, lng: number, now: Date, mapboxToken: string): ImagerySpec {
     if (layer === 'fire') {
         const date = utcDateOffset(now, MODIS_AQUA_LAG_DAYS);
-        const overlayDate = utcDateOffset(now, GIBS_VIIRS_OVERLAY_LAG_DAYS);
         return {
             layer,
             provider: 'NASA GIBS',
@@ -72,10 +73,11 @@ export function buildImagerySpec(layer: ImageryLayer, lat: number, lng: number, 
             url: gibsUrl('MODIS_Aqua_CorrectedReflectance_TrueColor', date, lat, lng, FIRE_BBOX_HALF_DEG, 'image/jpeg'),
             halfSizeDeg: FIRE_BBOX_HALF_DEG,
             overlay: {
-                product: GIBS_VIIRS_SNPP_THERMAL_PRODUCT,
-                label: 'VIIRS S-NPP thermal anomalies (single requested UTC day)',
-                date: overlayDate,
-                url: gibsUrl(GIBS_VIIRS_SNPP_THERMAL_PRODUCT, overlayDate, lat, lng, FIRE_BBOX_HALF_DEG, 'image/png'),
+                product: GIBS_VIIRS_THERMAL_OVERLAY_PRODUCT,
+                label: 'VIIRS S-NPP & NOAA-20 NRT thermal anomalies (undated rolling composite)',
+                date: null,
+                url: gibsUrl(GIBS_VIIRS_THERMAL_OVERLAY_PRODUCT, null, lat, lng, FIRE_BBOX_HALF_DEG, 'image/png'),
+                note: 'NASA GIBS NRT VIIRS thermal overlay is undated (no TIME dimension) and does not guarantee same-day alignment with the dated MODIS true-color base.',
             },
             limitation: bboxLimitation(lat, lng, FIRE_BBOX_HALF_DEG),
         };

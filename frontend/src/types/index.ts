@@ -123,10 +123,11 @@ export interface FireHotspot {
     daynight: 'D' | 'N' | null;
 }
 
-export type FirmsWindowStatus = 'ok' | 'http_error' | 'timeout' | 'network_error' | 'malformed';
+export type FirmsWindowStatus = 'ok' | 'partial' | 'http_error' | 'timeout' | 'network_error' | 'malformed';
 
 export interface FirmsWindowResult {
     id: 'recent' | 'prior';
+    source?: string;
     startDate: string;
     endDate: string;
     dayRange: number;
@@ -134,6 +135,8 @@ export interface FirmsWindowResult {
     httpStatus?: number;
     detections: number;
     rejectedRows: number;
+    succeededBboxes?: string[];
+    failedBboxes?: string[];
 }
 
 /** 'unavailable' only arrives on the 502 error body, never on a 200 payload. */
@@ -143,6 +146,7 @@ export interface FirmsCoverage {
     requestedStart: string;
     requestedEnd: string;
     missingDates: string[];
+    missingBboxes?: string[];
     windows: FirmsWindowResult[];
 }
 
@@ -156,7 +160,13 @@ export interface FireHotspotsPayload {
     maxBrightness: number | null;
     maxPower: number | null;
     source: string;
+    sources?: string[];
+    failedSources?: string[];
     sensor: string;
+    rawMatchedCount?: number;
+    truncated?: boolean;
+    matchedSatelliteCounts?: Record<string, number>;
+    displayedSatelliteCounts?: Record<string, number>;
     coverage: FirmsCoverage;
 }
 

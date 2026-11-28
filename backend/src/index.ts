@@ -44,6 +44,7 @@ import {
 	FIRMS_CACHE_TTL_SECONDS,
 	isUsableCachedFirms,
 	parseCoordinateQuery,
+	parseFirmsSourcesQuery,
 	planFirmsWindows,
 } from './firms';
 import {
@@ -68,8 +69,10 @@ import {
 	createSubscription,
 	dispatchVerifiedWarningAlerts,
 	getSubscriptionServiceStatus,
+	lookupPushRegistrations,
 	unsubscribeSubscription,
 } from './subscriptions';
+import { createWebPushTransport } from './webPush';
 import type { SubscriptionCreateRequest } from '../../shared/contracts';
 
 type Bindings = {
@@ -89,6 +92,12 @@ type Bindings = {
 	ALERT_FROM_EMAIL?: string;
 	/** Explicit opt-in for isolated test/preview sandbox email transport (never enable in production). */
 	ALLOW_SANDBOX_EMAIL?: string;
+	/** Optional Web Push VAPID keys and contact subject (set via Worker secrets/vars). */
+	VAPID_PUBLIC_KEY?: string;
+	VAPID_PRIVATE_KEY?: string;
+	VAPID_SUBJECT?: string;
+	/** Explicit opt-in for isolated test/preview sandbox Web Push transport (never enable in production). */
+	ALLOW_SANDBOX_PUSH?: string;
 };
 
 /** Metadata headers browsers may read cross-origin. */
@@ -128,9 +137,21 @@ function resolveEmailTransport(env: Pick<Bindings, 'RESEND_API_KEY' | 'ALERT_FRO
 	});
 }
 
+function resolvePushTransport(
+	env: Pick<Bindings, 'VAPID_PUBLIC_KEY' | 'VAPID_PRIVATE_KEY' | 'VAPID_SUBJECT' | 'ALLOW_SANDBOX_PUSH'>,
+) {
+	return createWebPushTransport({
+		vapidPublicKey: env.VAPID_PUBLIC_KEY,
+		vapidPrivateKey: env.VAPID_PRIVATE_KEY,
+		vapidSubject: env.VAPID_SUBJECT,
+		allowSandbox: env.ALLOW_SANDBOX_PUSH === 'true',
+	});
+}
+
 app.get('/', async (c) => {
 	const d1State = await checkD1SchemaReady(c.env.AEGIS_DB);
 	const transport = resolveEmailTransport(c.env);
+	const pushTransport = resolvePushTransport(c.env);
 	const capabilities = API_CAPABILITIES.filter((cap) => {
 		if (cap === 'disaster-history-v1' && d1State !== 'ready') return false;
 		return true;
@@ -144,6 +165,7 @@ app.get('/', async (c) => {
 		services: {
 			d1: d1State,
 			emailDelivery: transport.mode,
+			pushDelivery: pushTransport.mode,
 		},
 	});
 });
@@ -527,6 +549,10 @@ app.get('/api/fire-hotspots', async (c) => {
 	if (!parsed.ok) {
 		return c.json({ error: parsed.reason }, 400);
 	}
+	const sourcesParsed = parseFirmsSourcesQuery(c.req.query('sources'));
+	if (!sourcesParsed.ok) {
+		return c.json({ error: sourcesParsed.reason, code: 'invalid_sources' }, 400);
+	}
 
 	const FIRMS_MAP_KEY = c.env.FIRMS_MAP_KEY;
 	if (!FIRMS_MAP_KEY || FIRMS_MAP_KEY === 'YOUR_FIRMS_MAP_KEY_HERE') {
@@ -540,7 +566,7 @@ app.get('/api/fire-hotspots', async (c) => {
 	const now = new Date();
 	const windows = planFirmsWindows(now);
 	const bboxes = buildFirmsBboxes(parsed.lat, parsed.lng);
-	const cacheKey = buildFirmsCacheKey(bboxes, windows[1].startDate, windows[0].endDate);
+	const cacheKey = buildFirmsCacheKey(bboxes, windows[1].startDate, windows[0].endDate, sourcesParsed.products);
 
 	try {
 		const cachedRaw = await c.env.AEGIS_CACHE?.get(cacheKey);
@@ -552,7 +578,10 @@ app.get('/api/fire-hotspots', async (c) => {
 		console.warn('Cache read error for FIRMS hotspots:', cacheErr instanceof Error ? cacheErr.name : 'Error');
 	}
 
-	const result = await fetch7DayFirmsHotspots(parsed.lat, parsed.lng, FIRMS_MAP_KEY, { now });
+	const result = await fetch7DayFirmsHotspots(parsed.lat, parsed.lng, FIRMS_MAP_KEY, {
+		now,
+		sources: sourcesParsed.products,
+	});
 
 	if (result.coverage.status === 'unavailable') {
 		return c.json(
@@ -561,6 +590,7 @@ app.get('/api/fire-hotspots', async (c) => {
 				code: 'firms_unavailable',
 				coverage: result.coverage,
 				source: result.source,
+				sources: result.sources,
 				bboxes: result.bboxes,
 			},
 			502,
@@ -681,10 +711,11 @@ app.get('/api/v1/analytics/sources', async (c) => {
 	return c.json(res, 200);
 });
 
-// Route 8: Subscriptions (opt-in verified warning email alerts; SMS deferred 501)
+// Route 8: Subscriptions (opt-in verified warning email & Web Push alerts; SMS deferred 501)
 app.get('/api/v1/subscriptions/status', async (c) => {
 	const transport = resolveEmailTransport(c.env);
-	const status = await getSubscriptionServiceStatus(c.env.AEGIS_DB, transport);
+	const pushTransport = resolvePushTransport(c.env);
+	const status = await getSubscriptionServiceStatus(c.env.AEGIS_DB, transport, pushTransport);
 	return c.json(status, 200, {
 		'Cache-Control': 'private, no-store',
 	});
@@ -700,7 +731,14 @@ app.post('/api/v1/subscriptions', async (c) => {
 		});
 	}
 	const transport = resolveEmailTransport(c.env);
-	const result = await createSubscription({ db: c.env.AEGIS_DB, req: body, transport });
+	const pushTransport = resolvePushTransport(c.env);
+	const result = await createSubscription({
+		db: c.env.AEGIS_DB,
+		req: body,
+		transport,
+		pushTransport,
+		allowLocalPushEndpoints: c.env.ALLOW_SANDBOX_PUSH === 'true',
+	});
 	return c.json(result.body, result.status as 200 | 201 | 400 | 501 | 502 | 503, {
 		'Cache-Control': 'private, no-store',
 	});
@@ -729,17 +767,65 @@ app.get('/api/v1/subscriptions/confirm', async (c) => {
 	});
 });
 
+app.post('/api/v1/subscriptions/push-lookup', async (c) => {
+	let endpoint = '';
+	try {
+		const body = (await c.req.json()) as { endpoint?: string };
+		if (typeof body.endpoint === 'string') endpoint = body.endpoint;
+	} catch {
+		return c.json({ ok: false, registrations: [], code: 'invalid_request', message: 'Malformed JSON body' }, 400, {
+			'Cache-Control': 'private, no-store',
+		});
+	}
+	const result = await lookupPushRegistrations(c.env.AEGIS_DB, endpoint, {
+		allowLocalPushEndpoints: c.env.ALLOW_SANDBOX_PUSH === 'true',
+	});
+	return c.json(result.body, result.status as 200 | 400 | 503, {
+		'Cache-Control': 'private, no-store',
+	});
+});
+
 app.post('/api/v1/subscriptions/unsubscribe', async (c) => {
 	let token = c.req.query('token') ?? '';
-	if (!token) {
-		try {
-			const body = (await c.req.json()) as { token?: string };
-			token = body.token ?? '';
-		} catch {
-			// query fallback already checked
-		}
+	let endpoint: string | undefined;
+	let channel: 'email' | 'web_push' | undefined;
+	let scope: 'place' | 'device' | undefined;
+	let subscriptionId: string | undefined;
+	let sourceId: string | undefined;
+	let lat: number | undefined;
+	let lng: number | undefined;
+	try {
+		const body = (await c.req.json()) as {
+			token?: string;
+			endpoint?: string;
+			channel?: 'email' | 'web_push';
+			scope?: 'place' | 'device';
+			subscriptionId?: string;
+			sourceId?: string;
+			lat?: number;
+			lng?: number;
+		};
+		if (!token && body.token) token = body.token;
+		if (body.endpoint) endpoint = body.endpoint;
+		if (body.channel === 'email' || body.channel === 'web_push') channel = body.channel;
+		if (body.scope === 'place' || body.scope === 'device') scope = body.scope;
+		if (typeof body.subscriptionId === 'string') subscriptionId = body.subscriptionId;
+		if (typeof body.sourceId === 'string') sourceId = body.sourceId;
+		if (typeof body.lat === 'number') lat = body.lat;
+		if (typeof body.lng === 'number') lng = body.lng;
+	} catch {
+		// query fallback already checked
 	}
-	const result = await unsubscribeSubscription(c.env.AEGIS_DB, token);
+	const result = await unsubscribeSubscription(c.env.AEGIS_DB, token, new Date(), {
+		endpoint,
+		channel,
+		scope,
+		subscriptionId,
+		sourceId,
+		lat,
+		lng,
+		allowLocalPushEndpoints: c.env.ALLOW_SANDBOX_PUSH === 'true',
+	});
 	return c.json(result.body, result.status as 200 | 400 | 404 | 503, {
 		'Cache-Control': 'private, no-store',
 	});
@@ -762,18 +848,31 @@ export async function refreshTlesScheduled(env: Pick<Bindings, 'AEGIS_CACHE'>): 
 
 /** Cron Trigger helper: evaluate active verified warnings for confirmed opt-in subscribers. */
 export async function dispatchSubscriptionsScheduled(
-	env: Pick<Bindings, 'AEGIS_DB' | 'AEGIS_CACHE' | 'RESEND_API_KEY' | 'ALERT_FROM_EMAIL' | 'ALLOW_SANDBOX_EMAIL'>,
+	env: Pick<
+		Bindings,
+		| 'AEGIS_DB'
+		| 'AEGIS_CACHE'
+		| 'RESEND_API_KEY'
+		| 'ALERT_FROM_EMAIL'
+		| 'ALLOW_SANDBOX_EMAIL'
+		| 'VAPID_PUBLIC_KEY'
+		| 'VAPID_PRIVATE_KEY'
+		| 'VAPID_SUBJECT'
+		| 'ALLOW_SANDBOX_PUSH'
+	>,
 ): Promise<void> {
 	if (!env.AEGIS_DB) return;
 	const transport = resolveEmailTransport(env);
-	if (transport.mode === 'disabled') return;
+	const pushTransport = resolvePushTransport(env);
+	if (transport.mode === 'disabled' && pushTransport.mode === 'disabled') return;
 	const summary = await dispatchVerifiedWarningAlerts({
 		db: env.AEGIS_DB,
 		kv: env.AEGIS_CACHE,
 		transport,
+		pushTransport,
 	});
 	console.log(
-		`Scheduled warning dispatch (${transport.mode}): processed=${summary.processed} sent=${summary.sent} deduplicated=${summary.deduplicated} failed=${summary.failed}`,
+		`Scheduled warning dispatch (email=${transport.mode}, push=${pushTransport.mode}): processed=${summary.processed} sent=${summary.sent} deduplicated=${summary.deduplicated} failed=${summary.failed}`,
 	);
 }
 

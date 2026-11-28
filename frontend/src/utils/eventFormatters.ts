@@ -53,7 +53,13 @@ export interface FormattedDualTime {
 	valid: boolean;
 }
 
-export function formatEventDualTime(iso: string | undefined | null): FormattedDualTime {
+export function resolveIntlLocale(locale?: string): string | undefined {
+	if (!locale) return undefined;
+	if (locale === 'zh-Hans') return 'zh-CN';
+	return locale;
+}
+
+export function formatEventDualTime(iso: string | undefined | null, locale?: string): FormattedDualTime {
 	if (!iso || typeof iso !== 'string') {
 		return { utc: 'Timestamp unavailable', local: '', valid: false };
 	}
@@ -64,7 +70,7 @@ export function formatEventDualTime(iso: string | undefined | null): FormattedDu
 	const d = new Date(ms);
 	const utc = `${d.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
 	try {
-		const local = new Intl.DateTimeFormat(undefined, {
+		const local = new Intl.DateTimeFormat(resolveIntlLocale(locale), {
 			month: 'short',
 			day: 'numeric',
 			hour: '2-digit',

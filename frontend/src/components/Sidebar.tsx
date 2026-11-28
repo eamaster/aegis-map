@@ -1007,9 +1007,13 @@ export default function Sidebar({ disaster, onClose, isOpen = true }: SidebarPro
 					className={activeTab === 'imagery' ? 'space-y-3' : 'hidden'}
 				>
 					<SatelliteImagery
+						key={disaster.id}
+						disasterId={disaster.id}
 						lat={disaster.lat}
 						lng={disaster.lng}
 						disasterType={disaster.type === 'fire_detection' ? 'fire' : disaster.type}
+						isHotspotCell={disaster.type === 'fire_detection'}
+						detectionCell={disaster.detectionCell}
 						date={disaster.date}
 						title={disaster.title}
 					/>

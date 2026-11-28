@@ -1,12 +1,16 @@
 import { useState, useEffect, useCallback, Suspense, lazy } from 'react';
-import { Globe, HelpCircle, MapPin, Compass, History } from 'lucide-react';
+import { Download, HelpCircle, MapPin, Compass, History } from 'lucide-react';
 import { Toaster } from 'react-hot-toast';
+import { AegisBrandMark } from './components/AegisBrandMark';
 import DebugPanel from './components/DebugPanel';
+import { InstallAppModal } from './components/InstallAppModal';
 import ThemeToggle from './components/ThemeToggle';
+import type { NotificationTarget } from './components/NearMeView';
 import type { Disaster, ObservationWindow, VolcanoMode } from './types';
 import { DEFAULT_OBSERVATION_WINDOW, DEFAULT_VOLCANO_MODE } from './config/disasters';
 import { useDesignSystem } from './hooks/useDesignSystem';
 import { useLocale } from './hooks/useLocale';
+import { usePwaInstall } from './hooks/usePwaInstall';
 import { SUPPORTED_LOCALES, type AppLocale } from './i18n/translations';
 
 // Lazy load routes and heavy map/sidebar so text-first Near me loads without Mapbox GL
@@ -24,10 +28,35 @@ function resolveInitialView(): ActiveView {
 	return view === 'near-me' ? 'near-me' : 'explore';
 }
 
+function resolveNotificationTargetFromSearch(search: string, nonce = 0): NotificationTarget | null {
+	const sp = new URLSearchParams(search);
+	const warningId = sp.get('warningId')?.trim() || null;
+	const latRaw = sp.get('lat');
+	const lngRaw = sp.get('lng');
+	const lat = latRaw !== null && latRaw !== '' && Number.isFinite(Number(latRaw)) ? Number(latRaw) : null;
+	const lng = lngRaw !== null && lngRaw !== '' && Number.isFinite(Number(lngRaw)) ? Number(lngRaw) : null;
+	const countryCode = sp.get('country')?.trim().toUpperCase() || null;
+	const placeName = sp.get('place')?.trim() || null;
+	const noticeStatus = sp.get('noticeStatus') === 'cancelled' ? 'cancelled' : null;
+	if (!warningId && lat === null && lng === null && !noticeStatus) return null;
+	return { warningId, lat, lng, countryCode, placeName, noticeStatus, nonce };
+}
+
+function resolveInitialNotificationTarget(): NotificationTarget | null {
+	if (typeof window === 'undefined') return null;
+	return resolveNotificationTargetFromSearch(window.location.search, 0);
+}
+
 function App() {
 	const ds = useDesignSystem();
 	const { locale, t, setLocale } = useLocale();
+	const { canPromptInstall, isInstalledStandalone, platform, promptInstall } = usePwaInstall();
 	const [activeView, setActiveView] = useState<ActiveView>(resolveInitialView);
+	const [notificationTarget, setNotificationTarget] = useState<NotificationTarget | null>(
+		resolveInitialNotificationTarget,
+	);
+	const highlightedWarningId = notificationTarget?.warningId ?? null;
+	const [showInstallModal, setShowInstallModal] = useState(false);
 	const [selectedDisaster, setSelectedDisaster] = useState<Disaster | null>(null);
 	const [showTutorial, setShowTutorial] = useState(false);
 	const [showTimelineDrawer, setShowTimelineDrawer] = useState(false);
@@ -64,6 +93,7 @@ function App() {
 		const onPopState = () => {
 			const resolved = resolveInitialView();
 			setActiveView(resolved);
+			setNotificationTarget(resolveNotificationTargetFromSearch(window.location.search, Date.now()));
 			if (resolved === 'near-me') {
 				setIsSidebarOpen(false);
 			}
@@ -71,6 +101,65 @@ function App() {
 		window.addEventListener('popstate', onPopState);
 		return () => window.removeEventListener('popstate', onPopState);
 	}, []);
+
+	useEffect(() => {
+		if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+		const onSwMessage = (event: MessageEvent) => {
+			const data = event.data as {
+				type?: string;
+				url?: string;
+				warningId?: string;
+				route?: {
+					lat?: number;
+					lng?: number;
+					countryCode?: string;
+					warningId?: string;
+					placeName?: string;
+					msgType?: string;
+				} | null;
+			} | null;
+			if (!data || data.type !== 'AEGIS_WARNING_CLICK') return;
+			let parsedSearch = '';
+			if (typeof data.url === 'string' && typeof window !== 'undefined') {
+				try {
+					const parsed = new URL(data.url, window.location.href);
+					if (parsed.origin === window.location.origin) {
+						parsedSearch = parsed.search;
+						window.history.pushState({ view: 'near-me' }, '', parsed.toString());
+					}
+				} catch {
+					// ignore invalid URL
+				}
+			}
+			const fromUrl = parsedSearch ? resolveNotificationTargetFromSearch(parsedSearch, Date.now()) : null;
+			const nextTarget: NotificationTarget | null = data.route
+				? {
+						warningId: data.route.warningId ?? data.warningId ?? fromUrl?.warningId ?? null,
+						lat: typeof data.route.lat === 'number' ? data.route.lat : fromUrl?.lat ?? null,
+						lng: typeof data.route.lng === 'number' ? data.route.lng : fromUrl?.lng ?? null,
+						countryCode: data.route.countryCode ?? fromUrl?.countryCode ?? null,
+						placeName: data.route.placeName ?? fromUrl?.placeName ?? null,
+						noticeStatus: data.route.msgType === 'Cancel' ? 'cancelled' : fromUrl?.noticeStatus ?? null,
+						nonce: Date.now(),
+					}
+				: fromUrl ?? (data.warningId ? { warningId: data.warningId, nonce: Date.now() } : null);
+			setActiveView('near-me');
+			setIsSidebarOpen(false);
+			if (nextTarget) {
+				setNotificationTarget(nextTarget);
+			}
+		};
+		navigator.serviceWorker.addEventListener('message', onSwMessage);
+		return () => navigator.serviceWorker.removeEventListener('message', onSwMessage);
+	}, []);
+
+	const handleInstallClick = async () => {
+		if (canPromptInstall) {
+			const outcome = await promptInstall();
+			if (outcome === 'accepted') return;
+		}
+		setShowInstallModal(true);
+	};
 
 	const handleFilterToggle = (type: string) => {
 		setActiveFilters((prev) => {
@@ -184,22 +273,7 @@ function App() {
 			>
 				{/* Brand Identity */}
 				<div className="order-1 flex items-center gap-2 sm:gap-3 min-w-0">
-					<div
-						className="w-8 h-8 sm:w-9 sm:h-9 shrink-0 flex items-center justify-center rounded-lg"
-						style={{
-							background: `linear-gradient(135deg, ${ds.colors.accent.blueDim}, rgba(37, 99, 235, 0.15))`,
-							border: `1.5px solid ${ds.colors.accent.blue}66`,
-						}}
-					>
-						<Globe
-							size={18}
-							style={{
-								color: ds.colors.accent.blueLight,
-								strokeWidth: 2.5,
-							}}
-							aria-hidden="true"
-						/>
-					</div>
+					<AegisBrandMark size={32} className="shrink-0" />
 
 					<div className="flex flex-col min-w-0">
 						<span
@@ -217,7 +291,7 @@ function App() {
 								color: ds.text.tertiary,
 							}}
 						>
-							Disaster Monitoring System
+							{t.appSubtitle}
 						</span>
 					</div>
 				</div>
@@ -292,6 +366,24 @@ function App() {
 						</button>
 					)}
 
+					{!isInstalledStandalone && (
+						<button
+							type="button"
+							data-testid="pwa-install-btn"
+							onClick={() => void handleInstallClick()}
+							className="min-h-[38px] sm:min-h-[40px] inline-flex items-center justify-center gap-1.5 px-2 sm:px-3 rounded-lg text-xs font-bold border transition-colors hover:border-blue-400 cursor-pointer"
+							style={{
+								background: ds.surface.overlaySubtle,
+								borderColor: ds.surface.border,
+								color: ds.text.primary,
+							}}
+							title={t.installAppButton}
+						>
+							<Download size={14} className="text-blue-400 shrink-0" aria-hidden="true" />
+							<span className="hidden md:inline">{t.installAppButton}</span>
+						</button>
+					)}
+
 					<label htmlFor="ui-locale-select" className="sr-only">
 						{t.languageLabel}
 					</label>
@@ -310,7 +402,7 @@ function App() {
 					>
 						{SUPPORTED_LOCALES.map((loc) => (
 							<option key={loc} value={loc} style={{ background: '#111827', color: '#fff' }}>
-								{loc === 'en' ? 'EN' : loc === 'fa' ? 'FA' : 'MS'}
+								{loc === 'en' ? 'EN' : loc === 'zh-Hans' ? '简体中文' : loc === 'fa' ? 'فارسی' : 'BM'}
 							</option>
 						))}
 					</select>
@@ -339,7 +431,11 @@ function App() {
 			{activeView === 'near-me' ? (
 				<main id="main-content" className="flex-1 w-full">
 					<Suspense fallback={<div className="p-6 text-sm">Loading resident view…</div>}>
-						<NearMeView onOpenExploreEvents={() => switchView('explore')} />
+						<NearMeView
+							onOpenExploreEvents={() => switchView('explore')}
+							highlightedWarningId={highlightedWarningId}
+							notificationTarget={notificationTarget}
+						/>
 					</Suspense>
 				</main>
 			) : (
@@ -382,6 +478,31 @@ function App() {
 			)}
 
 			<DebugPanel />
+
+			<InstallAppModal
+				open={showInstallModal}
+				platform={platform}
+				canPromptInstall={canPromptInstall}
+				isDark={ds.isDark}
+				onTriggerNativePrompt={() => {
+					void promptInstall().then((outcome) => {
+						if (outcome === 'accepted') setShowInstallModal(false);
+					});
+				}}
+				onClose={() => setShowInstallModal(false)}
+				labels={{
+					title: t.installModalTitle,
+					subtitle: t.installModalSubtitle,
+					iosStep1: t.installIosStep1,
+					iosStep2: t.installIosStep2,
+					androidStep: t.installAndroidStep,
+					desktopStep: t.installDesktopStep,
+					notificationsNote: t.installNotificationsNote,
+					shortcutNote: t.installShortcutNote,
+					nativePromptBtn: t.installNativePromptBtn,
+					closeBtn: t.closeButton,
+				}}
+			/>
 
 			<Suspense fallback={null}>
 				{showTutorial && <TutorialOverlay onClose={closeTutorialAndRestoreFocus} />}

@@ -43,6 +43,51 @@ export function isVolcanoMode(value: unknown): value is VolcanoMode {
 	return typeof value === 'string' && (VOLCANO_MODES as readonly string[]).includes(value);
 }
 
+/**
+ * Global FIRMS VIIRS sensor products ingested for worldwide coverage and regional hotspot queries.
+ * S-NPP (Suomi NPP), NOAA-20 (JPSS-1), and NOAA-21 (JPSS-2).
+ */
+export const GLOBAL_FIRMS_PRODUCTS = ['VIIRS_SNPP_NRT', 'VIIRS_NOAA20_NRT', 'VIIRS_NOAA21_NRT'] as const;
+export type GlobalFirmsProduct = (typeof GLOBAL_FIRMS_PRODUCTS)[number];
+
+export function isGlobalFirmsProduct(value: unknown): value is GlobalFirmsProduct {
+	return typeof value === 'string' && (GLOBAL_FIRMS_PRODUCTS as readonly string[]).includes(value);
+}
+
+const FIRMS_PRODUCT_LABELS: Readonly<Record<GlobalFirmsProduct, string>> = {
+	VIIRS_SNPP_NRT: 'S-NPP',
+	VIIRS_NOAA20_NRT: 'NOAA-20',
+	VIIRS_NOAA21_NRT: 'NOAA-21',
+};
+
+export function mapSatelliteCodeToFirmsProduct(satCode: string | null | undefined): GlobalFirmsProduct | null {
+	if (!satCode || typeof satCode !== 'string') return null;
+	const norm = satCode.trim().toUpperCase();
+	if (norm === 'N' || norm === 'SNPP' || norm === 'S-NPP' || norm === 'VIIRS_SNPP_NRT') {
+		return 'VIIRS_SNPP_NRT';
+	}
+	if (norm === 'N20' || norm === '1' || norm === 'J1' || norm === 'NOAA-20' || norm === 'NOAA20' || norm === 'VIIRS_NOAA20_NRT') {
+		return 'VIIRS_NOAA20_NRT';
+	}
+	if (norm === 'N21' || norm === '2' || norm === 'J2' || norm === 'NOAA-21' || norm === 'NOAA21' || norm === 'VIIRS_NOAA21_NRT') {
+		return 'VIIRS_NOAA21_NRT';
+	}
+	return null;
+}
+
+export function canonicalizeFirmsSatellite(satCode: string, productHint?: GlobalFirmsProduct): string {
+	const mapped = mapSatelliteCodeToFirmsProduct(satCode) ?? productHint ?? null;
+	return mapped ? FIRMS_PRODUCT_LABELS[mapped] : satCode.trim();
+}
+
+export function formatFirmsSensorSummary(products: readonly GlobalFirmsProduct[]): string {
+	if (products.length === 0) return 'VIIRS 375 m (NRT)';
+	const labels = products.map((p) => FIRMS_PRODUCT_LABELS[p]);
+	if (labels.length === 1) return `VIIRS ${labels[0]} 375 m (NRT)`;
+	if (labels.length === 2) return `VIIRS ${labels[0]} & ${labels[1]} 375 m (NRT)`;
+	return `VIIRS ${labels.slice(0, -1).join(', ')} & ${labels[labels.length - 1]} 375 m (NRT)`;
+}
+
 // ============================================================================
 // Monitored Satellite Fleet & Capabilities
 // ============================================================================
@@ -429,24 +474,96 @@ export interface SourceAnalyticsApiResponse {
 // Subscriptions API (/api/v1/subscriptions)
 // ============================================================================
 
+/** Canonical coordinate rounding shared across push registration, lookup, and D1 uniqueness keys. */
+export function canonicalizeSubscriptionCoordinates(lat: number, lng: number): { lat: number; lng: number } {
+	return {
+		lat: Number(lat.toFixed(3)),
+		lng: Number(lng.toFixed(3)),
+	};
+}
+
+/** Canonical per-place push registration key matching D1 (source_id, rounded lat, rounded lng). */
+export function buildPushPlaceKey(sourceId: string, lat: number, lng: number): string {
+	const { lat: rLat, lng: rLng } = canonicalizeSubscriptionCoordinates(lat, lng);
+	return `${sourceId.trim()}:${rLat.toFixed(3)}:${rLng.toFixed(3)}`;
+}
+
+export interface WebPushSubscriptionPayload {
+	endpoint: string;
+	expirationTime?: number | null;
+	keys: {
+		p256dh: string;
+		auth: string;
+	};
+}
+
+export interface WebPushNotificationRoute {
+	view: 'near-me';
+	lat: number;
+	lng: number;
+	countryCode: string;
+	warningId: string;
+	placeName?: string;
+	msgType: 'Alert' | 'Update' | 'Cancel';
+}
+
+export interface WebPushNotificationPayload {
+	title: string;
+	body: string;
+	tag: string;
+	route: WebPushNotificationRoute;
+	/** Relative fallback URL resolved against Service Worker registration.scope (never hardcoded subpath). */
+	url?: string;
+	warningId: string;
+	sourceId: string;
+	msgType: 'Alert' | 'Update' | 'Cancel';
+	severity: string;
+	sentAt: string;
+}
+
 export interface SubscriptionCreateRequest {
-	channel: 'email' | 'sms';
-	destination: string;
+	channel: 'email' | 'sms' | 'web_push';
+	destination?: string;
+	pushSubscription?: WebPushSubscriptionPayload;
 	placeName: string;
 	lat: number;
 	lng: number;
 	countryCode: string;
 	sourceId: string;
 	minSeverity?: 'moderate' | 'severe' | 'extreme';
+	locale?: string;
+}
+
+export interface PushRegistrationSummary {
+	subscriptionId: string;
+	placeKey: string;
+	placeName: string;
+	countryCode: string;
+	sourceId: string;
+	lat: number;
+	lng: number;
+	minSeverity: 'moderate' | 'severe' | 'extreme';
+	status: 'active';
+}
+
+export interface PushLookupResponse {
+	ok: boolean;
+	registrations: PushRegistrationSummary[];
+	code?: string;
+	message?: string;
 }
 
 export interface SubscriptionResponse {
 	ok: boolean;
 	subscriptionId?: string;
 	status?: 'pending_confirmation' | 'active' | 'unsubscribed';
-	transportMode?: 'sandbox' | 'resend' | 'disabled';
+	transportMode?: 'sandbox' | 'resend' | 'web_push' | 'disabled';
+	unsubscribeToken?: string;
 	sandboxPreviewToken?: string;
 	sandboxUnsubscribeToken?: string;
+	scope?: 'token' | 'place' | 'device';
+	removedCount?: number;
+	remainingCount?: number;
 	message: string;
 	code?: string;
 }
@@ -456,4 +573,8 @@ export interface SubscriptionServiceStatus {
 	mode: 'resend' | 'sandbox' | 'unavailable';
 	smsAvailable: false;
 	reason?: string;
+	pushAvailable: boolean;
+	pushMode: 'web_push' | 'sandbox' | 'unavailable';
+	vapidPublicKey?: string;
+	pushReason?: string;
 }

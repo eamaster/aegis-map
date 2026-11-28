@@ -116,7 +116,7 @@ describe('createHotspotLoader selection safety', () => {
         const loader = createHotspotLoader((lat, lng) => `${lat},${lng}`, fetchImpl, (s) => updates.push(s));
 
         loader.load(10, 20);
-        loader.load(30, 40);
+        loader.load(30, 40, ['VIIRS_NOAA20_NRT']);
         pending.get('30,40')!.resolve(json(payload([hotspot({ latitude: 30 })])));
         await flush();
         pending.get('10,20')!.resolve(json(payload([hotspot({ latitude: 10 }), hotspot({ latitude: 10.1 })])));

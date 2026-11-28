@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" fill="none">
+  <defs>
+    <linearGradient id="aegis-bg" x1="48" y1="32" x2="464" y2="480" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#091124" />
+    </linearGradient>
+    <linearGradient id="aegis-ring" x1="88" y1="112" x2="424" y2="400" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#60a5fa" />
+      <stop offset="100%" stop-color="#2563eb" />
+    </linearGradient>
+    <linearGradient id="aegis-orbit" x1="96" y1="360" x2="424" y2="148" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#f97316" />
+    </linearGradient>
+  </defs>
+  <rect x="24" y="24" width="464" height="464" rx="112" fill="url(#aegis-bg)" stroke="#3b82f6" stroke-width="20" />
+  <circle cx="256" cy="256" r="142" fill="#172554" fill-opacity="0.72" stroke="url(#aegis-ring)" stroke-width="26" />
+  <ellipse cx="256" cy="256" rx="68" ry="142" stroke="#60a5fa" stroke-width="20" />
+  <line x1="118" y1="256" x2="394" y2="256" stroke="#60a5fa" stroke-width="20" stroke-linecap="round" />
+  <path d="M136 184 Q256 218 376 184" stroke="#93c5fd" stroke-width="18" stroke-linecap="round" />
+  <path d="M136 328 Q256 294 376 328" stroke="#93c5fd" stroke-width="18" stroke-linecap="round" />
+  <path d="M98 346 C158 294 282 198 416 146" stroke="url(#aegis-orbit)" stroke-width="24" stroke-linecap="round" />
+  <circle cx="384" cy="160" r="32" fill="#f97316" stroke="#ffffff" stroke-width="12" />
+</svg>

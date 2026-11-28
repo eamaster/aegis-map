@@ -20,6 +20,10 @@ import * as http from 'node:http';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
+import {
+	generateEphemeralClientPushKeys,
+	generateEphemeralVapidKeys,
+} from '../../shared/test-helpers/ephemeralWebPush.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '../..');
@@ -51,7 +55,7 @@ function resolveGitSha(fallback = 'unknown') {
 }
 
 const CANDIDATE_SHA = process.env.CANDIDATE_SHA || resolveGitSha();
-const BASELINE_SHA = process.env.BASELINE_SHA || '60e18e0536c149d1a58bdfefa26ee4766f4ed1e3';
+const BASELINE_SHA = process.env.BASELINE_SHA || '556f4c39f27925ad037a9b2c4e7975e58df462de';
 
 fs.mkdirSync(EVIDENCE_DIR, { recursive: true });
 
@@ -173,6 +177,10 @@ async function installDeterministicFixtures(page, options = {}) {
 	const {
 		subscriptionAvailable = true,
 		subscriptionReason = undefined,
+		pushAvailable = false,
+		pushMode = 'unavailable',
+		vapidPublicKey = undefined,
+		pushReason = undefined,
 		trackCounts = null,
 		mapboxTracker = null,
 	} = options;
@@ -521,6 +529,10 @@ async function installDeterministicFixtures(page, options = {}) {
 				mode: subscriptionAvailable ? 'sandbox' : 'unavailable',
 				smsAvailable: false,
 				reason: subscriptionReason,
+				pushAvailable,
+				pushMode,
+				...(vapidPublicKey ? { vapidPublicKey } : {}),
+				...(pushReason ? { pushReason } : {}),
 			}),
 		}),
 	);
@@ -816,9 +828,9 @@ async function centerAndProjectEvent(page, ev, zoom = 5.0) {
 	return page.evaluate(
 		async ({ lng, lat, z }) => {
 			const map = window.mapDebug;
-			map.jumpTo({ center: [lng, lat], zoom: z, bearing: 0, pitch: 0 });
+			map.jumpTo({ center: [lng, lat], zoom: z, bearing: 0, pitch: 0, padding: { top: 0, bottom: 0, left: 0, right: 0 } });
 			await new Promise((r) => {
-				const timer = setTimeout(r, 500);
+				const timer = setTimeout(r, 2000);
 				map.once('idle', () => {
 					clearTimeout(timer);
 					r();
@@ -1039,10 +1051,11 @@ async function main() {
 						l.getAttribute('href'),
 					),
 				}));
+				const oldShellCache = oldInstalledState.caches.find((k) => k.startsWith('aegis-shell-')) || '';
 				checks.record(
-					oldInstalledState.caches.includes('aegis-shell-v1.5.0') &&
+					Boolean(oldShellCache) &&
 						oldInstalledState.caches.includes('unrelated-third-party-v1'),
-					'Installed and operated baseline v1.5.0 build under /aegis-map/',
+					'Installed and operated baseline build under /aegis-map/',
 					JSON.stringify(oldInstalledState),
 					'sw-interrupted-upgrade',
 				);
@@ -1086,7 +1099,8 @@ async function main() {
 
 				checks.record(
 					interruptedResult.finalInstallState === 'redundant' &&
-						interruptedResult.cachesAfterInterrupt.includes('aegis-shell-v1.5.0') &&
+						Boolean(oldShellCache) &&
+						interruptedResult.cachesAfterInterrupt.includes(oldShellCache) &&
 						interruptedResult.cachesAfterInterrupt.filter((k) => k.startsWith('aegis-shell-')).length === 1,
 					'Interrupted SW update aborts install, rolls back staging cache, and preserves last working shell',
 					JSON.stringify(interruptedResult),
@@ -1122,7 +1136,7 @@ async function main() {
 				await swCtx.setOffline(false);
 				upgServer.setFailSubstrings([]);
 
-				await swPage.evaluate(async () => {
+				await swPage.evaluate(async (prevShellCache) => {
 					const reg = await navigator.serviceWorker.getRegistration();
 					await reg?.update();
 					const deadline = Date.now() + 15000;
@@ -1132,15 +1146,15 @@ async function main() {
 						if (
 							curReg?.active?.state === 'activated' &&
 							navigator.serviceWorker?.controller &&
-							keys.some((k) => k.startsWith('aegis-shell-') && k !== 'aegis-shell-v1.5.0') &&
-							!keys.includes('aegis-shell-v1.5.0')
+							keys.some((k) => k.startsWith('aegis-shell-') && k !== prevShellCache) &&
+							!keys.includes(prevShellCache)
 						) {
 							return;
 						}
 						await new Promise((r) => setTimeout(r, 100));
 					}
 					throw new Error('Timed out waiting for upgraded SW activation');
-				});
+				}, oldShellCache);
 
 				// Immediately go offline again and reopen Near me
 				upgServer.setServerOffline(true);
@@ -1193,7 +1207,9 @@ async function main() {
 						finalOfflineVerify.entryScriptSrc.includes(candidateEntryJsFile) &&
 						hasNewNearMeLoaded &&
 						finalOfflineVerify.cardPaddingTop >= 16 &&
-						!finalOfflineVerify.caches.includes('aegis-shell-v1.5.0') &&
+						Boolean(oldShellCache) &&
+						!finalOfflineVerify.caches.includes(oldShellCache) &&
+						finalOfflineVerify.caches.some((k) => k.startsWith('aegis-shell-') && k !== oldShellCache) &&
 						finalOfflineVerify.caches.includes('unrelated-third-party-v1'),
 					'Completed SW upgrade retires old shell, preserves unrelated caches, and serves matching new HTML + CSS + JS offline',
 					`css=${finalOfflineVerify.cssHref} js=${finalOfflineVerify.entryScriptSrc} paddingTop=${finalOfflineVerify.cardPaddingTop}`,
@@ -1339,9 +1355,26 @@ async function main() {
 		await assertPopupTipAttached(recPage, DETERMINISTIC_EVENTS.eventEdge, 'Click on viewport-edge Event D after safe-area nudge');
 
 		// 2.6 A -> B selection (switch to Earthquake Event B)
-		const ptB = await centerAndProjectEvent(recPage, DETERMINISTIC_EVENTS.eventB, 4.8);
+		let ptB = await centerAndProjectEvent(recPage, DETERMINISTIC_EVENTS.eventB, 4.8);
 		await recPage.mouse.click(ptB.x, ptB.y);
-		await recPage.waitForTimeout(450);
+		try {
+			await recPage.waitForFunction(
+				(expectedId) =>
+					document.querySelector('[data-testid="sidebar"]')?.getAttribute('data-disaster-id') === expectedId,
+				DETERMINISTIC_EVENTS.eventB.id,
+				{ timeout: 2500 },
+			);
+		} catch {
+			ptB = await centerAndProjectEvent(recPage, DETERMINISTIC_EVENTS.eventB, 4.8);
+			await recPage.mouse.click(ptB.x, ptB.y);
+			await recPage.waitForFunction(
+				(expectedId) =>
+					document.querySelector('[data-testid="sidebar"]')?.getAttribute('data-disaster-id') === expectedId,
+				DETERMINISTIC_EVENTS.eventB.id,
+				{ timeout: 8000 },
+			);
+		}
+		await recPage.waitForTimeout(500);
 		await recPage.mouse.move(170, 500, { steps: 8 });
 		await recPage.waitForTimeout(300);
 		await assertPopupTipAttached(recPage, DETERMINISTIC_EVENTS.eventB, 'A -> B selection switch to Event B');
@@ -1514,6 +1547,7 @@ async function main() {
 			{ label: '390x844', width: 390, height: 844, mode: 'Playwright Chromium phone viewport emulation' },
 			{ label: '768x1024', width: 768, height: 1024, mode: 'Playwright Chromium tablet viewport emulation' },
 			{ label: '1366x768', width: 1366, height: 768, mode: 'Playwright Chromium desktop viewport' },
+			{ label: '1920x1080', width: 1920, height: 1080, mode: 'Playwright Chromium wide-desktop viewport' },
 		];
 
 		for (const vp of matrixViewports) {
@@ -1802,6 +1836,686 @@ async function main() {
 			'rtl-and-zoom',
 		);
 		await zoomCtx.close();
+
+		// =========================================================================
+		// GATE 4: Branding Icons/Manifest, Install, Web Push, NOAA-20/GIBS Pixel Alignment,
+		//         Short Desktop Live Monitor (1366x620), Geolocation, zh-Hans & Task Layout
+		// =========================================================================
+		console.log('\n=== Gate 4: Icons, Install, Web Push, NOAA-20/GIBS, Short Live Monitor, Geolocation & zh-Hans ===');
+
+		// 4A: Clean profile icon, manifest & standalone install + ephemeral-key per-place Web Push lifecycle + notification navigation
+		const ephemeralVapid = await generateEphemeralVapidKeys();
+		const ephemeralClient = await generateEphemeralClientPushKeys();
+		const iconCtx = await browser.newContext({ viewport: { width: 1366, height: 768 } });
+		const iconPage = await iconCtx.newPage();
+		const pushPosts = [];
+		const pushUnsubs = [];
+		const serverRegistrations = new Map();
+		let failNextPushRegister = false;
+		let subIdSeq = 1;
+		const makePlaceKey = (sourceId, lat, lng) => `${sourceId}:${Number(lat).toFixed(3)}:${Number(lng).toFixed(3)}`;
+
+		await installDeterministicFixtures(iconPage, {
+			subscriptionAvailable: false,
+			subscriptionReason: 'RESEND_API_KEY missing',
+			pushAvailable: true,
+			pushMode: 'web_push',
+			vapidPublicKey: ephemeralVapid.publicKey,
+			mapboxTracker,
+		});
+		await iconPage.route('**/api/v1/subscriptions/push-lookup', async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				headers: CORS_HEADERS,
+				body: JSON.stringify({
+					ok: true,
+					registrations: Array.from(serverRegistrations.values()),
+				}),
+			});
+		});
+		await iconPage.route('**/api/v1/subscriptions', async (route) => {
+			const payload = JSON.parse(route.request().postData() || '{}');
+			pushPosts.push(payload);
+			if (failNextPushRegister) {
+				failNextPushRegister = false;
+				await route.fulfill({
+					status: 500,
+					contentType: 'application/json',
+					headers: CORS_HEADERS,
+					body: JSON.stringify({ ok: false, code: 'server_error', message: 'Simulated transient server failure' }),
+				});
+				return;
+			}
+			const placeKey = makePlaceKey(payload.sourceId, payload.lat, payload.lng);
+			const existing = serverRegistrations.get(placeKey);
+			const subscriptionId = existing?.subscriptionId || `sub-push-det-${subIdSeq++}`;
+			serverRegistrations.set(placeKey, {
+				subscriptionId,
+				placeKey,
+				placeName: payload.placeName,
+				countryCode: payload.countryCode,
+				sourceId: payload.sourceId,
+				lat: Number(Number(payload.lat).toFixed(3)),
+				lng: Number(Number(payload.lng).toFixed(3)),
+				minSeverity: payload.minSeverity || 'moderate',
+				status: 'active',
+			});
+			await route.fulfill({
+				status: 201,
+				contentType: 'application/json',
+				headers: CORS_HEADERS,
+				body: JSON.stringify({
+					ok: true,
+					subscriptionId,
+					status: 'active',
+					transportMode: 'web_push',
+				}),
+			});
+		});
+		await iconPage.route('**/api/v1/subscriptions/unsubscribe**', async (route) => {
+			const payload = JSON.parse(route.request().postData() || '{}');
+			pushUnsubs.push(payload);
+			if (payload.scope === 'place') {
+				const placeKey = makePlaceKey(payload.sourceId, payload.lat, payload.lng);
+				const removed = serverRegistrations.delete(placeKey) ? 1 : 0;
+				await route.fulfill({
+					status: removed ? 200 : 404,
+					contentType: 'application/json',
+					headers: CORS_HEADERS,
+					body: JSON.stringify({
+						ok: Boolean(removed),
+						status: 'unsubscribed',
+						scope: 'place',
+						removedCount: removed,
+						remainingCount: serverRegistrations.size,
+						message: 'Place disabled',
+					}),
+				});
+				return;
+			}
+			const removed = serverRegistrations.size;
+			serverRegistrations.clear();
+			await route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				headers: CORS_HEADERS,
+				body: JSON.stringify({
+					ok: true,
+					status: 'unsubscribed',
+					scope: 'device',
+					removedCount: removed,
+					remainingCount: 0,
+					message: 'Device disabled',
+				}),
+			});
+		});
+
+		await iconPage.addInitScript((fixture) => {
+			// Clean mocked Notification + PushManager using runtime-generated ephemeral P-256 keys (never hardcoded)
+			let perm = 'granted';
+			let browserUnsubCount = 0;
+			const swMessageListeners = new Set();
+			const storageKey = '__ux_mock_browser_sub_active__';
+			const makeMockSub = () => ({
+				endpoint: fixture.endpoint,
+				expirationTime: null,
+				toJSON: () => ({
+					endpoint: fixture.endpoint,
+					expirationTime: null,
+					keys: {
+						p256dh: fixture.p256dh,
+						auth: fixture.auth,
+					},
+				}),
+				async unsubscribe() {
+					browserUnsubCount++;
+					window.sessionStorage.removeItem(storageKey);
+					return true;
+				},
+			});
+			Object.defineProperty(window, 'Notification', {
+				configurable: true,
+				value: class MockNotification {
+					static get permission() {
+						return perm;
+					}
+					static async requestPermission() {
+						return perm;
+					}
+				},
+			});
+			window.__setMockNotificationPermission = (next) => {
+				perm = next;
+			};
+			window.__getMockBrowserUnsubCount = () => browserUnsubCount;
+			window.__forceMockBrowserSubActive = (active) => {
+				if (active) window.sessionStorage.setItem(storageKey, '1');
+				else window.sessionStorage.removeItem(storageKey);
+			};
+			window.__dispatchSwMessage = (msg) => {
+				for (const fn of swMessageListeners) fn({ data: msg });
+			};
+			const fakePm = {
+				async getSubscription() {
+					return window.sessionStorage.getItem(storageKey) === '1' ? makeMockSub() : null;
+				},
+				async subscribe() {
+					window.sessionStorage.setItem(storageKey, '1');
+					return makeMockSub();
+				},
+			};
+			Object.defineProperty(navigator, 'serviceWorker', {
+				configurable: true,
+				value: {
+					ready: Promise.resolve({ pushManager: fakePm, scope: '/aegis-map/' }),
+					async getRegistration() {
+						return { pushManager: fakePm, scope: '/aegis-map/' };
+					},
+					async getRegistrations() {
+						return [{ pushManager: fakePm, scope: '/aegis-map/', async unregister() { return true; } }];
+					},
+					addEventListener(type, fn) {
+						if (type === 'message') swMessageListeners.add(fn);
+					},
+					removeEventListener(type, fn) {
+						if (type === 'message') swMessageListeners.delete(fn);
+					},
+				},
+			});
+		}, {
+			endpoint: 'https://updates.push.services.mozilla.com/wpush/v2/ux-ephemeral-endpoint',
+			p256dh: ephemeralClient.p256dh,
+			auth: ephemeralClient.auth,
+		});
+
+		await iconPage.goto(`${FRONTEND_URL}?view=near-me`, { waitUntil: 'networkidle', timeout: STEP_TIMEOUT });
+		await iconPage.locator('[data-testid="near-me-view"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
+
+		const domLinks = await iconPage.evaluate(() => ({
+			iconLinks: Array.from(
+				document.querySelectorAll('link[rel*="icon"], link[rel="apple-touch-icon"], link[rel="manifest"]'),
+			).map((link) => ({
+				rel: link.getAttribute('rel') || '',
+				href: link.href,
+			})),
+			brandImgs: document.querySelectorAll('header svg, header img').length,
+		}));
+		const linkResults = [];
+		for (const link of domLinks.iconLinks) {
+			const r = await iconPage.request.get(link.href);
+			const body = await r.body();
+			linkResults.push({
+				rel: link.rel,
+				href: link.href,
+				status: r.status(),
+				contentType: r.headers()['content-type'] || '',
+				bytes: body.byteLength,
+			});
+		}
+		const manifestRes = linkResults.find((x) => x.rel === 'manifest');
+		let manifestValid = false;
+		const manifestIcons = [];
+		if (manifestRes && manifestRes.status === 200) {
+			const mReq = await iconPage.request.get(manifestRes.href);
+			const mj = await mReq.json();
+			manifestValid = mj.scope === '/aegis-map/' && mj.start_url === '/aegis-map/?view=near-me';
+			for (const icon of mj.icons || []) {
+				const iconUrl = new URL(icon.src, manifestRes.href).href;
+				const ir = await iconPage.request.get(iconUrl);
+				const iBody = await ir.body();
+				manifestIcons.push({
+					src: icon.src,
+					status: ir.status(),
+					contentType: ir.headers()['content-type'] || '',
+					bytes: iBody.byteLength,
+				});
+			}
+		}
+		const assetAudit = { results: linkResults, manifestValid, manifestIcons, brandImgs: domLinks.brandImgs };
+		checks.record(
+			assetAudit.results.length >= 4 &&
+				assetAudit.results.every((r) => r.status === 200 && !r.contentType.includes('text/html') && r.bytes > 0) &&
+				assetAudit.manifestValid &&
+				assetAudit.manifestIcons.length >= 2 &&
+				assetAudit.manifestIcons.every((i) => i.status === 200 && i.contentType.startsWith('image/') && i.bytes > 0) &&
+				assetAudit.brandImgs > 0,
+			'Favicon, apple-touch-icon, manifest.webmanifest & manifest PNGs return HTTP 200 with non-HTML MIME types',
+			JSON.stringify(assetAudit),
+			'pwa-and-push',
+		);
+
+		await iconPage.locator('[data-testid="pwa-install-btn"]').click();
+		await iconPage.locator('[data-testid="install-instructions-dialog"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
+		await iconPage.screenshot({ path: path.join(EVIDENCE_DIR, 'after-favicon-install-clean.png') });
+		registerArtifact('after-favicon-install-clean.png', { surface: 'Header Brand Icon + Install Modal', viewport: '1366x768', executionMode: 'Clean profile Playwright Chromium' });
+		await iconPage.locator('[data-testid="install-modal-close-btn"]').click();
+
+		// Select Place A (Oslo) and test full per-place & device Web Push lifecycle + retry + reload/lost metadata + expired endpoint + notification click
+		await iconPage.locator('[data-testid="manual-coords-disclosure"]').click();
+		await iconPage.locator('[data-testid="manual-coords-input"]').fill('59.9139, 10.7522');
+		await iconPage.locator('[data-testid="apply-coords-btn"]').click();
+		await iconPage.locator('[data-testid="enable-push-alerts-btn"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
+		const inertEmailInputs = await iconPage.locator('[data-testid="subscription-email-input"]').count();
+		checks.record(inertEmailInputs === 0, 'Inert email <form> is hidden when server email delivery is unavailable', `emailInputs=${inertEmailInputs}`, 'pwa-and-push');
+
+		// 1. Enroll Place A (Oslo)
+		await iconPage.locator('[data-testid="enable-push-alerts-btn"]').click();
+		await iconPage.locator('[data-testid="disable-push-alerts-btn"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
+
+		// 2. Switch to Place B (Bergen) -> must NOT falsely show active; simulate partial failure then retry
+		await iconPage.locator('[data-testid="change-place-btn"]').click();
+		if (!(await iconPage.locator('[data-testid="manual-coords-input"]').isVisible())) {
+			await iconPage.locator('[data-testid="manual-coords-disclosure"]').click();
+		}
+		await iconPage.locator('[data-testid="manual-coords-input"]').fill('60.3913, 5.3221');
+		await iconPage.locator('[data-testid="apply-coords-btn"]').click();
+		await iconPage.locator('[data-testid="enable-push-alerts-btn"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
+		const placeBActiveBeforeEnroll = await iconPage.locator('[data-testid="web-push-optin-card"]').getAttribute('data-push-active-place');
+
+		failNextPushRegister = true;
+		await iconPage.locator('[data-testid="enable-push-alerts-btn"]').click();
+		await iconPage.locator('[data-testid="retry-push-op-btn"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
+		const placeBActiveAfterFail = await iconPage.locator('[data-testid="web-push-optin-card"]').getAttribute('data-push-active-place');
+		await iconPage.locator('[data-testid="retry-push-op-btn"]').click();
+		await iconPage.locator('[data-testid="disable-push-alerts-btn"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
+		const placeBActiveCount = await iconPage.locator('[data-testid="web-push-optin-card"]').getAttribute('data-push-active-count');
+
+		// 3. Return to Place A, wipe localStorage (lost metadata) & reload -> server lookup restores Place A active
+		await iconPage.evaluate(() => window.localStorage.removeItem('aegis:push-sub:v2'));
+		await iconPage.goto(`${FRONTEND_URL}?view=near-me&lat=59.9139&lng=10.7522&country=NO`, { waitUntil: 'networkidle', timeout: STEP_TIMEOUT });
+		await iconPage.locator('[data-testid="disable-push-alerts-btn"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
+
+		// 4. Disable Place A ONLY -> Place B remains active, browser PushSubscription NOT unsubscribed
+		await iconPage.locator('[data-testid="disable-push-alerts-btn"]').click();
+		await iconPage.locator('[data-testid="enable-push-alerts-btn"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
+		const unsubCountAfterPlaceA = await iconPage.evaluate(() => window.__getMockBrowserUnsubCount());
+		const remainingAfterPlaceA = await iconPage.locator('[data-testid="web-push-optin-card"]').getAttribute('data-push-active-count');
+
+		// 5. Switch back to Place B -> STILL active; then disable whole device
+		await iconPage.goto(`${FRONTEND_URL}?view=near-me&lat=60.3913&lng=5.3221&country=NO`, { waitUntil: 'networkidle', timeout: STEP_TIMEOUT });
+		await iconPage.locator('[data-testid="disable-push-alerts-btn"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
+		await iconPage.locator('[data-testid="disable-push-alerts-btn"]').click();
+		await iconPage.locator('[data-testid="enable-push-alerts-btn"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
+		const unsubCountAfterFinal = await iconPage.evaluate(() => window.__getMockBrowserUnsubCount());
+
+		// 6. Expired endpoint (browser has stale sub, server lookup returns []) -> must NOT show active
+		await iconPage.evaluate(() => window.__forceMockBrowserSubActive(true));
+		await iconPage.reload({ waitUntil: 'networkidle', timeout: STEP_TIMEOUT });
+		await iconPage.locator('[data-testid="enable-push-alerts-btn"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
+		const expiredShowsActive = await iconPage.locator('[data-testid="web-push-optin-card"]').getAttribute('data-push-active-place');
+		await iconPage.evaluate(() => window.__forceMockBrowserSubActive(false));
+
+		// 7. Denied permission fails closed
+		await iconPage.evaluate(() => window.__setMockNotificationPermission('denied'));
+		await iconPage.locator('[data-testid="enable-push-alerts-btn"]').click();
+		await iconPage.waitForTimeout(250);
+		const disableAfterDenied = await iconPage.locator('[data-testid="disable-push-alerts-btn"]').count();
+
+		// 8. Notification click for cancelled warning in existing window switches place & shows cancelled state without fabricating active warning
+		await iconPage.evaluate(() => {
+			window.__dispatchSwMessage({
+				type: 'AEGIS_WARNING_CLICK',
+				url: '/aegis-map/?view=near-me&lat=59.9139&lng=10.7522&country=NO&warningId=cap-cancelled-99&noticeStatus=cancelled',
+				warningId: 'cap-cancelled-99',
+				route: {
+					view: 'near-me',
+					lat: 59.9139,
+					lng: 10.7522,
+					countryCode: 'NO',
+					warningId: 'cap-cancelled-99',
+					placeName: 'Oslo',
+					msgType: 'Cancel',
+				},
+			});
+		});
+		await iconPage.locator('[data-testid="notification-warning-status"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
+		const cancelBannerStatus = await iconPage.locator('[data-testid="notification-warning-status"]').getAttribute('data-notice-status');
+
+		checks.record(
+			placeBActiveBeforeEnroll === 'false' &&
+				placeBActiveAfterFail === 'false' &&
+				placeBActiveCount === '2' &&
+				unsubCountAfterPlaceA === 0 &&
+				remainingAfterPlaceA === '1' &&
+				unsubCountAfterFinal === 1 &&
+				expiredShowsActive === 'false' &&
+				disableAfterDenied === 0 &&
+				cancelBannerStatus === 'cancelled',
+			'Per-place Web Push enrollment, partial-failure retry, lost-metadata reload recovery, per-place vs device removal, expired endpoint, denied permission & cancelled notification navigation verified',
+			JSON.stringify({
+				placeBActiveBeforeEnroll,
+				placeBActiveAfterFail,
+				placeBActiveCount,
+				unsubCountAfterPlaceA,
+				remainingAfterPlaceA,
+				unsubCountAfterFinal,
+				expiredShowsActive,
+				disableAfterDenied,
+				cancelBannerStatus,
+			}),
+			'pwa-and-push',
+		);
+		await iconCtx.close();
+
+		// Standalone display-mode hides install button
+		const standaloneCtx = await browser.newContext({ viewport: { width: 1366, height: 768 } });
+		const standalonePage = await standaloneCtx.newPage();
+		await installDeterministicFixtures(standalonePage, { mapboxTracker });
+		await standalonePage.addInitScript(() => {
+			const origMM = window.matchMedia.bind(window);
+			window.matchMedia = (q) => (q.includes('display-mode: standalone') ? { ...origMM(q), matches: true, media: q, addEventListener() {}, removeEventListener() {} } : origMM(q));
+		});
+		await standalonePage.goto(`${FRONTEND_URL}?view=near-me`, { waitUntil: 'domcontentloaded', timeout: STEP_TIMEOUT });
+		await standalonePage.locator('[data-testid="near-me-view"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
+		const installBtnCount = await standalonePage.locator('[data-testid="pwa-install-btn"]').count();
+		checks.record(installBtnCount === 0, 'Install AegisMap button is hidden when running in standalone PWA mode', `count=${installBtnCount}`, 'pwa-and-push');
+		await standaloneCtx.close();
+
+		// 4B: NOAA-20 Hotspot Cell (32.250°N, 6.750°E), Undated GIBS Thermal Overlay, & Pixel Alignment + Short Desktop Live Monitor (1366x620)
+		const fireCtx = await browser.newContext({ viewport: { width: 1366, height: 620 } });
+		const firePage = await fireCtx.newPage();
+		const capturedOverlayUrls = [];
+		const PNG_1X1 = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=', 'base64');
+		await installDeterministicFixtures(firePage, { mapboxTracker });
+		await firePage.unroute('**/api/v2/disasters**');
+		await firePage.route('**/api/v2/disasters**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				headers: { ...CORS_HEADERS, 'x-disaster-sources': 'eonet=ok;usgs=ok;firms=ok', 'x-disaster-fetched-at': new Date().toISOString(), 'x-disaster-partial': 'false' },
+				body: JSON.stringify({
+					version: 2,
+					window: '24h',
+					windowRange: { startInclusive: '2026-11-27T00:00:00Z', endExclusive: '2026-11-28T00:00:00Z' },
+					summary: { namedFires: 1, fireDetections: 14, fireCells: 1, earthquakes: 1, volcanoes: 1 },
+					wildfires: [DETERMINISTIC_EVENTS.eventA],
+					earthquakes: [DETERMINISTIC_EVENTS.eventB],
+					volcanoes: [DETERMINISTIC_EVENTS.eventC],
+					fireCells: [
+						{
+							cellId: 'cell_32.25_6.75',
+							lat: 32.25,
+							lng: 6.75,
+							bounds: [6.5, 32.0, 7.0, 32.5],
+							detectionCount: 14,
+							maxFrp: 45.2,
+							avgFrp: 19.4,
+							maxBrightTi4: 351.2,
+							latestAcqTime: '2026-11-27T13:10:00Z',
+							confidenceCounts: { high: 5, nominal: 9, low: 0, unknown: 0 },
+							dayNightCounts: { day: 10, night: 4, unknown: 0 },
+							satelliteCounts: { N20: 14 },
+							intensity: 'medium',
+						},
+					],
+					sources: {
+						eonet: { status: 'ok', count: 2, rejected: 0 },
+						usgs: { status: 'ok', count: 1, rejected: 0 },
+						firms: { status: 'ok', generatedAt: new Date().toISOString(), sensors: { VIIRS_NOAA20_NRT: { status: 'ok', rawRows: 14, acceptedRows: 14 } }, accounting: { rawRows: 14, malformedRows: 0, outOfWindowRows: 0, duplicateRows: 0, acceptedDetections: 14 } },
+					},
+					fetchedAt: new Date().toISOString(),
+				}),
+			}),
+		);
+		await firePage.unroute('**/api/fire-hotspots**');
+		await firePage.route('**/api/fire-hotspots**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				headers: CORS_HEADERS,
+				body: JSON.stringify({
+					source: 'VIIRS_SNPP_NRT,VIIRS_NOAA20_NRT,VIIRS_NOAA21_NRT',
+					sources: ['VIIRS_SNPP_NRT', 'VIIRS_NOAA20_NRT', 'VIIRS_NOAA21_NRT'],
+					failedSources: [],
+					sensor: 'VIIRS S-NPP, NOAA-20 & NOAA-21 375 m (NRT)',
+					totalCount: 2,
+					rawMatchedCount: 2,
+					truncated: false,
+					highConfidence: 1,
+					nominalConfidence: 1,
+					lowConfidence: 0,
+					unknownConfidence: 0,
+					maxBrightness: 351.2,
+					maxPower: 45.2,
+					rejectedRows: 0,
+					fetchedAt: new Date().toISOString(),
+					coverage: { status: 'complete', timezone: 'UTC', requestedStart: '2026-11-21', requestedEnd: '2026-11-28', missingDates: [], windows: [] },
+					hotspots: [
+						{ latitude: 32.25, longitude: 6.75, bright_ti4: 351.2, bright_ti5: 291, scan: 0.4, track: 0.4, acq_date: '2026-11-27', acq_time: '1310', satellite: 'NOAA-20', confidence: 'h', version: '2.0NRT', frp: 45.2, daynight: 'D' },
+						{ latitude: 32.5, longitude: 7.0, bright_ti4: 339.1, bright_ti5: 289, scan: 0.4, track: 0.4, acq_date: '2026-11-27', acq_time: '1310', satellite: 'NOAA-20', confidence: 'n', version: '2.0NRT', frp: 19.4, daynight: 'D' },
+					],
+				}),
+			}),
+		);
+		await firePage.route('https://gibs.earthdata.nasa.gov/**', (route) => {
+			const u = route.request().url();
+			if (u.includes('Thermal_Anomalies')) {
+				capturedOverlayUrls.push(u);
+			}
+			return route.fulfill({ status: 200, contentType: 'image/png', body: PNG_1X1 });
+		});
+
+		await firePage.goto(FRONTEND_URL, { waitUntil: 'domcontentloaded', timeout: STEP_TIMEOUT });
+		await waitForMapReady(firePage);
+
+		// Verify 1366x620 Live Monitor fits controls & footer cleanly with single scroll body
+		const shortLegendCheck = await firePage.evaluate(() => {
+			const leg = document.querySelector('[data-testid="map-legend"]');
+			const body = document.querySelector('[data-testid="legend-scroll-body"]');
+			const winToggle = document.querySelector('[data-testid="window-toggle-container"]')?.getBoundingClientRect();
+			const refreshBtn = document.querySelector('[data-testid="refresh-disasters-btn"]')?.getBoundingClientRect();
+			const discOpen = document.querySelector('[data-testid="legend-scope-disclosure"]')?.hasAttribute('open') ?? false;
+			if (!leg || !body || !winToggle || !refreshBtn) return { ok: false, reason: 'missing elements' };
+			return {
+				ok: body.scrollHeight <= body.clientHeight + 2 && refreshBtn.bottom <= window.innerHeight && winToggle.top >= 0 && !discOpen,
+				scrollDelta: body.scrollHeight - body.clientHeight,
+				refreshBottom: Math.round(refreshBtn.bottom),
+				vh: window.innerHeight,
+				discOpen,
+			};
+		});
+		checks.record(shortLegendCheck.ok, 'Short desktop (1366x620): Live Monitor primary controls & footer visible cleanly without overflow', JSON.stringify(shortLegendCheck), 'short-desktop-legend');
+		await firePage.screenshot({ path: path.join(EVIDENCE_DIR, 'after-live-monitor-short-desktop.png') });
+		registerArtifact('after-live-monitor-short-desktop.png', { surface: 'Explore Live Monitor (1366x620)', viewport: '1366x620', executionMode: 'Playwright Chromium' });
+
+		// Select NOAA-20 cell 32.250N, 6.750E via Legend Event List and inspect Fire tab + pixel alignment
+		await firePage.locator('[data-testid="legend-event-list-toggle"]').click();
+		await firePage.locator('[data-testid="legend-event-item-cell_32.25_6.75"]').click();
+		await firePage.locator('[data-testid="sidebar"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
+		await firePage.locator('[data-testid="inspector-tab-imagery"]').click();
+		await firePage.locator('[data-testid="firms-satellite-breakdown"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
+		await firePage.locator('[data-testid="imagery-hotspot-marker"]').first().waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
+
+		const imageryGeometry = await firePage.evaluate(() => {
+			const frame = document.querySelector('[data-testid="imagery-frame"]')?.getBoundingClientRect();
+			const img = document.querySelector('[data-testid="imagery-base"]');
+			const markers = Array.from(document.querySelectorAll('[data-testid="imagery-hotspot-marker"]'));
+			if (!frame || !img || markers.length < 2) return { ok: false };
+			const objectFit = window.getComputedStyle(img).objectFit;
+			const centerRect = markers[0].getBoundingClientRect();
+			const cornerRect = markers[1].getBoundingClientRect();
+			const cx = centerRect.left + centerRect.width / 2 - frame.left;
+			const cy = centerRect.top + centerRect.height / 2 - frame.top;
+			const kx = cornerRect.left + cornerRect.width / 2 - frame.left;
+			const ky = cornerRect.top + cornerRect.height / 2 - frame.top;
+			const dxCenter = Math.abs(cx - frame.width * 0.5);
+			const dyCenter = Math.abs(cy - frame.height * 0.5);
+			const dxCorner = Math.abs(kx - frame.width * 0.75);
+			const dyCorner = Math.abs(ky - frame.height * 0.25);
+			return {
+				ok: objectFit === 'fill' && Math.abs(frame.width / frame.height - 4 / 3) < 0.02 && dxCenter <= 2 && dyCenter <= 2 && dxCorner <= 2 && dyCorner <= 2,
+				objectFit,
+				ratio: Number((frame.width / frame.height).toFixed(3)),
+				deltas: { dxCenter, dyCenter, dxCorner, dyCorner },
+				sensorText: document.querySelector('[data-testid="firms-satellite-breakdown"]')?.innerText || '',
+			};
+		});
+		checks.record(
+			imageryGeometry.ok && capturedOverlayUrls.length >= 1 && !new URL(capturedOverlayUrls[0]).searchParams.has('TIME') && imageryGeometry.sensorText.includes('NOAA-20'),
+			'NOAA-20 cell shows NOAA-20 breakdown, undated GIBS overlay (no TIME=), aspect 4:3 object-fill alignment <= 2px',
+			JSON.stringify({ ...imageryGeometry, overlayUrl: capturedOverlayUrls[0] }),
+			'noaa20-and-gibs',
+		);
+		await firePage.screenshot({ path: path.join(EVIDENCE_DIR, 'after-hotspot-noaa20-32.25N-6.75E.png') });
+		registerArtifact('after-hotspot-noaa20-32.25N-6.75E.png', { surface: 'NOAA-20 Hotspot Imagery (32.250N, 6.750E)', viewport: '1366x620', executionMode: 'Playwright Chromium' });
+
+		// Exercise GIBS XML ServiceExceptionReport on the thermal overlay while valid FIRMS points & MODIS base image remain intact
+		await firePage.unroute('https://gibs.earthdata.nasa.gov/**');
+		await firePage.route('https://gibs.earthdata.nasa.gov/**', (route) => {
+			const u = route.request().url();
+			if (u.includes('Thermal_Anomalies')) {
+				return route.fulfill({
+					status: 200,
+					contentType: 'application/xml',
+					body: '<?xml version="1.0" encoding="UTF-8"?><ServiceExceptionReport version="1.3.0"><ServiceException>Invalid layer extent</ServiceException></ServiceExceptionReport>',
+				});
+			}
+			return route.fulfill({ status: 200, contentType: 'image/png', body: PNG_1X1 });
+		});
+		await firePage.locator('[data-testid="imagery-tab-falsecolor"]').click();
+		await firePage.locator('[data-testid="imagery-tab-fire"]').click();
+		await firePage.waitForFunction(
+			() => document.querySelector('[data-testid="satellite-imagery"]')?.getAttribute('data-imagery-overlay-status') === 'error',
+			undefined,
+			{ timeout: 10000 },
+		);
+		const xmlOverlayFallback = await firePage.evaluate(() => {
+			const el = document.querySelector('[data-testid="satellite-imagery"]');
+			return {
+				baseStatus: el?.getAttribute('data-imagery-status'),
+				overlayStatus: el?.getAttribute('data-imagery-overlay-status'),
+				markers: document.querySelectorAll('[data-testid="imagery-hotspot-marker"]').length,
+				caption: document.querySelector('[data-testid="imagery-caption"]')?.textContent || '',
+			};
+		});
+		checks.record(
+			xmlOverlayFallback.baseStatus === 'loaded' &&
+				xmlOverlayFallback.overlayStatus === 'error' &&
+				xmlOverlayFallback.markers === 2 &&
+				xmlOverlayFallback.caption.includes('failed to load'),
+			'GIBS XML ServiceExceptionReport degrades thermal overlay cleanly while MODIS base & valid FIRMS markers remain rendered',
+			JSON.stringify(xmlOverlayFallback),
+			'noaa20-and-gibs',
+		);
+		await fireCtx.close();
+
+		// 4D: Healthy-empty saved Near me (Panaji, IN), desktop geolocation + race guard, & zh-Hans localization
+		const nmCtx = await browser.newContext({ viewport: { width: 1366, height: 768 } });
+		const nmPage = await nmCtx.newPage();
+		await installDeterministicFixtures(nmPage, {
+			subscriptionAvailable: false,
+			subscriptionReason: 'RESEND_API_KEY missing',
+			mapboxTracker,
+		});
+		await nmPage.unroute('**/api/v1/warnings**');
+		await nmPage.route('**/api/v1/warnings**', (route) =>
+			route.fulfill({
+				status: 200,
+				contentType: 'application/json',
+				headers: CORS_HEADERS,
+				body: JSON.stringify({
+					version: 1,
+					query: { lat: 15.4909, lng: 73.8278, countryCode: 'IN', checkedAt: new Date().toISOString() },
+					coverageStatus: 'checked_no_warnings',
+					coverageExplanation: 'Checked NDMA SACHET — no active warnings for Panaji, Goa, India.',
+					warnings: [],
+					sources: [{ sourceId: 'in-sachet', authorityName: 'NDMA SACHET', countryCodes: ['IN'], status: 'ok', checkedAt: new Date().toISOString(), lastSuccessAt: new Date().toISOString(), activeAlertCount: 0, matchedAlertCount: 0, unsupportedHazards: [], attribution: 'NDMA India', termsUrl: 'https://sachet.ndma.gov.in/' }],
+				}),
+			}),
+		);
+		await nmPage.addInitScript(() => {
+			if (!window.localStorage.getItem('aegis:saved-places:v1')) {
+				window.localStorage.setItem('aegis:saved-places:v1', JSON.stringify([{ id: 'gaz:in-panaji', label: 'Panaji, Goa, India', lat: 15.4909, lng: 73.8278, countryCode: 'IN', countryName: 'India', admin1: 'Goa', timezone: 'Asia/Kolkata', source: 'offline_gazetteer' }]));
+				window.localStorage.setItem('aegis:present-jurisdiction:v1', 'IN');
+			}
+		});
+		await nmPage.goto(`${FRONTEND_URL}?view=near-me`, { waitUntil: 'networkidle', timeout: STEP_TIMEOUT });
+		await nmPage.locator('[data-testid="warnings-coverage-banner"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
+		const emptyBalance = await nmPage.evaluate(() => {
+			const gpsVisible = Boolean(document.querySelector('[data-testid="gps-request-btn"]'));
+			const left = document.querySelector('[data-testid="official-warnings-section"]')?.getBoundingClientRect();
+			const right = document.querySelector('[data-testid="location-help-panel"]')?.getBoundingClientRect();
+			const banner = document.querySelector('[data-testid="warnings-coverage-banner"]')?.getBoundingClientRect();
+			const sourcesHeading = document.querySelector('[data-testid="official-warnings-section"] h3')?.getBoundingClientRect();
+			const innerVoidPx = banner && sourcesHeading ? Math.round(sourcesHeading.top - banner.bottom) : 9999;
+			return {
+				gpsVisible,
+				row1GapPx: left && right ? Math.round(Math.abs(right.height - left.height)) : 9999,
+				innerVoidPx,
+			};
+		});
+		checks.record(
+			emptyBalance.gpsVisible && emptyBalance.row1GapPx < 240 && emptyBalance.innerVoidPx < 60,
+			'Healthy-empty Near me keeps Use my location visible, compact Row 1 heights, and zero internal card dead void',
+			JSON.stringify(emptyBalance),
+			'task-layout',
+		);
+		await nmPage.screenshot({ path: path.join(EVIDENCE_DIR, 'after-near-me-healthy-empty-saved.png'), fullPage: true });
+		registerArtifact('after-near-me-healthy-empty-saved.png', { surface: 'Near me (healthy empty saved Panaji, full page)', viewport: '1366x768', executionMode: 'Playwright Chromium' });
+
+		// Switch to zh-Hans and search Chinese offline gazetteer 北京
+		await nmPage.locator('[data-testid="ui-locale-select"]').selectOption('zh-Hans');
+		const zhLangCheck = await nmPage.evaluate(() => ({
+			lang: document.documentElement.lang,
+			heading: document.querySelector('h1')?.textContent || '',
+			pageText: document.body.innerText,
+		}));
+		await nmPage.locator('[data-testid="change-place-btn"]').click();
+		await nmPage.route('https://geocoding-api.open-meteo.com/**', (route) => route.abort('failed'));
+		await nmPage.locator('[data-testid="place-search-input"]').fill('北京');
+		await nmPage.locator('[data-testid="place-search-btn"]').click();
+		await nmPage.locator('[data-testid="selected-place-summary"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
+		const selectedZhText = await nmPage.locator('[data-testid="selected-place-summary"]').innerText();
+		const hasLocalizedZhHeadings =
+			zhLangCheck.pageText.includes('官方预警数据源覆盖与时效') &&
+			zhLangCheck.pageText.includes('已核验紧急求助电话') &&
+			!zhLangCheck.pageText.includes('AUTHORITY SOURCE COVERAGE');
+		checks.record(
+			zhLangCheck.lang === 'zh-Hans' && zhLangCheck.heading === '我附近' && selectedZhText.includes('Beijing') && hasLocalizedZhHeadings,
+			'zh-Hans UI, localized subheadings, and Chinese offline gazetteer query (北京) work cleanly',
+			JSON.stringify({ lang: zhLangCheck.lang, heading: zhLangCheck.heading, hasLocalizedZhHeadings, selectedZhText: selectedZhText.slice(0, 80) }),
+			'zh-hans',
+		);
+		await nmPage.screenshot({ path: path.join(EVIDENCE_DIR, 'after-near-me-zh-hans-1366x768.png') });
+		registerArtifact('after-near-me-zh-hans-1366x768.png', { surface: 'Near me (Simplified Chinese zh-Hans)', viewport: '1366x768', locale: 'zh-Hans', executionMode: 'Playwright Chromium' });
+		await nmCtx.close();
+
+		// 4E: Desktop coarse-first geolocation + manual selection race guard
+		const geoCtx = await browser.newContext({ viewport: { width: 1366, height: 768 } });
+		const geoPage = await geoCtx.newPage();
+		await installDeterministicFixtures(geoPage, { mapboxTracker });
+		await geoPage.addInitScript(() => {
+			Object.defineProperty(navigator, 'geolocation', {
+				configurable: true,
+				value: {
+					getCurrentPosition(success) {
+						setTimeout(() => {
+							success({
+								coords: { latitude: 3.139, longitude: 101.6869, accuracy: 1200 },
+								timestamp: Date.now(),
+							});
+						}, 450);
+					},
+				},
+			});
+		});
+		await geoPage.goto(`${FRONTEND_URL}?view=near-me`, { waitUntil: 'domcontentloaded', timeout: STEP_TIMEOUT });
+		await geoPage.locator('[data-testid="gps-request-btn"]').click();
+		// Manual Beijing selection BEFORE delayed geolocation callback resolves -> manual Beijing must win
+		await geoPage.route('https://geocoding-api.open-meteo.com/**', (route) => route.abort('failed'));
+		await geoPage.locator('[data-testid="place-search-input"]').fill('北京');
+		await geoPage.locator('[data-testid="place-search-btn"]').click();
+		await geoPage.locator('[data-testid="selected-place-summary"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
+		await geoPage.waitForTimeout(600);
+		const raceWinnerText = await geoPage.locator('[data-testid="selected-place-summary"]').innerText();
+		checks.record(
+			raceWinnerText.includes('Beijing') && !raceWinnerText.includes('Kuala Lumpur') && !raceWinnerText.includes('3.139'),
+			'Manual place selection (Beijing) is never overwritten by delayed desktop geolocation callback',
+			raceWinnerText.slice(0, 80),
+			'desktop-geolocation',
+		);
+		await geoCtx.close();
 	} finally {
 		await browser.close();
 	}

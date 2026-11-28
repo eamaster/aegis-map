@@ -16,20 +16,33 @@
  *   paginated prior-delivery lookup (no truncation at 50).
  */
 
-import type {
-	SubscriptionCreateRequest,
-	SubscriptionResponse,
-	SubscriptionServiceStatus,
+import {
+	buildPushPlaceKey,
+	canonicalizeSubscriptionCoordinates,
+	type PushLookupResponse,
+	type PushRegistrationSummary,
+	type SubscriptionCreateRequest,
+	type SubscriptionResponse,
+	type SubscriptionServiceStatus,
+	type WebPushNotificationPayload,
+	type WebPushNotificationRoute,
 } from '../../shared/contracts';
 import { getAuthorityById } from '../../shared/warningRegistry';
 import { validateCoordinates } from './firms';
-import { checkD1SchemaReady } from './history';
+import { checkD1SchemaReady, checkWebPushSchemaReady } from './history';
 import {
 	evaluateAuthorityRecordsForPoint,
 	refreshOrLoadAuthoritySnapshot,
 	type AuthoritySnapshotDoc,
 	type FetchLike,
 } from './warnings/adapters';
+import {
+	buildPushTopic,
+	PushEndpointGoneError,
+	validatePushEndpoint,
+	validatePushKeyMaterial,
+	type WebPushTransport,
+} from './webPush';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const MAX_DELIVERY_ATTEMPTS = 3;
@@ -103,14 +116,43 @@ export function createEmailTransport(options: {
 export async function getSubscriptionServiceStatus(
 	db: D1Database | undefined,
 	transport: EmailTransport,
+	pushTransport?: WebPushTransport,
 ): Promise<SubscriptionServiceStatus> {
 	const d1State = await checkD1SchemaReady(db);
+	const pushSchemaState = await checkWebPushSchemaReady(db);
+
+	let pushAvailable = false;
+	let pushMode: SubscriptionServiceStatus['pushMode'] = 'unavailable';
+	let vapidPublicKey: string | undefined;
+	let pushReason: string | undefined;
+
+	if (d1State !== 'ready') {
+		pushReason = 'Subscription database is not ready in this environment.';
+	} else if (pushSchemaState !== 'ready') {
+		pushReason = 'Push subscription schema migration (0003) has not been applied.';
+	} else if (!pushTransport || pushTransport.mode === 'disabled') {
+		pushReason =
+			'Browser push notifications are not configured in this deployment (VAPID keys missing). Official warnings remain available directly in Near me.';
+	} else {
+		vapidPublicKey = await pushTransport.getVapidPublicKey();
+		if (vapidPublicKey) {
+			pushAvailable = true;
+			pushMode = pushTransport.mode;
+		} else {
+			pushReason = 'Browser push notifications are not configured (invalid VAPID public key).';
+		}
+	}
+
 	if (d1State === 'unbound') {
 		return {
 			available: false,
 			mode: 'unavailable',
 			smsAvailable: false,
 			reason: 'Subscription database (AEGIS_DB) is not bound in this environment.',
+			pushAvailable,
+			pushMode,
+			...(vapidPublicKey ? { vapidPublicKey } : {}),
+			...(pushReason ? { pushReason } : {}),
 		};
 	}
 	if (d1State === 'schema_missing') {
@@ -119,6 +161,10 @@ export async function getSubscriptionServiceStatus(
 			mode: 'unavailable',
 			smsAvailable: false,
 			reason: 'Subscription database schema migrations have not been applied.',
+			pushAvailable,
+			pushMode,
+			...(vapidPublicKey ? { vapidPublicKey } : {}),
+			...(pushReason ? { pushReason } : {}),
 		};
 	}
 	if (transport.mode === 'disabled') {
@@ -128,12 +174,20 @@ export async function getSubscriptionServiceStatus(
 			smsAvailable: false,
 			reason:
 				'Automated email alert delivery is not configured in this deployment (RESEND_API_KEY missing). Official warnings remain available directly in Near me.',
+			pushAvailable,
+			pushMode,
+			...(vapidPublicKey ? { vapidPublicKey } : {}),
+			...(pushReason ? { pushReason } : {}),
 		};
 	}
 	return {
 		available: true,
 		mode: transport.mode,
 		smsAvailable: false,
+		pushAvailable,
+		pushMode,
+		...(vapidPublicKey ? { vapidPublicKey } : {}),
+		...(pushReason ? { pushReason } : {}),
 	};
 }
 
@@ -149,6 +203,8 @@ export async function createSubscription(options: {
 	db: D1Database | undefined;
 	req: SubscriptionCreateRequest;
 	transport?: EmailTransport;
+	pushTransport?: WebPushTransport;
+	allowLocalPushEndpoints?: boolean;
 	now?: Date;
 }): Promise<{ status: number; body: SubscriptionResponse }> {
 	const { req } = options;
@@ -159,13 +215,9 @@ export async function createSubscription(options: {
 				ok: false,
 				code: 'sms_deferred',
 				message:
-					'Regional SMS alerts are deferred until carrier coverage, cost limits, and verified delivery callbacks are enabled. Use opt-in email alerts or calendar reminders.',
+					'Regional SMS alerts are deferred until carrier coverage, cost limits, and verified delivery callbacks are enabled. Use opt-in email alerts, browser push, or calendar reminders.',
 			},
 		};
-	}
-
-	if (req.channel !== 'email' || typeof req.destination !== 'string' || !EMAIL_RE.test(req.destination.trim())) {
-		return { status: 400, body: { ok: false, code: 'invalid_email', message: 'Valid email address required.' } };
 	}
 
 	const coordCheck = validateCoordinates(req.lat, req.lng);
@@ -199,6 +251,162 @@ export async function createSubscription(options: {
 		};
 	}
 
+	const nowIso = (options.now ?? new Date()).toISOString();
+	const id = crypto.randomUUID();
+	const unsubscribeToken = crypto.randomUUID();
+	const placeName = (req.placeName || 'Monitored Location').trim().slice(0, 120);
+	const countryCode = (req.countryCode || authority.countryCodes[0]).trim().toUpperCase().slice(0, 2);
+	const minSeverity = req.minSeverity === 'extreme' || req.minSeverity === 'severe' ? req.minSeverity : 'moderate';
+	const { lat: roundedLat, lng: roundedLng } = canonicalizeSubscriptionCoordinates(req.lat, req.lng);
+
+	if (req.channel === 'web_push') {
+		const pushMode = options.pushTransport?.mode ?? 'disabled';
+		const pushSchema = await checkWebPushSchemaReady(options.db);
+		if (pushMode === 'disabled' || pushSchema !== 'ready') {
+			return {
+				status: 503,
+				body: {
+					ok: false,
+					code: 'push_delivery_unavailable',
+					transportMode: 'disabled',
+					message:
+						'Browser push notification delivery is not configured on this server. Official warnings remain available directly in Near me.',
+				},
+			};
+		}
+
+		const pushSub = req.pushSubscription;
+		if (!pushSub || typeof pushSub.endpoint !== 'string' || !pushSub.keys) {
+			return {
+				status: 400,
+				body: { ok: false, code: 'invalid_push_subscription', message: 'Valid Web Push subscription object required.' },
+			};
+		}
+		const endpointCheck = validatePushEndpoint(pushSub.endpoint, {
+			allowLocalTest: options.allowLocalPushEndpoints || pushMode === 'sandbox',
+		});
+		if (!endpointCheck.ok) {
+			return {
+				status: 400,
+				body: { ok: false, code: 'invalid_push_endpoint', message: endpointCheck.reason },
+			};
+		}
+		const keyCheck = validatePushKeyMaterial(pushSub.keys.p256dh, pushSub.keys.auth);
+		if (!keyCheck.ok) {
+			return {
+				status: 400,
+				body: { ok: false, code: 'invalid_push_keys', message: keyCheck.reason },
+			};
+		}
+
+		const destination = endpointCheck.url.href;
+		const consumedToken = `consumed:${crypto.randomUUID()}`;
+		const expirationTime =
+			typeof pushSub.expirationTime === 'number' && Number.isFinite(pushSub.expirationTime)
+				? Math.round(pushSub.expirationTime)
+				: null;
+		const userLocale = typeof req.locale === 'string' && req.locale.trim() ? req.locale.trim().slice(0, 16) : null;
+
+		// Single atomic D1 batch transaction: upsert subscription (retaining stable id & active token on conflict),
+		// upsert push encryption keys by canonical lookup, and read back the committed row.
+		// If key persistence fails for any reason, D1 rolls back the entire batch.
+		const upsertSubStmt = options.db
+			.prepare(
+				`INSERT INTO subscriptions (
+					id, channel, destination, place_name, lat, lng, country_code, source_id,
+					min_severity, status, confirm_token, unsubscribe_token, created_at, confirmed_at
+				) VALUES (?, 'web_push', ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
+				ON CONFLICT(channel, destination, source_id, lat, lng) DO UPDATE SET
+					place_name = excluded.place_name,
+					country_code = excluded.country_code,
+					min_severity = excluded.min_severity,
+					status = 'active',
+					confirm_token = excluded.confirm_token,
+					unsubscribe_token = CASE
+						WHEN subscriptions.status = 'unsubscribed' THEN excluded.unsubscribe_token
+						ELSE subscriptions.unsubscribe_token
+					END,
+					confirmed_at = COALESCE(subscriptions.confirmed_at, excluded.confirmed_at),
+					unsubscribed_at = NULL`,
+			)
+			.bind(
+				id,
+				destination,
+				placeName,
+				roundedLat,
+				roundedLng,
+				countryCode,
+				authority.sourceId,
+				minSeverity,
+				consumedToken,
+				unsubscribeToken,
+				nowIso,
+				nowIso,
+			);
+
+		const upsertKeysStmt = options.db
+			.prepare(
+				`INSERT INTO push_subscription_keys (subscription_id, p256dh, auth, expiration_time, user_locale, updated_at)
+				 SELECT id, ?, ?, ?, ?, ?
+				 FROM subscriptions
+				 WHERE channel = 'web_push' AND destination = ? AND source_id = ? AND lat = ? AND lng = ?
+				 ON CONFLICT(subscription_id) DO UPDATE SET
+					p256dh = excluded.p256dh,
+					auth = excluded.auth,
+					expiration_time = excluded.expiration_time,
+					user_locale = excluded.user_locale,
+					updated_at = excluded.updated_at`,
+			)
+			.bind(
+				pushSub.keys.p256dh.trim(),
+				pushSub.keys.auth.trim(),
+				expirationTime,
+				userLocale,
+				nowIso,
+				destination,
+				authority.sourceId,
+				roundedLat,
+				roundedLng,
+			);
+
+		const selectSubStmt = options.db
+			.prepare(
+				`SELECT id, status, unsubscribe_token FROM subscriptions
+				 WHERE channel = 'web_push' AND destination = ? AND source_id = ? AND lat = ? AND lng = ?`,
+			)
+			.bind(destination, authority.sourceId, roundedLat, roundedLng);
+
+		const batchResults = await options.db.batch([upsertSubStmt, upsertKeysStmt, selectSubStmt]);
+		const row = (
+			batchResults[2]?.results?.[0] as
+				| {
+						id: string;
+						status: 'pending_confirmation' | 'active' | 'unsubscribed';
+						unsubscribe_token: string;
+				  }
+				| undefined
+		);
+
+		const subscriptionId = row?.id ?? id;
+		const tokenForUnsub = row?.unsubscribe_token ?? unsubscribeToken;
+
+		return {
+			status: 201,
+			body: {
+				ok: true,
+				subscriptionId,
+				status: row?.status ?? 'active',
+				transportMode: pushMode,
+				unsubscribeToken: tokenForUnsub,
+				message: 'Browser push warning alerts activated for this location.',
+			},
+		};
+	}
+
+	if (req.channel !== 'email' || typeof req.destination !== 'string' || !EMAIL_RE.test(req.destination.trim())) {
+		return { status: 400, body: { ok: false, code: 'invalid_email', message: 'Valid email address required.' } };
+	}
+
 	const transportMode = options.transport?.mode ?? 'disabled';
 	if (transportMode === 'disabled') {
 		return {
@@ -213,16 +421,8 @@ export async function createSubscription(options: {
 		};
 	}
 
-	const nowIso = (options.now ?? new Date()).toISOString();
-	const id = crypto.randomUUID();
 	const confirmToken = crypto.randomUUID();
-	const unsubscribeToken = crypto.randomUUID();
 	const destination = req.destination.trim().toLowerCase();
-	const placeName = (req.placeName || 'Monitored Location').trim().slice(0, 120);
-	const countryCode = (req.countryCode || authority.countryCodes[0]).trim().toUpperCase().slice(0, 2);
-	const minSeverity = req.minSeverity === 'extreme' || req.minSeverity === 'severe' ? req.minSeverity : 'moderate';
-	const roundedLat = Number(req.lat.toFixed(3));
-	const roundedLng = Number(req.lng.toFixed(3));
 
 	// Always require fresh opt-in confirmation & rotate both tokens on conflict/resubscribe
 	await options.db
@@ -391,45 +591,311 @@ export async function confirmSubscription(
 	};
 }
 
+export async function lookupPushRegistrations(
+	db: D1Database | undefined,
+	endpoint: string,
+	options: { allowLocalPushEndpoints?: boolean } = {},
+): Promise<{ status: number; body: PushLookupResponse }> {
+	if (!db) {
+		return {
+			status: 503,
+			body: { ok: false, registrations: [], code: 'db_unavailable', message: 'D1 not configured.' },
+		};
+	}
+	const pushSchema = await checkWebPushSchemaReady(db);
+	if (pushSchema !== 'ready') {
+		return {
+			status: 200,
+			body: { ok: true, registrations: [] },
+		};
+	}
+	const check = validatePushEndpoint(endpoint, { allowLocalTest: options.allowLocalPushEndpoints });
+	if (!check.ok) {
+		return {
+			status: 400,
+			body: { ok: false, registrations: [], code: 'invalid_push_endpoint', message: check.reason },
+		};
+	}
+
+	const rows = await db
+		.prepare(
+			`SELECT s.id, s.place_name, s.country_code, s.source_id, s.lat, s.lng, s.min_severity
+			 FROM subscriptions s
+			 JOIN push_subscription_keys pk ON pk.subscription_id = s.id
+			 WHERE s.channel = 'web_push' AND s.destination = ? AND s.status = 'active'
+			 ORDER BY s.created_at ASC`,
+		)
+		.bind(check.url.href)
+		.all<{
+			id: string;
+			place_name: string;
+			country_code: string;
+			source_id: string;
+			lat: number;
+			lng: number;
+			min_severity: string;
+		}>();
+
+	const registrations: PushRegistrationSummary[] = (rows.results ?? []).map((r) => ({
+		subscriptionId: r.id,
+		placeKey: buildPushPlaceKey(r.source_id, r.lat, r.lng),
+		placeName: r.place_name,
+		countryCode: r.country_code,
+		sourceId: r.source_id,
+		lat: r.lat,
+		lng: r.lng,
+		minSeverity: r.min_severity === 'extreme' || r.min_severity === 'severe' ? r.min_severity : 'moderate',
+		status: 'active',
+	}));
+
+	return {
+		status: 200,
+		body: { ok: true, registrations },
+	};
+}
+
 export async function unsubscribeSubscription(
 	db: D1Database | undefined,
 	token: string,
 	now: Date = new Date(),
+	options: {
+		endpoint?: string;
+		channel?: 'email' | 'web_push';
+		scope?: 'place' | 'device';
+		subscriptionId?: string;
+		sourceId?: string;
+		lat?: number;
+		lng?: number;
+		allowLocalPushEndpoints?: boolean;
+	} = {},
 ): Promise<{ status: number; body: SubscriptionResponse }> {
 	if (!db) {
 		return { status: 503, body: { ok: false, code: 'db_unavailable', message: 'D1 not configured.' } };
 	}
 	const clean = token.trim();
-	if (!clean) {
-		return { status: 400, body: { ok: false, code: 'invalid_token', message: 'Unsubscribe token required.' } };
+	const cleanEndpointRaw = options.endpoint?.trim() ?? '';
+	if (!clean && !cleanEndpointRaw) {
+		return { status: 400, body: { ok: false, code: 'invalid_token', message: 'Unsubscribe token or push endpoint required.' } };
 	}
 
 	const revokedConfirmToken = `revoked:${crypto.randomUUID()}`;
-	const res = await db
-		.prepare(
-			`UPDATE subscriptions
-			 SET status = 'unsubscribed', unsubscribed_at = ?, confirm_token = ?
-			 WHERE unsubscribe_token = ? AND unsubscribe_token != ''`,
-		)
-		.bind(now.toISOString(), revokedConfirmToken, clean)
-		.run();
+	const nowIso = now.toISOString();
+	const hasPushKeysTable = (await checkWebPushSchemaReady(db)) === 'ready';
 
-	if ((res.meta?.changes ?? 0) === 0) {
-		return { status: 404, body: { ok: false, code: 'not_found', message: 'Subscription unsubscribe token not found.' } };
+	if (clean) {
+		const stmts: D1PreparedStatement[] = [];
+		if (hasPushKeysTable) {
+			stmts.push(
+				db
+					.prepare(
+						`DELETE FROM push_subscription_keys
+						 WHERE subscription_id IN (
+							SELECT id FROM subscriptions WHERE unsubscribe_token = ? AND unsubscribe_token != ''
+						 )`,
+					)
+					.bind(clean),
+			);
+		}
+		stmts.push(
+			db
+				.prepare(
+					`UPDATE subscriptions
+					 SET status = 'unsubscribed', unsubscribed_at = ?, confirm_token = ?
+					 WHERE unsubscribe_token = ? AND unsubscribe_token != ''`,
+				)
+				.bind(nowIso, revokedConfirmToken, clean),
+		);
+		const batchRes = await db.batch(stmts);
+		const updateRes = batchRes[batchRes.length - 1];
+		const changes = updateRes?.meta?.changes ?? 0;
+
+		if (changes === 0) {
+			return { status: 404, body: { ok: false, code: 'not_found', message: 'Subscription unsubscribe token not found.' } };
+		}
+
+		return {
+			status: 200,
+			body: {
+				ok: true,
+				status: 'unsubscribed',
+				scope: 'token',
+				removedCount: changes,
+				message: 'Unsubscribed. No further warning alerts will be sent for this subscription.',
+			},
+		};
 	}
 
+	const endpointCheck = validatePushEndpoint(cleanEndpointRaw, { allowLocalTest: options.allowLocalPushEndpoints });
+	const cleanEndpoint = endpointCheck.ok ? endpointCheck.url.href : cleanEndpointRaw;
+	const isPlaceScope =
+		options.scope === 'place' ||
+		Boolean(options.subscriptionId?.trim()) ||
+		(Boolean(options.sourceId?.trim()) && typeof options.lat === 'number' && typeof options.lng === 'number');
+
+	if (isPlaceScope) {
+		const subId = options.subscriptionId?.trim();
+		const srcId = options.sourceId?.trim();
+		const hasCoords =
+			typeof options.lat === 'number' &&
+			typeof options.lng === 'number' &&
+			Number.isFinite(options.lat) &&
+			Number.isFinite(options.lng);
+
+		if (!subId && (!srcId || !hasCoords)) {
+			return {
+				status: 400,
+				body: {
+					ok: false,
+					code: 'invalid_place_scope',
+					message: 'Place-scoped push removal requires subscriptionId or (sourceId, lat, lng).',
+				},
+			};
+		}
+
+		const stmts: D1PreparedStatement[] = [];
+		if (subId) {
+			if (hasPushKeysTable) {
+				stmts.push(
+					db
+						.prepare(
+							`DELETE FROM push_subscription_keys
+							 WHERE subscription_id IN (
+								SELECT id FROM subscriptions
+								WHERE id = ? AND channel = 'web_push' AND destination = ? AND status != 'unsubscribed'
+							 )`,
+						)
+						.bind(subId, cleanEndpoint),
+				);
+			}
+			stmts.push(
+				db
+					.prepare(
+						`UPDATE subscriptions
+						 SET status = 'unsubscribed', unsubscribed_at = ?, confirm_token = ?
+						 WHERE id = ? AND channel = 'web_push' AND destination = ? AND status != 'unsubscribed'`,
+					)
+					.bind(nowIso, revokedConfirmToken, subId, cleanEndpoint),
+			);
+		} else {
+			const { lat: rLat, lng: rLng } = canonicalizeSubscriptionCoordinates(options.lat!, options.lng!);
+			if (hasPushKeysTable) {
+				stmts.push(
+					db
+						.prepare(
+							`DELETE FROM push_subscription_keys
+							 WHERE subscription_id IN (
+								SELECT id FROM subscriptions
+								WHERE channel = 'web_push' AND destination = ? AND source_id = ? AND lat = ? AND lng = ? AND status != 'unsubscribed'
+							 )`,
+						)
+						.bind(cleanEndpoint, srcId!, rLat, rLng),
+				);
+			}
+			stmts.push(
+				db
+					.prepare(
+						`UPDATE subscriptions
+						 SET status = 'unsubscribed', unsubscribed_at = ?, confirm_token = ?
+						 WHERE channel = 'web_push' AND destination = ? AND source_id = ? AND lat = ? AND lng = ? AND status != 'unsubscribed'`,
+					)
+					.bind(nowIso, revokedConfirmToken, cleanEndpoint, srcId!, rLat, rLng),
+			);
+		}
+		stmts.push(
+			db
+				.prepare(
+					`SELECT COUNT(*) AS cnt FROM subscriptions
+					 WHERE channel = 'web_push' AND destination = ? AND status = 'active'`,
+				)
+				.bind(cleanEndpoint),
+		);
+
+		const batchRes = await db.batch(stmts);
+		const updateRes = batchRes[batchRes.length - 2];
+		const countRow = batchRes[batchRes.length - 1]?.results?.[0] as { cnt?: number } | undefined;
+		const removedCount = updateRes?.meta?.changes ?? 0;
+		const remainingCount = Number(countRow?.cnt ?? 0);
+
+		if (removedCount === 0) {
+			return {
+				status: 404,
+				body: {
+					ok: false,
+					code: 'not_found',
+					scope: 'place',
+					removedCount: 0,
+					remainingCount,
+					message: 'No active push subscription found for this place.',
+				},
+			};
+		}
+
+		return {
+			status: 200,
+			body: {
+				ok: true,
+				status: 'unsubscribed',
+				scope: 'place',
+				removedCount,
+				remainingCount,
+				message:
+					remainingCount > 0
+						? 'Push alerts disabled for this place. Other subscribed places on this browser remain active.'
+						: 'Push alerts disabled for this place.',
+			},
+		};
+	}
+
+	// Device-wide push unsubscribe: revoke every active registration bound to this endpoint atomically
+	const deviceStmts: D1PreparedStatement[] = [];
+	if (hasPushKeysTable) {
+		deviceStmts.push(
+			db
+				.prepare(
+					`DELETE FROM push_subscription_keys
+					 WHERE subscription_id IN (
+						SELECT id FROM subscriptions WHERE channel = 'web_push' AND destination = ? AND status != 'unsubscribed'
+					 )`,
+				)
+				.bind(cleanEndpoint),
+		);
+	}
+	deviceStmts.push(
+		db
+			.prepare(
+				`UPDATE subscriptions
+				 SET status = 'unsubscribed', unsubscribed_at = ?, confirm_token = ?
+				 WHERE channel = 'web_push' AND destination = ? AND status != 'unsubscribed'`,
+			)
+			.bind(nowIso, revokedConfirmToken, cleanEndpoint),
+	);
+
+	const deviceBatch = await db.batch(deviceStmts);
+	const pushRes = deviceBatch[deviceBatch.length - 1];
+	const removedCount = pushRes?.meta?.changes ?? 0;
+
+	if (removedCount === 0) {
+		return {
+			status: 404,
+			body: { ok: false, code: 'not_found', scope: 'device', removedCount: 0, remainingCount: 0, message: 'Push subscription not found.' },
+		};
+	}
 	return {
 		status: 200,
 		body: {
 			ok: true,
 			status: 'unsubscribed',
-			message: 'Unsubscribed. No further warning emails will be sent for this subscription.',
+			scope: 'device',
+			removedCount,
+			remainingCount: 0,
+			message: 'Push notifications disabled across all places on this browser.',
 		},
 	};
 }
 
 interface SubRow {
 	id: string;
+	channel: 'email' | 'web_push';
 	destination: string;
 	place_name: string;
 	lat: number;
@@ -438,6 +904,9 @@ interface SubRow {
 	source_id: string;
 	min_severity: string;
 	unsubscribe_token: string;
+	p256dh: string | null;
+	auth: string | null;
+	user_locale: string | null;
 }
 
 interface DispatchSummary {
@@ -451,10 +920,50 @@ interface DispatchSummary {
 	subscriptionsVisited?: number;
 }
 
+function selectPreferredTranslationForLocale<T extends { language: string }>(
+	translations: readonly T[],
+	userLocale?: string | null,
+): T | undefined {
+	if (!translations.length) return undefined;
+	if (!userLocale) return translations[0];
+	const norm = userLocale.trim().toLowerCase().replace(/_/g, '-');
+	if (norm.startsWith('zh')) {
+		const isSimplifiedPref = !norm.includes('hant') && !norm.includes('-tw') && !norm.includes('-hk') && !norm.includes('-mo');
+		if (isSimplifiedPref) {
+			const simplified = translations.find((t) => {
+				const l = t.language.trim().toLowerCase().replace(/_/g, '-');
+				return l === 'zh-hans' || l.startsWith('zh-hans-') || l === 'zh-cn' || l === 'zh-sg' || l === 'zh';
+			});
+			if (simplified) return simplified;
+		}
+		const anyZh = translations.find((t) => t.language.trim().toLowerCase().startsWith('zh'));
+		if (anyZh) return anyZh;
+	}
+	const exact = translations.find((t) => t.language.trim().toLowerCase().replace(/_/g, '-') === norm);
+	if (exact) return exact;
+	const prefix = norm.split('-')[0];
+	return translations.find((t) => t.language.trim().toLowerCase().replace(/_/g, '-').startsWith(prefix)) ?? translations[0];
+}
+
+function buildRelativeNotificationUrl(route: WebPushNotificationRoute): string {
+	const params = new URLSearchParams({
+		view: 'near-me',
+		lat: String(route.lat),
+		lng: String(route.lng),
+		country: route.countryCode,
+		warningId: route.warningId,
+	});
+	if (route.placeName) params.set('place', route.placeName);
+	if (route.msgType === 'Cancel') params.set('noticeStatus', 'cancelled');
+	return `./?${params.toString()}`;
+}
+
 async function sendIdempotentDelivery(options: {
 	db: D1Database;
 	kv?: KVNamespace;
+	channel: 'email' | 'web_push';
 	transport: EmailTransport;
+	pushTransport?: WebPushTransport;
 	deliveryId: string;
 	subscriptionId: string;
 	alertId: string;
@@ -464,6 +973,9 @@ async function sendIdempotentDelivery(options: {
 	to: string;
 	subject: string;
 	text: string;
+	p256dh?: string | null;
+	auth?: string | null;
+	urgency?: 'very-low' | 'low' | 'normal' | 'high';
 	nowIso: string;
 	onSubrequest?: () => void;
 }): Promise<'sent' | 'deduplicated' | 'failed' | 'max_attempts'> {
@@ -513,18 +1025,34 @@ async function sendIdempotentDelivery(options: {
 	if ((claim.meta?.changes ?? 0) === 0 && existing?.status === 'sent') {
 		return 'deduplicated';
 	}
-	if (existing && existing.attempts >= MAX_DELIVERY_ATTEMPTS) {
+	if (existing && (existing.status === 'failed_permanent' || existing.attempts >= MAX_DELIVERY_ATTEMPTS)) {
 		return 'max_attempts';
 	}
 
 	try {
 		options.onSubrequest?.();
-		const result = await options.transport.send({
-			to: options.to,
-			subject: options.subject,
-			text: options.text,
-			idempotencyKey: options.idempotencyKey,
-		});
+		let result: { providerMessageId: string };
+		if (options.channel === 'web_push') {
+			if (!options.pushTransport || options.pushTransport.mode === 'disabled' || !options.p256dh || !options.auth) {
+				throw new Error('Web Push key material or transport unavailable');
+			}
+			const topic = await buildPushTopic(options.alertId, options.msgType);
+			result = await options.pushTransport.send({
+				endpoint: options.to,
+				p256dh: options.p256dh,
+				auth: options.auth,
+				payloadJson: options.text,
+				topic,
+				urgency: options.urgency ?? 'high',
+			});
+		} else {
+			result = await options.transport.send({
+				to: options.to,
+				subject: options.subject,
+				text: options.text,
+				idempotencyKey: options.idempotencyKey,
+			});
+		}
 		if (options.kv) {
 			await options.kv.put(receiptKey, result.providerMessageId, { expirationTtl: 7 * 86_400 }).catch(() => {});
 		}
@@ -538,18 +1066,41 @@ async function sendIdempotentDelivery(options: {
 			.run();
 		return 'sent';
 	} catch (err) {
+		const isGone = err instanceof PushEndpointGoneError;
 		const msg = err instanceof Error ? err.message : 'Delivery error';
 		await options.db
 			.prepare(
 				`UPDATE subscription_deliveries
-				 SET status = CASE WHEN attempts + 1 >= ? THEN 'failed_permanent' ELSE 'retry_pending' END,
+				 SET status = CASE WHEN ? = 1 OR attempts + 1 >= ? THEN 'failed_permanent' ELSE 'retry_pending' END,
 				     attempts = attempts + 1,
 				     last_error = ?,
 				     updated_at = ?
 				 WHERE id = ?`,
 			)
-			.bind(MAX_DELIVERY_ATTEMPTS, msg, options.nowIso, options.deliveryId)
+			.bind(isGone ? 1 : 0, MAX_DELIVERY_ATTEMPTS, msg, options.nowIso, options.deliveryId)
 			.run();
+		if (isGone) {
+			// A 404/410 from the push service means the browser endpoint itself is dead across all places on it.
+			await options.db
+				.batch([
+					options.db
+						.prepare(
+							`DELETE FROM push_subscription_keys
+							 WHERE subscription_id IN (
+								SELECT id FROM subscriptions WHERE channel = 'web_push' AND destination = ?
+							 )`,
+						)
+						.bind(options.to),
+					options.db
+						.prepare(
+							`UPDATE subscriptions
+							 SET status = 'unsubscribed', unsubscribed_at = ?
+							 WHERE channel = 'web_push' AND destination = ? AND status != 'unsubscribed'`,
+						)
+						.bind(options.nowIso, options.to),
+				])
+				.catch(() => {});
+		}
 		return 'failed';
 	}
 }
@@ -602,13 +1153,16 @@ export async function dispatchVerifiedWarningAlerts(options: {
 	db: D1Database | undefined;
 	kv?: KVNamespace;
 	transport: EmailTransport;
+	pushTransport?: WebPushTransport;
 	fetchImpl?: FetchLike;
 	now?: Date;
 	pageSize?: number;
 	maxSubscriptions?: number;
 	maxSubrequests?: number;
 }): Promise<DispatchSummary> {
-	if (!options.db || options.transport.mode === 'disabled') {
+	const emailEnabled = options.transport.mode !== 'disabled';
+	const pushEnabled = Boolean(options.pushTransport && options.pushTransport.mode !== 'disabled');
+	if (!options.db || (!emailEnabled && !pushEnabled)) {
 		return { processed: 0, sent: 0, deduplicated: 0, failed: 0 };
 	}
 
@@ -651,19 +1205,32 @@ export async function dispatchVerifiedWarningAlerts(options: {
 	let cursorStart = '';
 	let nextCursor = '';
 
+	const hasPushTable = pushEnabled && (await checkWebPushSchemaReady(options.db)) === 'ready';
+
 	try {
 		// 1. Priority retry pass for prior transient delivery failures + KV post-accept ack healing
+		const retryQuery = hasPushTable
+			? `SELECT d.id, d.subscription_id, d.alert_id, d.alert_revision_sent_at, d.msg_type,
+			          d.idempotency_key, d.rendered_subject, d.rendered_body,
+			          s.channel, s.destination, pk.p256dh, pk.auth
+			   FROM subscription_deliveries d
+			   JOIN subscriptions s ON s.id = d.subscription_id
+			   LEFT JOIN push_subscription_keys pk ON pk.subscription_id = s.id
+			   WHERE d.status IN ('retry_pending', 'pending_send') AND d.attempts < ? AND s.status = 'active'
+			   ORDER BY d.updated_at ASC, d.id ASC
+			   LIMIT 20`
+			: `SELECT d.id, d.subscription_id, d.alert_id, d.alert_revision_sent_at, d.msg_type,
+			          d.idempotency_key, d.rendered_subject, d.rendered_body,
+			          s.channel, s.destination, NULL AS p256dh, NULL AS auth
+			   FROM subscription_deliveries d
+			   JOIN subscriptions s ON s.id = d.subscription_id
+			   WHERE d.status IN ('retry_pending', 'pending_send') AND d.attempts < ? AND s.status = 'active'
+			     AND s.channel = 'email'
+			   ORDER BY d.updated_at ASC, d.id ASC
+			   LIMIT 20`;
+
 		const retryRes = await options.db
-			.prepare(
-				`SELECT d.id, d.subscription_id, d.alert_id, d.alert_revision_sent_at, d.msg_type,
-				        d.idempotency_key, d.rendered_subject, d.rendered_body,
-				        s.destination
-				 FROM subscription_deliveries d
-				 JOIN subscriptions s ON s.id = d.subscription_id
-				 WHERE d.status IN ('retry_pending', 'pending_send') AND d.attempts < ? AND s.status = 'active'
-				 ORDER BY d.updated_at ASC, d.id ASC
-				 LIMIT 20`,
-			)
+			.prepare(retryQuery)
 			.bind(MAX_DELIVERY_ATTEMPTS)
 			.all<{
 				id: string;
@@ -674,16 +1241,24 @@ export async function dispatchVerifiedWarningAlerts(options: {
 				idempotency_key: string;
 				rendered_subject: string | null;
 				rendered_body: string | null;
+				channel: 'email' | 'web_push';
 				destination: string;
+				p256dh: string | null;
+				auth: string | null;
 			}>();
 
 		for (const r of retryRes.results ?? []) {
 			if (subrequestCount >= maxSubrequests) break;
+			if (r.channel === 'email' && !emailEnabled) continue;
+			if (r.channel === 'web_push' && (!pushEnabled || !hasPushTable)) continue;
+
 			processed++;
 			const outcome = await sendIdempotentDelivery({
 				db: options.db,
 				kv: options.kv,
+				channel: r.channel,
 				transport: options.transport,
+				pushTransport: options.pushTransport,
 				deliveryId: r.id,
 				subscriptionId: r.subscription_id,
 				alertId: r.alert_id,
@@ -693,6 +1268,8 @@ export async function dispatchVerifiedWarningAlerts(options: {
 				to: r.destination,
 				subject: r.rendered_subject ?? `[AegisMap Alert] ${r.alert_id}`,
 				text: r.rendered_body ?? `Official warning alert ${r.alert_id}`,
+				p256dh: r.p256dh,
+				auth: r.auth,
 				nowIso,
 				onSubrequest: () => {
 					subrequestCount++;
@@ -703,236 +1280,323 @@ export async function dispatchVerifiedWarningAlerts(options: {
 			else if (outcome === 'failed') failed++;
 		}
 
-		// 2. Resumable keyset sweep across active email subscribers
-		const cursorRow = await options.db
-			.prepare(
-				`SELECT cursor FROM ingestion_checkpoints WHERE source = 'subscription_dispatch' AND window_key = 'active_email_cursor'`,
-			)
-			.first<{ cursor: string | null }>();
-		cursorStart = cursorRow?.cursor ?? '';
-		nextCursor = cursorStart;
+		// 2. Resumable keyset sweep across active email & web_push subscribers
+		const enabledChannels: Array<{ channel: 'email' | 'web_push'; cursorWindow: string }> = [];
+		if (emailEnabled) enabledChannels.push({ channel: 'email', cursorWindow: 'active_email_cursor' });
+		if (pushEnabled && hasPushTable) enabledChannels.push({ channel: 'web_push', cursorWindow: 'active_push_cursor' });
 
 		const snapCache = new Map<
 			string,
 			{ doc: AuthoritySnapshotDoc; status: 'ok' | 'partial' | 'stale' | 'unavailable' | 'not_modified' }
 		>();
 
-		let reachedEof = false;
-		let hitSubrequestBudget = false;
+		for (const chanCfg of enabledChannels) {
+			if (subscriptionsVisited >= maxSubscriptions || subrequestCount >= maxSubrequests) break;
 
-		while (subscriptionsVisited < maxSubscriptions && !hitSubrequestBudget) {
-			const remaining = maxSubscriptions - subscriptionsVisited;
-			const take = Math.min(pageSize, remaining);
-			const subPage = await options.db
+			const cursorRow = await options.db
 				.prepare(
-					`SELECT id, destination, place_name, lat, lng, country_code, source_id, min_severity, unsubscribe_token
-					 FROM subscriptions
-					 WHERE status = 'active' AND channel = 'email' AND id > ?
-					 ORDER BY id ASC
-					 LIMIT ?`,
+					`SELECT cursor FROM ingestion_checkpoints WHERE source = 'subscription_dispatch' AND window_key = ?`,
 				)
-				.bind(nextCursor, take)
-				.all<SubRow>();
+				.bind(chanCfg.cursorWindow)
+				.first<{ cursor: string | null }>();
+			const chanCursorStart = cursorRow?.cursor ?? '';
+			if (!cursorStart && chanCfg.channel === 'email') cursorStart = chanCursorStart;
+			let chanNextCursor = chanCursorStart;
 
-			const rows = subPage.results ?? [];
-			if (rows.length === 0) {
-				reachedEof = true;
-				break;
-			}
+			let reachedEof = false;
+			let hitSubrequestBudget = false;
 
-			for (const sub of rows) {
-				if (subrequestCount >= maxSubrequests) {
-					hitSubrequestBudget = true;
+			while (subscriptionsVisited < maxSubscriptions && !hitSubrequestBudget) {
+				const remaining = maxSubscriptions - subscriptionsVisited;
+				const take = Math.min(pageSize, remaining);
+				const subSql =
+					chanCfg.channel === 'web_push'
+						? `SELECT s.id, s.channel, s.destination, s.place_name, s.lat, s.lng, s.country_code, s.source_id, s.min_severity, s.unsubscribe_token,
+						          pk.p256dh, pk.auth, pk.user_locale
+						   FROM subscriptions s
+						   JOIN push_subscription_keys pk ON pk.subscription_id = s.id
+						   WHERE s.status = 'active' AND s.channel = 'web_push' AND s.id > ?
+						   ORDER BY s.id ASC
+						   LIMIT ?`
+						: `SELECT id, channel, destination, place_name, lat, lng, country_code, source_id, min_severity, unsubscribe_token,
+						          NULL AS p256dh, NULL AS auth, NULL AS user_locale
+						   FROM subscriptions
+						   WHERE status = 'active' AND channel = 'email' AND id > ?
+						   ORDER BY id ASC
+						   LIMIT ?`;
+
+				const subPage = await options.db.prepare(subSql).bind(chanNextCursor, take).all<SubRow>();
+
+				const rows = subPage.results ?? [];
+				if (rows.length === 0) {
+					reachedEof = true;
 					break;
 				}
 
-				const spec = getAuthorityById(sub.source_id);
-				if (spec) {
-					let snap = snapCache.get(spec.sourceId);
-					if (!snap) {
-						subrequestCount++;
-						snap = await refreshOrLoadAuthoritySnapshot(spec, {
-							kv: options.kv,
-							fetchImpl: options.fetchImpl,
-							now,
-						});
-						snapCache.set(spec.sourceId, snap);
+				for (const sub of rows) {
+					if (subrequestCount >= maxSubrequests) {
+						hitSubrequestBudget = true;
+						break;
 					}
 
-					// Never derive notifications or cancellations from unavailable/stale snapshots
-					if (snap.status !== 'unavailable' && snap.status !== 'stale') {
-						const evaluation = evaluateAuthorityRecordsForPoint(snap.doc, sub.lat, sub.lng, now);
-						const prior = await loadAllSentDeliveriesForSub(options.db, sub.id);
-						const cancelledSet = new Set(prior.cancelledAlertIds);
-						const supersededByActiveUpdate = new Set<string>();
-
-						for (const vis of evaluation.visibleWarnings) {
-							for (const refId of vis.references ?? []) {
-								if (prior.sentAlertIds.has(refId)) {
-									supersededByActiveUpdate.add(refId);
-								}
-							}
+					const spec = getAuthorityById(sub.source_id);
+					if (spec) {
+						let snap = snapCache.get(spec.sourceId);
+						if (!snap) {
+							subrequestCount++;
+							snap = await refreshOrLoadAuthoritySnapshot(spec, {
+								kv: options.kv,
+								fetchImpl: options.fetchImpl,
+								now,
+							});
+							snapCache.set(spec.sourceId, snap);
 						}
 
-						// A. Active / upcoming warnings & superseding Updates
-						for (const matched of evaluation.visibleWarnings) {
-							if (subrequestCount >= maxSubrequests) {
-								hitSubrequestBudget = true;
-								break;
-							}
-							if (severityRank(matched.severity) < severityRank(sub.min_severity)) continue;
+						// Never derive notifications or cancellations from unavailable/stale snapshots
+						if (snap.status !== 'unavailable' && snap.status !== 'stale') {
+							const evaluation = evaluateAuthorityRecordsForPoint(snap.doc, sub.lat, sub.lng, now);
+							const prior = await loadAllSentDeliveriesForSub(options.db, sub.id);
+							const cancelledSet = new Set(prior.cancelledAlertIds);
+							const supersededByActiveUpdate = new Set<string>();
 
-							const isSupersedingUpdate =
-								matched.msgType === 'Update' ||
-								(matched.references?.some((refId) => prior.sentAlertIds.has(refId)) ?? false);
-
-							processed++;
-							const deliveryId = `${sub.id}:${matched.identifier}:${matched.sentAt}`;
-							const idempotencyKey = `aegis-alert-${deliveryId}`;
-							const block = matched.translations[0];
-							const labelKind = isSupersedingUpdate ? 'Official Update' : 'Official Alert';
-							const subject = `[AegisMap ${labelKind} · ${matched.severity.toUpperCase()}] ${block?.headline ?? matched.category} (${sub.place_name})`;
-							const text = [
-								`Issuer: ${matched.issuerName}`,
-								`Severity: ${matched.severity} | Status: ${matched.lifecycleState} (${isSupersedingUpdate ? 'Update' : matched.msgType})`,
-								matched.references && matched.references.length > 0
-									? `Supersedes alert reference(s): ${matched.references.join(', ')}`
-									: '',
-								`Area: ${block?.areaDesc ?? sub.place_name}`,
-								`Sent (UTC): ${matched.sentAt}`,
-								matched.expiresAt ? `Expires (UTC): ${matched.expiresAt}` : 'Expiry: Not stated by issuer',
-								'',
-								block?.description ?? '',
-								block?.instruction ? `\nOfficial Instructions:\n${block.instruction}` : '',
-								matched.bulletinUrl ? `\nOfficial bulletin: ${matched.bulletinUrl}` : '',
-								`\nUnsubscribe token: ${sub.unsubscribe_token}`,
-							]
-								.filter(Boolean)
-								.join('\n');
-
-							const outcome = await sendIdempotentDelivery({
-								db: options.db,
-								kv: options.kv,
-								transport: options.transport,
-								deliveryId,
-								subscriptionId: sub.id,
-								alertId: matched.identifier,
-								alertRevisionSentAt: matched.sentAt,
-								msgType: isSupersedingUpdate ? 'Update' : matched.msgType,
-								idempotencyKey,
-								to: sub.destination,
-								subject,
-								text,
-								nowIso,
-								onSubrequest: () => {
-									subrequestCount++;
-								},
-							});
-							if (outcome === 'sent') sent++;
-							else if (outcome === 'deduplicated') deduplicated++;
-							else if (outcome === 'failed') failed++;
-						}
-
-						if (hitSubrequestBudget) break;
-
-						// B. Explicit Issuer Cancellations ONLY (zero false clearances on partial/expired/missing/filtered)
-						for (const cancelRec of evaluation.explicitCancellations) {
-							if (subrequestCount >= maxSubrequests) {
-								hitSubrequestBudget = true;
-								break;
-							}
-							const matchingPriorIds: string[] = [];
-							for (const prevId of prior.sentAlertIds) {
-								if (supersededByActiveUpdate.has(prevId)) continue;
-								if (cancelRec.identifier === prevId || (cancelRec.references ?? []).includes(prevId)) {
-									matchingPriorIds.push(prevId);
+							for (const vis of evaluation.visibleWarnings) {
+								for (const refId of vis.references ?? []) {
+									if (prior.sentAlertIds.has(refId)) {
+										supersededByActiveUpdate.add(refId);
+									}
 								}
 							}
-							if (matchingPriorIds.length === 0) continue;
 
-							// Prevent duplicate cancellations across transitive Alert -> Update -> Cancel chains
-							if (
-								matchingPriorIds.some((id) => cancelledSet.has(id)) ||
-								cancelledSet.has(cancelRec.identifier)
-							) {
-								deduplicated++;
-								continue;
+							// A. Active / upcoming warnings & superseding Updates
+							for (const matched of evaluation.visibleWarnings) {
+								if (subrequestCount >= maxSubrequests) {
+									hitSubrequestBudget = true;
+									break;
+								}
+								if (severityRank(matched.severity) < severityRank(sub.min_severity)) continue;
+
+								const isSupersedingUpdate =
+									matched.msgType === 'Update' ||
+									(matched.references?.some((refId) => prior.sentAlertIds.has(refId)) ?? false);
+
+								processed++;
+								const deliveryId = `${sub.id}:${matched.identifier}:${matched.sentAt}`;
+								const idempotencyKey = `aegis-alert-${deliveryId}`;
+								const block = selectPreferredTranslationForLocale(matched.translations, sub.user_locale);
+								const labelKind = isSupersedingUpdate ? 'Official Update' : 'Official Alert';
+								const subject = `[AegisMap ${labelKind} · ${matched.severity.toUpperCase()}] ${block?.headline ?? matched.category} (${sub.place_name})`;
+
+								let bodyContent: string;
+								if (sub.channel === 'web_push') {
+									const resolvedMsgType: 'Alert' | 'Update' = isSupersedingUpdate ? 'Update' : 'Alert';
+									const route: WebPushNotificationRoute = {
+										view: 'near-me',
+										lat: sub.lat,
+										lng: sub.lng,
+										countryCode: sub.country_code,
+										warningId: matched.identifier,
+										placeName: sub.place_name,
+										msgType: resolvedMsgType,
+									};
+									const rawSummary = (block?.instruction || block?.description || block?.areaDesc || '').replace(/\s+/g, ' ').trim();
+									const pushPayload: WebPushNotificationPayload = {
+										title: `${matched.severity.toUpperCase()}: ${block?.headline ?? matched.category}`.slice(0, 140),
+										body: `${matched.issuerName} · ${sub.place_name}${rawSummary ? ` — ${rawSummary.slice(0, 180)}` : ''}`.slice(0, 320),
+										tag: `aegis-warning-${matched.identifier}`,
+										route,
+										url: buildRelativeNotificationUrl(route),
+										warningId: matched.identifier,
+										sourceId: matched.sourceId,
+										msgType: resolvedMsgType,
+										severity: matched.severity,
+										sentAt: matched.sentAt,
+									};
+									bodyContent = JSON.stringify(pushPayload);
+								} else {
+									bodyContent = [
+										`Issuer: ${matched.issuerName}`,
+										`Severity: ${matched.severity} | Status: ${matched.lifecycleState} (${isSupersedingUpdate ? 'Update' : matched.msgType})`,
+										matched.references && matched.references.length > 0
+											? `Supersedes alert reference(s): ${matched.references.join(', ')}`
+											: '',
+										`Area: ${block?.areaDesc ?? sub.place_name}`,
+										`Sent (UTC): ${matched.sentAt}`,
+										matched.expiresAt ? `Expires (UTC): ${matched.expiresAt}` : 'Expiry: Not stated by issuer',
+										'',
+										block?.description ?? '',
+										block?.instruction ? `\nOfficial Instructions:\n${block.instruction}` : '',
+										matched.bulletinUrl ? `\nOfficial bulletin: ${matched.bulletinUrl}` : '',
+										`\nUnsubscribe token: ${sub.unsubscribe_token}`,
+									]
+										.filter(Boolean)
+										.join('\n');
+								}
+
+								const outcome = await sendIdempotentDelivery({
+									db: options.db,
+									kv: options.kv,
+									channel: sub.channel,
+									transport: options.transport,
+									pushTransport: options.pushTransport,
+									deliveryId,
+									subscriptionId: sub.id,
+									alertId: matched.identifier,
+									alertRevisionSentAt: matched.sentAt,
+									msgType: isSupersedingUpdate ? 'Update' : matched.msgType,
+									idempotencyKey,
+									to: sub.destination,
+									subject,
+									text: bodyContent,
+									p256dh: sub.p256dh,
+									auth: sub.auth,
+									urgency: matched.severity === 'extreme' || matched.severity === 'severe' ? 'high' : 'normal',
+									nowIso,
+									onSubrequest: () => {
+										subrequestCount++;
+									},
+								});
+								if (outcome === 'sent') sent++;
+								else if (outcome === 'deduplicated') deduplicated++;
+								else if (outcome === 'failed') failed++;
 							}
 
-							const primaryPrevId =
-								(cancelRec.references ?? []).find((id) => matchingPriorIds.includes(id)) ??
-								matchingPriorIds[0];
+							if (hitSubrequestBudget) break;
 
-							for (const prevId of matchingPriorIds) {
-								cancelledSet.add(prevId);
+							// B. Explicit Issuer Cancellations ONLY (zero false clearances on partial/expired/missing/filtered)
+							for (const cancelRec of evaluation.explicitCancellations) {
+								if (subrequestCount >= maxSubrequests) {
+									hitSubrequestBudget = true;
+									break;
+								}
+								const matchingPriorIds: string[] = [];
+								for (const prevId of prior.sentAlertIds) {
+									if (supersededByActiveUpdate.has(prevId)) continue;
+									if (cancelRec.identifier === prevId || (cancelRec.references ?? []).includes(prevId)) {
+										matchingPriorIds.push(prevId);
+									}
+								}
+								if (matchingPriorIds.length === 0) continue;
+
+								// Prevent duplicate cancellations across transitive Alert -> Update -> Cancel chains
+								if (
+									matchingPriorIds.some((id) => cancelledSet.has(id)) ||
+									cancelledSet.has(cancelRec.identifier)
+								) {
+									deduplicated++;
+									continue;
+								}
+
+								const primaryPrevId =
+									(cancelRec.references ?? []).find((id) => matchingPriorIds.includes(id)) ??
+									matchingPriorIds[0];
+
+								for (const prevId of matchingPriorIds) {
+									cancelledSet.add(prevId);
+								}
+								cancelledSet.add(cancelRec.identifier);
+
+								processed++;
+								const cancelDeliveryId = `${sub.id}:${primaryPrevId}:cancelled`;
+								const cancelKey = `aegis-cancel-${cancelDeliveryId}`;
+								const cancelSubject = `[AegisMap Official Cancellation] ${spec.authorityName} (${sub.place_name})`;
+								const cancelBlock = selectPreferredTranslationForLocale(cancelRec.translations, sub.user_locale);
+
+								let cancelContent: string;
+								if (sub.channel === 'web_push') {
+									const route: WebPushNotificationRoute = {
+										view: 'near-me',
+										lat: sub.lat,
+										lng: sub.lng,
+										countryCode: sub.country_code,
+										warningId: primaryPrevId,
+										placeName: sub.place_name,
+										msgType: 'Cancel',
+									};
+									const pushPayload: WebPushNotificationPayload = {
+										title: `Official Cancellation: ${spec.authorityName} (${sub.place_name})`.slice(0, 140),
+										body: `${cancelBlock?.headline ?? `Cancelled warning ${primaryPrevId}`} · Sent ${cancelRec.sentAt}`.slice(0, 320),
+										tag: `aegis-cancel-${primaryPrevId}`,
+										route,
+										url: buildRelativeNotificationUrl(route),
+										warningId: primaryPrevId,
+										sourceId: spec.sourceId,
+										msgType: 'Cancel',
+										severity: cancelRec.severity,
+										sentAt: cancelRec.sentAt,
+									};
+									cancelContent = JSON.stringify(pushPayload);
+								} else {
+									cancelContent = [
+										`Issuer: ${spec.authorityName}`,
+										`Cancelled Warning ID: ${matchingPriorIds.join(', ')}`,
+										`Cancellation Notice ID: ${cancelRec.identifier}`,
+										`Cancellation Sent (UTC): ${cancelRec.sentAt}`,
+										`Monitored Area: ${sub.place_name}`,
+										cancelBlock?.headline ? `Headline: ${cancelBlock.headline}` : '',
+										`\nUnsubscribe token: ${sub.unsubscribe_token}`,
+									]
+										.filter(Boolean)
+										.join('\n');
+								}
+
+								const outcome = await sendIdempotentDelivery({
+									db: options.db,
+									kv: options.kv,
+									channel: sub.channel,
+									transport: options.transport,
+									pushTransport: options.pushTransport,
+									deliveryId: cancelDeliveryId,
+									subscriptionId: sub.id,
+									alertId: primaryPrevId,
+									alertRevisionSentAt: 'cancelled',
+									msgType: 'Cancel',
+									idempotencyKey: cancelKey,
+									to: sub.destination,
+									subject: cancelSubject,
+									text: cancelContent,
+									p256dh: sub.p256dh,
+									auth: sub.auth,
+									urgency: 'normal',
+									nowIso,
+									onSubrequest: () => {
+										subrequestCount++;
+									},
+								});
+								if (outcome === 'sent') sent++;
+								else if (outcome === 'deduplicated') deduplicated++;
+								else if (outcome === 'failed') failed++;
 							}
-							cancelledSet.add(cancelRec.identifier);
-
-							processed++;
-							const cancelDeliveryId = `${sub.id}:${primaryPrevId}:cancelled`;
-							const cancelKey = `aegis-cancel-${cancelDeliveryId}`;
-							const cancelSubject = `[AegisMap Official Cancellation] ${spec.authorityName} (${sub.place_name})`;
-							const cancelText = [
-								`Issuer: ${spec.authorityName}`,
-								`Cancelled Warning ID: ${matchingPriorIds.join(', ')}`,
-								`Cancellation Notice ID: ${cancelRec.identifier}`,
-								`Cancellation Sent (UTC): ${cancelRec.sentAt}`,
-								`Monitored Area: ${sub.place_name}`,
-								cancelRec.translations[0]?.headline ? `Headline: ${cancelRec.translations[0].headline}` : '',
-								`\nUnsubscribe token: ${sub.unsubscribe_token}`,
-							]
-								.filter(Boolean)
-								.join('\n');
-
-							const outcome = await sendIdempotentDelivery({
-								db: options.db,
-								kv: options.kv,
-								transport: options.transport,
-								deliveryId: cancelDeliveryId,
-								subscriptionId: sub.id,
-								alertId: primaryPrevId,
-								alertRevisionSentAt: 'cancelled',
-								msgType: 'Cancel',
-								idempotencyKey: cancelKey,
-								to: sub.destination,
-								subject: cancelSubject,
-								text: cancelText,
-								nowIso,
-								onSubrequest: () => {
-									subrequestCount++;
-								},
-							});
-							if (outcome === 'sent') sent++;
-							else if (outcome === 'deduplicated') deduplicated++;
-							else if (outcome === 'failed') failed++;
 						}
 					}
+
+					if (hitSubrequestBudget) break;
+					chanNextCursor = sub.id;
+					subscriptionsVisited++;
 				}
 
-				if (hitSubrequestBudget) break;
-				nextCursor = sub.id;
-				subscriptionsVisited++;
+				if (rows.length < take && !hitSubrequestBudget) {
+					reachedEof = true;
+					break;
+				}
 			}
 
-			if (rows.length < take && !hitSubrequestBudget) {
-				reachedEof = true;
-				break;
+			const persistedCursor = reachedEof ? '' : chanNextCursor;
+			if (chanCfg.channel === 'email' || !nextCursor) {
+				nextCursor = persistedCursor;
 			}
+			await options.db
+				.prepare(
+					`INSERT INTO ingestion_checkpoints (source, window_key, cursor, updated_at, status, records_processed)
+					 VALUES ('subscription_dispatch', ?, ?, ?, 'ok', ?)
+					 ON CONFLICT(source, window_key) DO UPDATE SET
+						cursor = excluded.cursor,
+						updated_at = excluded.updated_at,
+						status = 'ok',
+						records_processed = excluded.records_processed`,
+				)
+				.bind(chanCfg.cursorWindow, persistedCursor, nowIso, subscriptionsVisited)
+				.run();
 		}
-
-		const persistedCursor = reachedEof ? '' : nextCursor;
-		await options.db
-			.prepare(
-				`INSERT INTO ingestion_checkpoints (source, window_key, cursor, updated_at, status, records_processed)
-				 VALUES ('subscription_dispatch', 'active_email_cursor', ?, ?, 'ok', ?)
-				 ON CONFLICT(source, window_key) DO UPDATE SET
-					cursor = excluded.cursor,
-					updated_at = excluded.updated_at,
-					status = 'ok',
-					records_processed = excluded.records_processed`,
-			)
-			.bind(persistedCursor, nowIso, subscriptionsVisited)
-			.run();
 
 		return {
 			processed,
@@ -940,7 +1604,7 @@ export async function dispatchVerifiedWarningAlerts(options: {
 			deduplicated,
 			failed,
 			cursorStart,
-			cursorEnd: persistedCursor,
+			cursorEnd: nextCursor,
 			subscriptionsVisited,
 		};
 	} finally {

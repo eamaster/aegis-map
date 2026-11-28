@@ -1117,12 +1117,14 @@ describe('Subscriptions & Durable Alert Outbox (/api/v1/subscriptions*)', () => 
 		const db = (env as typeof env & { AEGIS_DB: D1Database }).AEGIS_DB;
 		const disabled = createEmailTransport({ allowSandbox: false });
 		expect(disabled.mode).toBe('disabled');
-		expect(await getSubscriptionServiceStatus(db, disabled)).toEqual({
+		expect(await getSubscriptionServiceStatus(db, disabled)).toMatchObject({
 			available: false,
 			mode: 'unavailable',
 			smsAvailable: false,
 			reason:
 				'Automated email alert delivery is not configured in this deployment (RESEND_API_KEY missing). Official warnings remain available directly in Near me.',
+			pushAvailable: false,
+			pushMode: 'unavailable',
 		});
 
 		const blockedCreate = await createSubscription({

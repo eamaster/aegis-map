@@ -368,9 +368,12 @@ async function runSuccess(browser) {
                 if (reqUrl) {
                     const ou = new URL(reqUrl);
                     checks.record(
-                        ou.searchParams.get('LAYERS') === overlayProduct && ou.searchParams.get('TIME') === overlayDate && ou.searchParams.get('FORMAT') === 'image/png' && ou.searchParams.get('TRANSPARENT') === 'true',
+                        ou.searchParams.get('LAYERS') === overlayProduct &&
+                            (overlayDate ? ou.searchParams.get('TIME') === overlayDate : !ou.searchParams.has('TIME')) &&
+                            ou.searchParams.get('FORMAT') === 'image/png' &&
+                            ou.searchParams.get('TRANSPARENT') === 'true',
                         'overlay request matches labelled product/date as transparent PNG',
-                        `${overlayProduct} ${overlayDate}`,
+                        `${overlayProduct} ${overlayDate || 'undated'}`,
                     );
                 } else {
                     checks.record(false, 'overlay request captured', 'no Thermal_Anomalies request observed');
@@ -386,7 +389,7 @@ async function runSuccess(browser) {
                         evidence.imagery_fire.overlay = { product: overlayProduct, date: overlayDate, upstream: 'ok', http: outcome.res.status(), contentType: overlayType, bytes: overlayBody.length, ui: overlayStatus };
                     } else {
                         const fireCaption = (await page.locator('[data-testid="imagery-caption"]').textContent()) ?? '';
-                        const reportedFailure = overlayStatus === 'error' && /Overlay for \d{4}-\d{2}-\d{2} failed to load/.test(fireCaption);
+                        const reportedFailure = overlayStatus === 'error' && /Overlay .*failed to load/.test(fireCaption);
                         checks.record(reportedFailure, 'live upstream GIBS non-image error surfaced cleanly in UI', `HTTP ${outcome.res.status()} ${overlayType} ui=${overlayStatus}`);
                         evidence.imagery_fire.overlay = { product: overlayProduct, date: overlayDate, upstream: 'degraded', http: outcome.res.status(), contentType: overlayType, ui: overlayStatus };
                     }
@@ -405,7 +408,7 @@ async function runSuccess(browser) {
                     }
                     const isUpstreamXmlException = directType.includes('xml') || directSnippet.includes('ServiceExceptionReport') || (directStatus !== null && directStatus >= 400);
                     const fireCaption = (await page.locator('[data-testid="imagery-caption"]').textContent()) ?? '';
-                    const uiReportedError = overlayStatus === 'error' && /Overlay for \d{4}-\d{2}-\d{2} failed to load/.test(fireCaption);
+                    const uiReportedError = overlayStatus === 'error' && /Overlay .*failed to load/.test(fireCaption);
                     checks.record(
                         isUpstreamXmlException && uiReportedError,
                         'live GIBS upstream error isolated and surfaced in UI (non-image upstream blocked by ORB)',
@@ -548,7 +551,7 @@ async function runFailure(browser) {
         const overlayStatus = await waitForAttr(page, '[data-testid="satellite-imagery"]', 'data-imagery-overlay-status', ['loaded', 'error', 'not-rendered'], 'thermal overlay');
         checks.record(fireBase === 'loaded' && overlayStatus === 'error', 'undecodable overlay reported as failed while base image loads', `base=${fireBase} overlay=${overlayStatus}`);
         const caption = (await page.locator('[data-testid="imagery-caption"]').textContent()) ?? '';
-        checks.record(/Overlay for \d{4}-\d{2}-\d{2} failed to load/.test(caption), 'caption states the overlay failed', caption.slice(0, 160));
+        checks.record(/Overlay .*failed to load/.test(caption), 'caption states the overlay failed', caption.slice(0, 160));
 
         await page.locator('[data-testid="imagery-tab-falsecolor"]').click();
         const imageryStatus = await waitForAttr(page, '[data-testid="satellite-imagery"]', 'data-imagery-status', ['loaded', 'error'], 'imagery');

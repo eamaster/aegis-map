@@ -99,6 +99,114 @@ export function loadCachedWarnings(
 	}
 }
 
+export interface LocalPushPlaceRegistration {
+	subscriptionId: string;
+	placeKey: string;
+	placeName: string;
+	countryCode: string;
+	sourceId: string;
+	lat: number;
+	lng: number;
+	minSeverity: 'moderate' | 'severe' | 'extreme';
+	confirmedAt: string;
+}
+
+export interface PendingPushOperation {
+	kind: 'register_server' | 'unsubscribe_place' | 'unsubscribe_device' | 'unsubscribe_browser';
+	placeKey?: string;
+	placeName?: string;
+	sourceId?: string;
+	lat?: number;
+	lng?: number;
+	countryCode?: string;
+	subscriptionId?: string;
+	minSeverity?: 'moderate' | 'severe' | 'extreme';
+}
+
+export interface LocalPushDeviceState {
+	endpoint: string;
+	registrations: Record<string, LocalPushPlaceRegistration>;
+	pendingOp: PendingPushOperation | null;
+	updatedAt: string;
+}
+
+const PUSH_SUB_STORAGE_KEY_V2 = 'aegis:push-sub:v2';
+const LEGACY_PUSH_SUB_STORAGE_KEY_V1 = 'aegis:push-sub:v1';
+
+export function saveLocalPushDeviceState(
+	state: LocalPushDeviceState,
+	storage?: Pick<Storage, 'setItem' | 'removeItem'> | null,
+): void {
+	const target = storage ?? (typeof window !== 'undefined' ? window.localStorage : null);
+	if (!target) return;
+	try {
+		target.setItem(PUSH_SUB_STORAGE_KEY_V2, JSON.stringify(state));
+		target.removeItem?.(LEGACY_PUSH_SUB_STORAGE_KEY_V1);
+	} catch {
+		// ignore quota error
+	}
+}
+
+export function loadLocalPushDeviceState(
+	storage?: Pick<Storage, 'getItem'> | null,
+): LocalPushDeviceState | null {
+	const target = storage ?? (typeof window !== 'undefined' ? window.localStorage : null);
+	if (!target) return null;
+	try {
+		const raw = target.getItem(PUSH_SUB_STORAGE_KEY_V2);
+		if (!raw) return null;
+		const parsed = JSON.parse(raw) as Partial<LocalPushDeviceState>;
+		if (typeof parsed.endpoint !== 'string' || !parsed.endpoint) return null;
+		const regs: Record<string, LocalPushPlaceRegistration> = {};
+		if (parsed.registrations && typeof parsed.registrations === 'object') {
+			for (const [k, v] of Object.entries(parsed.registrations)) {
+				if (
+					v &&
+					typeof v.subscriptionId === 'string' &&
+					typeof v.placeKey === 'string' &&
+					typeof v.sourceId === 'string' &&
+					typeof v.lat === 'number' &&
+					typeof v.lng === 'number'
+				) {
+					regs[k] = {
+						subscriptionId: v.subscriptionId,
+						placeKey: v.placeKey,
+						placeName: typeof v.placeName === 'string' ? v.placeName : '',
+						countryCode: typeof v.countryCode === 'string' ? v.countryCode : '',
+						sourceId: v.sourceId,
+						lat: v.lat,
+						lng: v.lng,
+						minSeverity:
+							v.minSeverity === 'extreme' || v.minSeverity === 'severe' ? v.minSeverity : 'moderate',
+						confirmedAt: typeof v.confirmedAt === 'string' ? v.confirmedAt : '',
+					};
+				}
+			}
+		}
+		return {
+			endpoint: parsed.endpoint,
+			registrations: regs,
+			pendingOp: parsed.pendingOp && typeof parsed.pendingOp.kind === 'string' ? parsed.pendingOp : null,
+			updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : '',
+		};
+	} catch {
+		return null;
+	}
+}
+
+export function clearLocalPushDeviceState(
+	storage?: Pick<Storage, 'removeItem'> | null,
+): void {
+	const target = storage ?? (typeof window !== 'undefined' ? window.localStorage : null);
+	if (!target) return;
+	try {
+		target.removeItem(PUSH_SUB_STORAGE_KEY_V2);
+		target.removeItem(LEGACY_PUSH_SUB_STORAGE_KEY_V1);
+	} catch {
+		// ignore
+	}
+}
+
 export async function clearAllLocalResidentData(
 	storage?: Pick<Storage, 'length' | 'key' | 'removeItem'> | null,
 ): Promise<void> {
@@ -125,6 +233,16 @@ export async function clearAllLocalResidentData(
 		}
 		if ('serviceWorker' in navigator) {
 			const regs = await navigator.serviceWorker.getRegistrations();
+			for (const reg of regs) {
+				try {
+					const pushSub = await reg.pushManager?.getSubscription();
+					if (pushSub) {
+						await pushSub.unsubscribe();
+					}
+				} catch {
+					// ignore push unsubscribe failures when clearing local state
+				}
+			}
 			await Promise.all(regs.map((r) => r.unregister()));
 		}
 	}

@@ -28,12 +28,13 @@ const MAP_KEY = 'route-test-map-key';
 // The route plans windows from the real clock, so the fixture row uses today's UTC date.
 const ROW = `45.80000,38.00000,340.10,0.39,0.36,${planFirmsWindows(new Date())[0].endDate},1026,N,VIIRS,n,2.0NRT,290.00,7.50,D`;
 
-/** One detection in the recent window, a valid empty prior window. */
-const firmsOk = (url: string) => csvResponse(url.includes('/5/') ? [FIRMS_HEADER, ROW].join('\n') : `${FIRMS_HEADER}\n`);
+/** One detection in the recent window for S-NPP, empty for other sensors/prior window. */
+const firmsOk = (url: string) =>
+	csvResponse(url.includes('/VIIRS_SNPP_NRT/') && url.includes('/5/') ? [FIRMS_HEADER, ROW].join('\n') : `${FIRMS_HEADER}\n`);
 
-const firmsKeyFor = (lat: number, lng: number) => {
+const firmsKeyFor = (lat: number, lng: number, products: readonly (typeof GLOBAL_FIRMS_PRODUCTS)[number][] = GLOBAL_FIRMS_PRODUCTS) => {
 	const [recent, prior] = planFirmsWindows(new Date());
-	return buildFirmsCacheKey(buildFirmsBboxes(lat, lng), prior.startDate, recent.endDate);
+	return buildFirmsCacheKey(buildFirmsBboxes(lat, lng), prior.startDate, recent.endDate, products);
 };
 
 describe('GET /api/fire-hotspots', () => {
@@ -96,7 +97,7 @@ describe('GET /api/fire-hotspots', () => {
 		expect(kv.puts).toEqual([]);
 	});
 
-	it('caches complete header-only results under the versioned bbox/window key', async () => {
+	it('caches complete header-only results under the versioned multi-sensor bbox/window key', async () => {
 		const kv = memoryKv();
 		const { result: res, calls } = await withFetch(
 			() => csvResponse(`${FIRMS_HEADER}\n`),
@@ -104,9 +105,19 @@ describe('GET /api/fire-hotspots', () => {
 		);
 		expect(res.status).toBe(200);
 		expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://hesam.me');
-		const body = (await res.json()) as { totalCount: number; source: string; coverage: { status: string } };
-		expect(body).toMatchObject({ totalCount: 0, source: 'VIIRS_SNPP_NRT', coverage: { status: 'complete' } });
-		expect(calls).toHaveLength(2);
+		const body = (await res.json()) as {
+			totalCount: number;
+			source: string;
+			sources: string[];
+			coverage: { status: string };
+		};
+		expect(body).toMatchObject({
+			totalCount: 0,
+			source: 'VIIRS_SNPP_NRT,VIIRS_NOAA20_NRT,VIIRS_NOAA21_NRT',
+			sources: ['VIIRS_SNPP_NRT', 'VIIRS_NOAA20_NRT', 'VIIRS_NOAA21_NRT'],
+			coverage: { status: 'complete' },
+		});
+		expect(calls).toHaveLength(6);
 		expect(kv.puts.map((p) => p.key)).toEqual([firmsKeyFor(45.72, 37.95)]);
 
 		const { result: again, calls: againCalls } = await withFetch(
@@ -119,17 +130,102 @@ describe('GET /api/fire-hotspots', () => {
 		expect(againCalls).toEqual([]);
 	});
 
-	it('ignores legacy cache entries (pre-v4 failed-empty responses)', async () => {
+	it('supports ?sources= subset filtering, normalized cache keys, and 400 validation on invalid sources', async () => {
+		const kv = memoryKv();
+		const noaa20Row = `32.25000,6.75000,342.10,0.40,0.40,${planFirmsWindows(new Date())[0].endDate},1310,N20,VIIRS,h,2.0NRT,292.00,12.40,D`;
+
+		const badRes = await callWorker('/api/fire-hotspots?lat=32.25&lng=6.75&sources=MODIS_UNKNOWN', {
+			AEGIS_CACHE: kv.kv,
+			FIRMS_MAP_KEY: MAP_KEY,
+		});
+		expect(badRes.status).toBe(400);
+		expect(await badRes.json()).toMatchObject({ code: 'invalid_sources' });
+
+		const badTrailingComma = await callWorker('/api/fire-hotspots?lat=32.25&lng=6.75&sources=VIIRS_SNPP_NRT,', {
+			AEGIS_CACHE: kv.kv,
+			FIRMS_MAP_KEY: MAP_KEY,
+		});
+		expect(badTrailingComma.status).toBe(400);
+
+		// NOAA-20 only cell (S-NPP empty) returned across default multi-sensor query
+		const { result: allRes } = await withFetch(
+			(url) =>
+				csvResponse(
+					url.includes('/VIIRS_NOAA20_NRT/') && url.includes('/5/')
+						? [FIRMS_HEADER, noaa20Row].join('\n')
+						: `${FIRMS_HEADER}\n`,
+				),
+			() => callWorker('/api/fire-hotspots?lat=32.25&lng=6.75', { AEGIS_CACHE: kv.kv, FIRMS_MAP_KEY: MAP_KEY }),
+		);
+		expect(allRes.status).toBe(200);
+		const allBody = (await allRes.json()) as {
+			totalCount: number;
+			hotspots: Array<{ satellite: string }>;
+			sources: string[];
+			failedSources: string[];
+		};
+		expect(allBody.totalCount).toBe(1);
+		expect(allBody.hotspots[0]?.satellite).toBe('NOAA-20');
+		expect(allBody.failedSources).toEqual([]);
+
+		// Single-source backward compatible query + canonicalized cache key order
+		const { result: subset1, calls: subsetCalls1 } = await withFetch(
+			(url) => csvResponse(url.includes('/VIIRS_SNPP_NRT/') && url.includes('/5/') ? [FIRMS_HEADER, ROW].join('\n') : `${FIRMS_HEADER}\n`),
+			() =>
+				callWorker('/api/fire-hotspots?lat=45.72&lng=37.95&sources=VIIRS_NOAA20_NRT,VIIRS_SNPP_NRT', {
+					AEGIS_CACHE: kv.kv,
+					FIRMS_MAP_KEY: MAP_KEY,
+				}),
+		);
+		expect(subset1.status).toBe(200);
+		expect(subsetCalls1).toHaveLength(4);
+		expect((await subset1.json()) as Record<string, unknown>).toMatchObject({
+			source: 'VIIRS_SNPP_NRT,VIIRS_NOAA20_NRT',
+			sources: ['VIIRS_SNPP_NRT', 'VIIRS_NOAA20_NRT'],
+		});
+
+		// Explicit ?sources=VIIRS_SNPP_NRT keeps 2-call single-source backward compatibility
+		const { result: snppOnly, calls: snppOnlyCalls } = await withFetch(
+			firmsOk,
+			() =>
+				callWorker('/api/fire-hotspots?lat=45.72&lng=37.95&sources=VIIRS_SNPP_NRT', {
+					AEGIS_CACHE: kv.kv,
+					FIRMS_MAP_KEY: MAP_KEY,
+				}),
+		);
+		expect(snppOnly.status).toBe(200);
+		expect(snppOnlyCalls).toHaveLength(2);
+		expect((await snppOnly.json()) as Record<string, unknown>).toMatchObject({
+			source: 'VIIRS_SNPP_NRT',
+			sources: ['VIIRS_SNPP_NRT'],
+			totalCount: 1,
+		});
+
+		const { result: subset2, calls: subsetCalls2 } = await withFetch(
+			() => {
+				throw new Error('canonical source order should hit KV cache');
+			},
+			() =>
+				callWorker('/api/fire-hotspots?lat=45.72&lng=37.95&sources=VIIRS_SNPP_NRT,VIIRS_NOAA20_NRT', {
+					AEGIS_CACHE: kv.kv,
+					FIRMS_MAP_KEY: MAP_KEY,
+				}),
+		);
+		expect(subset2.status).toBe(200);
+		expect(subsetCalls2).toEqual([]);
+	});
+
+	it('ignores legacy cache entries (pre-v5 responses)', async () => {
 		const legacy = JSON.stringify({ hotspots: [], totalCount: 0, highConfidence: 0, maxBrightness: 0, maxPower: 0 });
 		const kv = memoryKv({ initial: { 'firms:45.72:37.95': legacy, [firmsKeyFor(45.72, 37.95)]: legacy } });
 		const { result: res, calls } = await withFetch(firmsOk, () =>
 			callWorker('/api/fire-hotspots?lat=45.72&lng=37.95', { AEGIS_CACHE: kv.kv, FIRMS_MAP_KEY: MAP_KEY }),
 		);
-		expect(calls).toHaveLength(2);
-		const body = (await res.json()) as { totalCount: number; coverage: { status: string }; hotspots: Array<{ latitude: number; frp: number }> };
+		expect(calls).toHaveLength(6);
+		const body = (await res.json()) as { totalCount: number; coverage: { status: string }; hotspots: Array<{ latitude: number; frp: number; satellite: string }> };
 		expect(body.coverage.status).toBe('complete');
 		expect(body.totalCount).toBe(1);
-		expect(body.hotspots[0]).toMatchObject({ latitude: 45.8, frp: 7.5 });
+		expect(body.hotspots[0]).toMatchObject({ latitude: 45.8, frp: 7.5, satellite: 'S-NPP' });
 	});
 
 	it('still returns upstream data when KV get and put reject', async () => {
