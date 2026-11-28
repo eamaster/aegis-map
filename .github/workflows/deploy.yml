@@ -69,6 +69,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -215,6 +217,51 @@ jobs:
           VITE_MAPBOX_TOKEN: ${{ secrets.VITE_MAPBOX_TOKEN }}
           VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
         run: cd frontend && npm run build
+
+      - name: Verify responsive UX, pinned popup geometry & interrupted SW upgrade
+        env:
+          VITE_MAPBOX_TOKEN: ${{ secrets.VITE_MAPBOX_TOKEN || 'pk.ci_fallback_token' }}
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL || 'http://127.0.0.1:8787' }}
+          CANDIDATE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BASELINE_SHA: "60e18e0536c149d1a58bdfefa26ee4766f4ed1e3"
+        run: |
+          set -euo pipefail
+          BASELINE_COMMIT="60e18e0536c149d1a58bdfefa26ee4766f4ed1e3"
+          git worktree add --detach /tmp/aegis-baseline "$BASELINE_COMMIT"
+          ln -s "$PWD/frontend/node_modules" /tmp/aegis-baseline/frontend/node_modules
+          (cd /tmp/aegis-baseline/frontend && npm run build)
+          cp -R /tmp/aegis-baseline/frontend/dist /tmp/dist-baseline
+          git worktree remove --force /tmp/aegis-baseline
+
+          cd frontend
+          npx playwright install --with-deps chromium
+          npx vite preview --port 4173 --host 127.0.0.1 --strictPort &
+          PREVIEW_PID=$!
+          trap 'kill $PREVIEW_PID 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4173/aegis-map/ >/dev/null 2>&1; then
+              break
+            fi
+            sleep 0.5
+          done
+
+          FRONTEND_URL="http://127.0.0.1:4173/aegis-map/" \
+          SW_BASELINE_DIST="/tmp/dist-baseline" \
+          UX_EVIDENCE_DIR="/tmp/ux-evidence" \
+          npm run verify:ux
+
+          if [ -f /tmp/ux-evidence/ux-test-report.md ]; then
+            cat /tmp/ux-evidence/ux-test-report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload UX visual & test report artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aegis-ux-verification-evidence
+          path: /tmp/ux-evidence
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Setup Pages
         if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
