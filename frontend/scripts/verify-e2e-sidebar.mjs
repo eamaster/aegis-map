@@ -301,6 +301,7 @@ async function runSuccess(browser) {
         const firmsBody = await firms.json().catch(() => null);
         checks.record(Number(fu.searchParams.get('lat')) === selected.lat && Number(fu.searchParams.get('lng')) === selected.lng, 'FIRMS requested for selected coordinates');
         checks.record(firms.status() === 200 && firmsBody?.coverage?.status === 'complete', 'FIRMS returned complete coverage', `HTTP ${firms.status()} coverage=${firmsBody?.coverage?.status ?? firmsBody?.code ?? 'n/a'}`);
+        await page.locator('[data-testid="inspector-tab-imagery"]').click();
         const firmsState = await waitForAttr(page, '[data-testid="satellite-imagery"]', 'data-firms-state', ['detections', 'empty', 'filtered', 'unavailable'], 'FIRMS state');
         checks.record(['detections', 'empty', 'filtered'].includes(firmsState), 'FIRMS UI shows a successful result', firmsState);
         const imagery = page.locator('[data-testid="satellite-imagery"]');
@@ -319,7 +320,8 @@ async function runSuccess(browser) {
             };
         }
 
-        // Imagery: fire view and false color must request exactly the labelled product/date.
+        // Imagery: switch to Imagery tab, then verify fire view and false color request the labelled product/date.
+        await page.locator('[data-testid="inspector-tab-imagery"]').click();
         for (const tab of ['fire', 'falsecolor']) {
             const gibsBase = expectResponse((r) => r.url().startsWith('https://gibs.earthdata.nasa.gov/') && !r.url().includes('Thermal_Anomalies'), `GIBS ${tab}`);
             let capturedOverlayReqUrl = null;
@@ -535,6 +537,7 @@ async function runFailure(browser) {
         const weatherState = await waitForAttr(page, '[data-testid="sidebar"]', 'data-weather-state', ['known', 'unavailable'], 'weather');
         checks.record(weatherState === 'unavailable', 'weather marked unavailable without a pass', weatherState);
 
+        await page.locator('[data-testid="inspector-tab-imagery"]').click();
         const firmsState = await waitForAttr(page, '[data-testid="satellite-imagery"]', 'data-firms-state', ['detections', 'empty', 'filtered', 'unavailable'], 'FIRMS state');
         checks.record(firmsState === 'unavailable', 'FIRMS failure shown as unavailable (not empty)', firmsState);
         const imageryText = await page.locator('[data-testid="satellite-imagery"]').innerText();

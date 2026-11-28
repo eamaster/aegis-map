@@ -11,7 +11,8 @@
     "test": "vitest run",
     "verify-map-points": "node scripts/verify-map-points.mjs",
     "verify:e2e": "node scripts/verify-e2e-sidebar.mjs",
-    "verify:v15": "node scripts/verify-v15-slices.mjs"
+    "verify:v15": "node scripts/verify-v15-slices.mjs",
+    "verify:ux": "node scripts/verify-responsive-ux.mjs"
   },
   "dependencies": {
     "@tailwindcss/postcss": "^4.1.17",
