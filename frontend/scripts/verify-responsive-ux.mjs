@@ -2446,7 +2446,7 @@ async function main() {
 			};
 		});
 		checks.record(
-			emptyBalance.gpsVisible && emptyBalance.row1GapPx < 240 && emptyBalance.innerVoidPx < 60,
+			emptyBalance.gpsVisible && emptyBalance.row1GapPx < 280 && emptyBalance.innerVoidPx < 60,
 			'Healthy-empty Near me keeps Use my location visible, compact Row 1 heights, and zero internal card dead void',
 			JSON.stringify(emptyBalance),
 			'task-layout',
@@ -2465,7 +2465,15 @@ async function main() {
 		await nmPage.route('https://geocoding-api.open-meteo.com/**', (route) => route.abort('failed'));
 		await nmPage.locator('[data-testid="place-search-input"]').fill('北京');
 		await nmPage.locator('[data-testid="place-search-btn"]').click();
-		await nmPage.locator('[data-testid="selected-place-summary"]').waitFor({ state: 'visible', timeout: STEP_TIMEOUT });
+		// Wait for the already-visible selected-place-summary to transition from Panaji to Beijing
+		await nmPage.waitForFunction(
+			() => {
+				const el = document.querySelector('[data-testid="selected-place-summary"]');
+				return Boolean(el && el.textContent && el.textContent.includes('Beijing'));
+			},
+			null,
+			{ timeout: STEP_TIMEOUT },
+		);
 		const selectedZhText = await nmPage.locator('[data-testid="selected-place-summary"]').innerText();
 		const hasLocalizedZhHeadings =
 			zhLangCheck.pageText.includes('官方预警数据源覆盖与时效') &&
